@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "legoace"
+version = "1.0.0"
+description = "LegoACE: Autoregressive Construction Engine for Expressive LEGO® Assemblies"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Hao Xu" },
+    { name = "Yuqing Zhang" },
+    { name = "Yiqian Wu" },
+    { name = "Xinyang Zheng" },
+    { name = "Yutao Liu" },
+    { name = "Xiangjun Tang" },
+    { name = "Yunhan Yang" },
+    { name = "Ding Liang" },
+    { name = "Yingtian Liu" },
+    { name = "Yuanchen Guo" },
+    { name = "Yanpei Cao" },
+    { name = "Xiaogang Jin" },
+]
+requires-python = ">=3.10"
+keywords = ["lego", "autoregressive", "transformer", "3d generation", "siggraph-asia-2025"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "transformers>=4.45.0",
+    "accelerate>=0.30.0",
+    "diffusers>=0.27.0",
+    "pyrender>=0.1.45",
+    "trimesh>=3.20.0",
+    "pillow>=9.0.0",
+    "numpy>=1.23.0",
+    "tqdm>=4.65.0",
+    "wandb>=0.15.0",
+    "tyro>=0.5.0",
+    "packaging>=21.0",
+]
+
+[project.optional-dependencies]
+metrics = [
+    "open3d>=0.17.0",
+    "pot>=0.9.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/VAST-AI-Research/LegoACE"
+Repository = "https://github.com/VAST-AI-Research/LegoACE"
+Paper = "https://doi.org/10.1145/3757377.3763881"
+
+[tool.setuptools.packages.find]
+include = ["configs*", "dataset*", "dpo*", "inference*", "model*", "train*", "utils*"]
+exclude = ["data*", "outputs*"]

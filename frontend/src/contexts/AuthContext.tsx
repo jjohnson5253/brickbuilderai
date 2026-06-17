@@ -1,0 +1,242 @@
+import React, { createContext, useContext, useEffect, useState } from 'react'
+import { User, Session, AuthError } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
+import { UpdateUsernameApiService, UsernameTakenError } from '../services/updateUsernameApi'
+
+interface UserProfile {
+  id: string
+  email: string
+  credits: number
+  username?: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface AuthContextType {
+  user: User | null
+  session: Session | null
+  loading: boolean
+  userProfile: UserProfile | null
+  signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>
+  signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>
+  signOut: () => Promise<{ error: AuthError | null }>
+  signInWithOtp: (email: string) => Promise<{ error: AuthError | null }>
+  verifyOtp: (email: string, token: string) => Promise<{ error: AuthError | null }>
+  signInWithGoogle: (redirectPath?: string) => Promise<{ error: AuthError | null }>
+  refreshUserProfile: () => Promise<void>
+  deductCredits: (amount: number) => Promise<{ error: any | null; success: boolean }>
+  updateUsername: (username: string) => Promise<{ error: any | null; success: boolean }>
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined)
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
+
+  const fetchUserProfile = async (userEmail: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('email', userEmail)
+        .single()
+
+      if (error) {
+        console.error('Error fetching user profile:', error)
+        setUserProfile(null)
+        return
+      }
+
+      setUserProfile(data)
+    } catch (error) {
+      console.error('Error fetching user profile:', error)
+      setUserProfile(null)
+    }
+  }
+
+  const refreshUserProfile = async () => {
+    if (user?.email) {
+      await fetchUserProfile(user.email)
+    }
+  }
+
+  const deductCredits = async (amount: number) => {
+    if (!user?.email || !userProfile) {
+      return { error: 'No user or profile found', success: false }
+    }
+
+    if (userProfile.credits < amount) {
+      return { error: 'Insufficient credits', success: false }
+    }
+
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ 
+          credits: userProfile.credits - amount,
+          updated_at: new Date().toISOString()
+        })
+        .eq('email', user.email)
+
+      if (error) {
+        return { error: error.message || 'Database error', success: false }
+      }
+
+      // Update local state
+      setUserProfile(prev => prev ? {
+        ...prev,
+        credits: prev.credits - amount
+      } : null)
+
+      return { error: null, success: true }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Unknown error', success: false }
+    }
+  }
+
+  const updateUsername = async (username: string) => {
+    if (!user?.email || !userProfile) {
+      return { error: 'No user or profile found', success: false }
+    }
+
+    const trimmed = username.trim()
+    if (!trimmed) {
+      return { error: 'Username cannot be empty', success: false }
+    }
+
+    const accessToken = session?.access_token
+    if (!accessToken) {
+      return { error: 'Not authenticated', success: false }
+    }
+
+    try {
+      const { username: savedUsername } = await UpdateUsernameApiService.updateUsername(
+        trimmed,
+        accessToken
+      )
+
+      setUserProfile(prev => prev ? { ...prev, username: savedUsername } : null)
+      return { error: null, success: true }
+    } catch (error) {
+      if (error instanceof UsernameTakenError) {
+        return { error: 'Username is already taken', success: false }
+      }
+      return {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        success: false,
+      }
+    }
+  }
+
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      setUser(session?.user ?? null)
+      if (session?.user?.email) {
+        fetchUserProfile(session.user.email)
+      }
+      setLoading(false)
+    })
+
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+      setUser(session?.user ?? null)
+      if (session?.user?.email) {
+        fetchUserProfile(session.user.email)
+      } else {
+        setUserProfile(null)
+      }
+      setLoading(false)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  const signIn = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
+    return { error }
+  }
+
+  const signUp = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/dashboard`
+      }
+    })
+    return { error }
+  }
+
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut()
+    return { error }
+  }
+
+  const signInWithOtp = async (email: string) => {
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: true,
+        emailRedirectTo: `${window.location.origin}/dashboard`
+      }
+    })
+    return { error }
+  }
+
+  const verifyOtp = async (email: string, token: string) => {
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: 'email'
+    })
+    return { error }
+  }
+
+  const signInWithGoogle = async (redirectPath?: string) => {
+    const safePath = redirectPath && redirectPath.startsWith('/') ? redirectPath : '/dashboard'
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}${safePath}`
+      }
+    })
+    return { error }
+  }
+
+  const value: AuthContextType = {
+    user,
+    session,
+    loading,
+    userProfile,
+    signIn,
+    signUp,
+    signOut,
+    signInWithOtp,
+    verifyOtp,
+    signInWithGoogle,
+    refreshUserProfile,
+    deductCredits,
+    updateUsername,
+  }
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext)
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider')
+  }
+  return context
+}

@@ -1,0 +1,25 @@
+# Nixpacks configuration for Railway
+[phases.setup]
+nixPkgs = [
+  "python311", 
+  "uv",
+  # X11 and graphics libraries for Open3D
+  "xorg.libX11",
+  "xorg.libXext", 
+  "xorg.libXrender",
+  "xorg.libXrandr",
+  "xorg.libXi",
+  "xorg.libXcursor",
+  "xorg.libXinerama",
+  "xorg.libXxf86vm",
+  "mesa",
+  "libGL",
+  "libGLU",
+  "xvfb-run"
+]
+
+[phases.build]
+cmds = ["uv sync --frozen"]
+
+[start]
+cmd = "xvfb-run -a uvicorn src.api:app --host 0.0.0.0 --port $PORT"

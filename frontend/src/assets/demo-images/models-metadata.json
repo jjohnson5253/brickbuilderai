@@ -1,0 +1,93 @@
+{
+  "Link": {
+    "id": "31e13d20-6336-4db5-b39d-162ddcd30cf7",
+    "cost": 20.82,
+    "pieces": 265,
+    "weight": 0.23,
+    "img_url": "/assets/demo-images/Link.png"
+  },
+  "Ninja Turtle": {
+    "id": "1f43de8d-f8d2-4b7c-8679-cad0d869456e",
+    "cost": 18.82,
+    "pieces": 180,
+    "weight": 0.22,
+    "img_url": "/assets/demo-images/Ninja Turtle.png"
+  },
+  "Nyan Cat": {
+    "id": "31522db3-c87c-49b9-b75a-508755aabc50",
+    "cost": 28.66,
+    "pieces": 291,
+    "weight": 0.33,
+    "img_url": "/assets/demo-images/Nyan Cat.png"
+  },
+  "Jake the Dog": {
+    "id": "64e3289e-ea2c-45c3-a8a9-d88d36b403ec",
+    "cost": 23.52,
+    "pieces": 231,
+    "weight": 0.27,
+    "img_url": "/assets/demo-images/Jake the Dog.png"
+  },
+  "Octopus": {
+    "id": "bcd515ef-e9f9-4625-a2e5-b2d10cc0b058",
+    "cost": 114.41,
+    "pieces": 1075,
+    "weight": 1.32,
+    "img_url": "/assets/demo-images/Octopus.png"
+  },
+  "Finn the Human": {
+    "id": "adf4d565-a35b-442b-b4f8-0c7520893dbe",
+    "cost": 18.61,
+    "pieces": 180,
+    "weight": 0.21,
+    "img_url": "/assets/demo-images/Finn the Human.png"
+  },
+  "Blackhawks Player": {
+    "id": "958b604e-38c0-442f-b62d-6c0abbbfd74c",
+    "cost": 27.55,
+    "pieces": 279,
+    "weight": 0.32,
+    "img_url": "/assets/demo-images/Blackhawks Player.png"
+  },
+  "Dog": {
+    "id": "8e08e36d-4baa-4a42-86bf-4c2203d342e2",
+    "cost": 20.12,
+    "pieces": 195,
+    "weight": 0.23,
+    "img_url": "/assets/demo-images/Dog.png"
+  },
+  "Everything is Fine": {
+    "id": "4c69bd26-3e7c-4f99-ab01-e1f97b1c7e90",
+    "cost": 34.32,
+    "pieces": 338,
+    "weight": 0.39,
+    "img_url": "/assets/demo-images/Everything is Fine.png"
+  },
+  "Pokemon": {
+    "id": "9dbe2481-df5b-4887-9676-5153219a6f90",
+    "cost": 17.57,
+    "pieces": 205,
+    "weight": 0.19,
+    "img_url": "/assets/demo-images/Pokemon.png"
+  },
+  "Another Dog": {
+    "id": "d7fbf38f-f723-4a01-93ef-0bca698ffb29",
+    "cost": 44.24,
+    "pieces": 463,
+    "weight": 0.5,
+    "img_url": "/assets/demo-images/Another Dog.png"
+  },
+  "Bench Press": {
+    "id": "5cbb4372-2d3a-4cc5-ba9b-6e56c4849494",
+    "cost": 16.13,
+    "pieces": 140,
+    "weight": 0.19,
+    "img_url": "/assets/demo-images/Bench Press.png"
+  },
+  "Seagull": {
+    "id": "05795cb2-9f16-42c7-9b5f-8c2154df4c3b",
+    "cost": 17.02,
+    "pieces": 146,
+    "weight": 0.2,
+    "img_url": "/assets/demo-images/Seagull.png"
+  }
+}

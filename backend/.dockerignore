@@ -1,0 +1,28 @@
+# Docker ignore file - only exclude what's absolutely not needed
+.git
+.env
+.python-version
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+.mypy_cache
+
+# Node.js React app (not needed for API)
+ldr-viewer/
+
+# Test and development files
+test_payload.json
+car_base64.txt
+*_model.mpd
+*.ldr
+run_api.py
+test_api.py
+
+# Railway deployment docs (not needed at runtime)
+RAILWAY_DEPLOYMENT.md
+Dockerfile.full
+Dockerfile.ubuntu

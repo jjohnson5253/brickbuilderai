@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+/* Tutorial pulsate animation */
+@keyframes tutorialPulse {
+  0% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.6); }
+  70% { box-shadow: 0 0 0 8px rgba(139, 92, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+}
+.tutorial-pulse {
+  animation: tutorialPulse 1.5s ease-in-out infinite;
+}
+
+/* Landing page entrance animation (modern SaaS-style staggered fade-in) */
+@keyframes landingFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.landing-fade-in {
+  opacity: 0;
+  animation: landingFadeIn 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: opacity, transform;
+}
+.landing-delay-1 { animation-delay: 0.05s; }
+.landing-delay-2 { animation-delay: 0.18s; }
+.landing-delay-3 { animation-delay: 0.30s; }
+.landing-delay-4 { animation-delay: 0.42s; }
+.landing-delay-5 { animation-delay: 0.54s; }
+.landing-delay-6 { animation-delay: 0.66s; }
+.landing-delay-7 { animation-delay: 0.78s; }
+
+/* Generated model: smoother sequential reveal for sections under the 3D preview */
+.below-preview-sequence > section {
+  opacity: 0;
+  animation: landingFadeIn 0.85s cubic-bezier(0.19, 1, 0.22, 1) forwards;
+  will-change: opacity, transform;
+}
+.below-preview-sequence > section:nth-of-type(1) { animation-delay: 0.05s; }
+.below-preview-sequence > section:nth-of-type(2) { animation-delay: 0.16s; }
+.below-preview-sequence > section:nth-of-type(3) { animation-delay: 0.28s; }
+.below-preview-sequence > section:nth-of-type(4) { animation-delay: 0.40s; }
+.below-preview-sequence > section:nth-of-type(5) { animation-delay: 0.52s; }
+.below-preview-sequence > section:nth-of-type(6) { animation-delay: 0.64s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-fade-in {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+
+  .below-preview-sequence > section {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+/* Subtle attention pulse — gently scales and glows to draw the eye */
+@keyframes attentionPulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.45);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 10px rgba(244, 67, 54, 0);
+  }
+}
+.attention-pulse {
+  animation: attentionPulse 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  will-change: transform, box-shadow;
+}
+.attention-pulse:hover {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .attention-pulse {
+    animation: none;
+  }
+}
+/* Component Styles */
+.input {
+  @apply w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
+}

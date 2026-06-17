@@ -1,0 +1,319 @@
+import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import {
+  User,
+  ChevronDown,
+  ChevronLeft,
+  Coins,
+  LogOut,
+  Users,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
+import { SEO } from "../components/SEO";
+import {
+  GetCommunityGenerationsApiService,
+  CommunityGeneration,
+} from "../services/getCommunityGenerationsApi";
+import { SiteFooter } from "../components/SiteFooter";
+
+function CommunityHeader() {
+  const navigate = useNavigate();
+  const { user, userProfile, signOut } = useAuth();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  return (
+    <header className="flex items-center justify-between w-full relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
+      <a href="/" className="flex items-center gap-2 group">
+        <ChevronLeft className="h-5 w-5 text-slate-500 group-hover:text-[#f44336] group-hover:-translate-x-0.5 transition-all" />
+        <img
+          src="/logo.svg"
+          alt="BRICKBUILDER.AI"
+          className="h-7 w-auto"
+          onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+        />
+        <span className="text-xl font-extrabold tracking-tight">
+          <span className="text-[#ff4b4b]">BRICK</span>
+          <span className="text-slate-900">BUILDER</span>
+          <span className="text-slate-900">.</span>
+          <span className="text-[#ff4b4b]">AI</span>
+        </span>
+      </a>
+
+      <div className="flex items-center gap-3">
+        {user ? (
+          <>
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
+              <Coins className="h-4 w-4 text-amber-600" />
+              <span className="text-sm font-semibold text-amber-700">
+                {userProfile?.credits ?? 0}
+              </span>
+            </div>
+
+            <div className="relative">
+              <button
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-9 border-none cursor-pointer transition-colors"
+              >
+                <div className="w-6 h-6 bg-[#f44336] rounded-full flex items-center justify-center">
+                  <User className="h-4 w-4 text-white" />
+                </div>
+                <ChevronDown className={`h-4 w-4 text-slate-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {dropdownOpen && (
+                <>
+                  <div
+                    className="fixed inset-0"
+                    style={{ zIndex: 40 }}
+                    onClick={() => setDropdownOpen(false)}
+                  />
+                  <div
+                    className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
+                    style={{ zIndex: 51 }}
+                  >
+                    <button
+                      onClick={() => {
+                        setDropdownOpen(false);
+                        navigate('/dashboard');
+                      }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
+                    >
+                      Dashboard
+                    </button>
+                    <div className="border-t border-slate-100 my-1" />
+                    <button
+                      onClick={async () => {
+                        setDropdownOpen(false);
+                        await signOut();
+                        navigate('/');
+                      }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Log out
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <button
+              className="bg-transparent text-slate-600 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-black hover:-translate-y-px"
+              onClick={() => navigate("/login")}
+            >
+              Login
+            </button>
+            <button
+              className="bg-[#f44336] text-white rounded-full px-4 h-9 border-none text-sm font-medium cursor-pointer transition-all duration-200 hover:bg-[#ff6b6b] hover:-translate-y-px"
+              onClick={() => navigate("/signup")}
+            >
+              Sign Up
+            </button>
+          </>
+        )}
+      </div>
+    </header>
+  );
+}
+
+function CommunityCard({ g, onClick }: { g: CommunityGeneration; onClick: () => void }) {
+  const sourceImage = g.processed_image_url;
+  const mainImage = g.preview_image_url || g.external_image_url || g.image_url || g.thumbnail_url || g.processed_image_url;
+  const showOverlay = Boolean(g.preview_image_url && sourceImage);
+  const title = g.name?.trim() || "Untitled Model";
+  const truncated = title.length > 80 ? title.slice(0, 77) + "..." : title;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group text-left bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 cursor-pointer p-0"
+    >
+      <div className="relative aspect-square w-full bg-slate-100 overflow-hidden flex items-center justify-center">
+        {mainImage ? (
+          <img
+            src={mainImage}
+            alt={truncated}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+        ) : (
+          <Sparkles className="h-10 w-10 text-slate-300" />
+        )}
+        {showOverlay && (
+          <div className="absolute top-2 right-2 w-1/4 aspect-square rounded-lg overflow-hidden border-2 border-white shadow-md bg-white flex items-center justify-center">
+            <img
+              src={sourceImage as string}
+              alt=""
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                (e.currentTarget.parentElement as HTMLElement).style.display = "none";
+              }}
+            />
+          </div>
+        )}
+      </div>
+      <div className="p-4">
+        <div className="text-sm font-semibold text-slate-800 line-clamp-2 min-h-[2.5rem]">
+          {truncated}
+        </div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 mt-2">
+          {g.username?.trim() ? (
+            <div className="text-xs text-slate-600 min-w-0 truncate order-1">
+              <span className="text-slate-500">Created by: </span>
+              <span className="font-medium text-slate-700">{g.username}</span>
+            </div>
+          ) : (
+            <span className="hidden sm:block" />
+          )}
+          <div className="text-xs text-slate-500 flex-shrink-0 order-2">
+            {new Date(g.created_at).toLocaleDateString()}
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+export default function CommunityPage() {
+  const navigate = useNavigate();
+  const { session } = useAuth();
+  const [generations, setGenerations] = useState<CommunityGeneration[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const PAGE_LIMIT = 50;
+
+  const fetchCommunity = async (currentOffset: number, append: boolean = false) => {
+    if (append) {
+      setLoadingMore(true);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
+    try {
+      const response = await GetCommunityGenerationsApiService.getCommunityGenerations(
+        session?.access_token || undefined,
+        PAGE_LIMIT,
+        currentOffset
+      );
+
+      // Sort by created_at desc, matching dashboard behavior
+      const sorted = (response.generations || []).slice().sort((a, b) => {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+
+      if (append) {
+        setGenerations((prev) => [...prev, ...sorted]);
+      } else {
+        setGenerations(sorted);
+      }
+      setHasMore(Boolean(response.has_more));
+    } catch (e) {
+      console.error('Failed to fetch community generations:', e);
+      setError(e instanceof Error ? e.message : 'Failed to load community models');
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    setOffset(0);
+    fetchCommunity(0);
+    // Refetch when auth token changes (anonymous -> logged in)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.access_token]);
+
+  const handleLoadMore = () => {
+    const newOffset = offset + PAGE_LIMIT;
+    setOffset(newOffset);
+    fetchCommunity(newOffset, true);
+  };
+
+  return (
+    <>
+      <SEO
+        title="Community Models — BRICKBUILDER.AI"
+        description="Explore LEGO models shared by the BRICKBUILDER.AI community."
+      />
+      <div className="min-h-screen bg-slate-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+          <CommunityHeader />
+
+          <section className="mt-10 text-center landing-fade-in landing-delay-2">
+            <div className="inline-flex items-center justify-center h-14 w-14 rounded-full bg-[#f44336]/10 mb-4">
+              <Users className="h-7 w-7 text-[#f44336]" />
+            </div>
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900">
+              Community Models
+            </h1>
+            <p className="mt-3 text-slate-600 max-w-xl mx-auto">
+              Browse brick models shared by builders in the BrickBuilder community.
+            </p>
+          </section>
+
+          <section className="mt-10 landing-fade-in landing-delay-3">
+            {loading ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+              </div>
+            ) : error ? (
+              <div className="text-center py-20">
+                <p className="text-red-500 font-medium">{error}</p>
+              </div>
+            ) : generations.length === 0 ? (
+              <div className="text-center py-20">
+                <Sparkles className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-600 font-medium">No community models yet.</p>
+                <p className="text-slate-500 text-sm mt-1">
+                  Be the first to share your build!
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
+                  {generations.map((g) => (
+                    <CommunityCard
+                      key={g.id}
+                      g={g}
+                      onClick={() => navigate(`/generated-model?id=${g.id}`)}
+                    />
+                  ))}
+                </div>
+                {hasMore && (
+                  <div className="flex justify-center mt-8">
+                    <button
+                      onClick={handleLoadMore}
+                      disabled={loadingMore}
+                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loadingMore ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Loading...
+                        </>
+                      ) : (
+                        'Load More'
+                      )}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+          <SiteFooter />
+        </div>
+      </div>
+    </>
+  );
+}

@@ -1,0 +1,1 @@
+rendered as a voxel-friendly 3D form designed for reconstruction at a maximum resolution of 20×20×20 voxels. Use thick, chunky geometry with all features and patterns at least 1/10 of the object’s total size.. Isometric view. Full object visible. Flat, even coloring. Even, diffused lighting. White background.

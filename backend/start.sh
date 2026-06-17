@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Build obj2voxel C++ executable if not already built
+if [ ! -f "src/utils/cpp/obj2vox/build/obj2voxel" ]; then
+    echo "Building obj2voxel executable..."
+    mkdir -p src/utils/cpp/obj2vox/build
+    cd src/utils/cpp/obj2vox/build
+    cmake .. && make
+    cd ../../../../..
+    echo "obj2voxel build complete"
+fi
+
+# Start virtual display in background
+Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+
+# Wait a moment for Xvfb to start
+sleep 2
+
+# Set display environment variable
+export DISPLAY=:99
+
+# Use uv run to automatically use the virtual environment
+exec uv run uvicorn src.api:app --host 0.0.0.0 --port ${PORT:-8000}

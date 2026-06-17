@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.Python
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.python-version
+
+# Package managers
+uv.lock
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Editors / IDEs
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing / type-checking
+.hypothesis/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Project outputs (kept out of the repo)
+output/
+output*/
+outputs/
+checkpoints/
+wandb/
+logs/
+runs/
+
+# Local data
+data/
+data_tmp/
+example/
+tmp/
+debug/
+test_files/
+testfiles/
+test/
+check/
+bad_npzs/
+images/
+jsons/
+obj/
+
+# Heavy / generated assets
+*.zip
+*.tar
+*.tar.gz
+*.ckpt
+*.pt
+*.safetensors
+*.npy
+*.npz
+*.glb
+*.obj
+*.ply
+*.stl
+
+# Render / image artifacts
+*.png
+*.jpg
+*.jpeg
+
+# Kubernetes / infra
+k8s/

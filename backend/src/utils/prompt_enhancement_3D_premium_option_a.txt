@@ -1,0 +1,1 @@
+rendered as a simple 3D videogame object style. Isometric view. Full object visible. Flat, even coloring. Even, diffused lighting. White background.
