@@ -37,7 +37,7 @@ import {
   User,
   Users,
   ChevronDown,
-  Coins,
+  Github,
   LogOut,
   ArrowLeft,
   Download,
@@ -48,8 +48,55 @@ import {
 
 function Header() {
   const navigate = useNavigate();
-  const { user, userProfile, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [githubStars, setGithubStars] = useState<number | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    fetch("https://api.github.com/repos/jjohnson5253/brickbuilderai", {
+      headers: { Accept: "application/vnd.github+json" },
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load GitHub stars");
+        return response.json();
+      })
+      .then((repo: { stargazers_count?: number }) => {
+        if (!cancelled && typeof repo.stargazers_count === "number") {
+          setGithubStars(repo.stargazers_count);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setGithubStars(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const formattedGithubStars = githubStars === null
+    ? "..."
+    : new Intl.NumberFormat("en", {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }).format(githubStars);
+
+  const githubStarLink = (
+    <a
+      href="https://github.com/jjohnson5253/brickbuilderai"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="View BrickBuilder.AI on GitHub"
+      className="inline-flex h-8 min-w-[4.5rem] items-center justify-center gap-1.5 rounded-full bg-slate-100 px-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 sm:h-9 sm:min-w-[5.25rem] sm:gap-2 sm:px-3 sm:text-sm"
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white sm:h-6 sm:w-6">
+        <Github className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+      </span>
+      <span>{formattedGithubStars}</span>
+    </a>
+  );
 
   return (
     <header className="flex items-center justify-between w-full relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
@@ -77,17 +124,10 @@ function Header() {
           <Users className="h-4 w-4" />
           Community
         </button>
+        {githubStarLink}
         {user ? (
-          // Logged in: show credits and account dropdown
+          // Logged in: show account dropdown
           <>
-            {/* Credits badge */}
-            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
-              <Coins className="h-4 w-4 text-amber-600" />
-              <span className="text-sm font-semibold text-amber-700">
-                {userProfile?.credits ?? 0}
-              </span>
-            </div>
-
             {/* Account dropdown */}
             <div className="relative">
               <button

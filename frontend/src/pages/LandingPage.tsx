@@ -1,6 +1,6 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
-import { Sparkles, Image as ImageIcon, User, Users, ChevronDown, Coins, LogOut, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package } from "lucide-react";
+import { Sparkles, Image as ImageIcon, User, Users, ChevronDown, LogOut, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github } from "lucide-react";
 import { SEO } from "../components/SEO";
 import FallingBricks from "../components/FallingBricks";
 import LoginModal from "../components/LoginModal";
@@ -17,6 +17,9 @@ import { SiteFooter } from "../components/SiteFooter";
 // Toggle streaming generation. Set to false to use the non-streaming endpoints
 // (useful when the streaming backend, e.g. fal.ai sam3d-stream, is down).
 const USE_STREAMING = true;
+
+// Toggle whether users must be logged in before starting a generation.
+const REQUIRE_LOGIN_FOR_GENERATION = true;
 
 // LocalStorage keys for persisting generated models
 const STORAGE_KEYS = {
@@ -525,8 +528,11 @@ export default function LandingPage() {
       return;
     }
 
-    // Require login before generating
-    if (!authLoading && !session) {
+    if (REQUIRE_LOGIN_FOR_GENERATION && authLoading) {
+      return;
+    }
+
+    if (REQUIRE_LOGIN_FOR_GENERATION && !session) {
       setShowLoginModal(true);
       setPendingGenerateAfterLogin(true);
       return;
@@ -779,7 +785,7 @@ export default function LandingPage() {
         <LandingHeader onLoginClick={() => setShowLoginModal(true)} />
 
         <main className="flex flex-1 flex-col items-center text-center w-full">
-          <div className="mt-8 flex w-full max-w-3xl flex-col items-center gap-6">
+          <div className="mt-4 flex w-full max-w-3xl flex-col items-center gap-6 sm:mt-8">
             <h1 className="text-4xl font-extrabold leading-tight sm:text-5xl text-slate-900 landing-fade-in landing-delay-2">
               Imagine. Customize. Build.
             </h1>
@@ -938,6 +944,15 @@ export default function LandingPage() {
                 <p className="mt-2 text-sm text-slate-500 landing-fade-in landing-delay-3">
                   This app uses generative AI to create brick models. Results may vary.
                 </p>
+
+                <button
+                  type="button"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm transition-all hover:-translate-y-px hover:border-[#f44336]/30 hover:bg-red-50 hover:text-[#f44336] landing-fade-in landing-delay-3"
+                  onClick={() => navigate("/community")}
+                >
+                  <Users className="h-4 w-4" />
+                  View Community Models
+                </button>
                 
                 {/* Last completed generation */}
                 {lastGeneration && !isCardHidden && (
@@ -1148,22 +1163,69 @@ function HowItWorks() {
 
 function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
   const navigate = useNavigate();
-  const { user, userProfile, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [githubStars, setGithubStars] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("https://api.github.com/repos/jjohnson5253/brickbuilderai", {
+      headers: { Accept: "application/vnd.github+json" },
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load GitHub stars");
+        return response.json();
+      })
+      .then((repo: { stargazers_count?: number }) => {
+        if (!cancelled && typeof repo.stargazers_count === "number") {
+          setGithubStars(repo.stargazers_count);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setGithubStars(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const formattedGithubStars = githubStars === null
+    ? "..."
+    : new Intl.NumberFormat("en", {
+        notation: "compact",
+        maximumFractionDigits: 1,
+      }).format(githubStars);
+
+  const githubStarLink = (
+    <a
+      href="https://github.com/jjohnson5253/brickbuilderai"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="View BrickBuilder.AI on GitHub"
+      className="inline-flex h-8 min-w-[4.5rem] items-center justify-center gap-1.5 rounded-full bg-slate-100 px-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 sm:h-9 sm:min-w-[5.25rem] sm:gap-2 sm:px-3 sm:text-sm"
+    >
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white sm:h-6 sm:w-6">
+        <Github className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+      </span>
+      <span>{formattedGithubStars}</span>
+    </a>
+  );
 
   return (
-    <header className="flex items-center justify-between w-full relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
-      <a href="/" className="flex items-center gap-3">
+    <header className="flex w-full flex-wrap items-center justify-between gap-y-2 relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
+      <a href="/" className="flex min-w-0 items-center gap-2 sm:gap-3">
         <img
           src="/logo.svg"
           alt="BRICKBUILDER.AI"
-          className="h-7 w-auto"
+          className="h-6 w-auto sm:h-7"
           onError={(e) => {
             const el = e.currentTarget as HTMLImageElement;
             el.style.display = "none";
           }}
         />
-        <span className="text-xl font-extrabold tracking-tight">
+        <span className="truncate text-lg font-extrabold tracking-tight sm:text-xl">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
           <span className="text-slate-900">.</span>
@@ -1171,8 +1233,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
         </span>
       </a>
 
-      {/* Login / Sign Up OR Account Menu */}
-      <div className="flex items-center gap-3">
+      <nav className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 sm:flex">
         <button
           className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px"
           onClick={() => navigate("/community")}
@@ -1180,27 +1241,25 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
           <Users className="h-4 w-4" />
           Community
         </button>
+      </nav>
+
+      {/* Login / Sign Up OR Account Menu */}
+      <div className="flex items-center gap-2 sm:gap-3">
         {user ? (
-          // Logged in: show credits and account dropdown
+          // Logged in: show GitHub stars and account dropdown
           <>
-            {/* Credits badge */}
-            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
-              <Coins className="h-4 w-4 text-amber-600" />
-              <span className="text-sm font-semibold text-amber-700">
-                {userProfile?.credits ?? 0}
-              </span>
-            </div>
+            {githubStarLink}
 
             {/* Account dropdown */}
             <div className="relative">
               <button
                 onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-9 border-none cursor-pointer transition-colors"
+                className="flex h-8 items-center gap-1 rounded-full border-none bg-slate-100 px-2 cursor-pointer transition-colors hover:bg-slate-200 sm:h-9 sm:gap-2 sm:px-3"
               >
-                <div className="w-6 h-6 bg-[#f44336] rounded-full flex items-center justify-center">
-                  <User className="h-4 w-4 text-white" />
+                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#f44336] sm:h-6 sm:w-6">
+                  <User className="h-3.5 w-3.5 text-white sm:h-4 sm:w-4" />
                 </div>
-                <ChevronDown className={`h-4 w-4 text-slate-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`h-3.5 w-3.5 text-slate-600 transition-transform sm:h-4 sm:w-4 ${dropdownOpen ? 'rotate-180' : ''}`} />
               </button>
 
               {dropdownOpen && (
@@ -1245,8 +1304,9 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
         ) : (
           // Not logged in: show login button
           <>
+            {githubStarLink}
             <button
-              className="bg-[#f44336] text-white rounded-full px-4 h-9 border-none text-sm font-medium cursor-pointer transition-all duration-200 hover:bg-[#ff6b6b] hover:-translate-y-px"
+              className="h-8 rounded-full border-none bg-[#f44336] px-3 text-xs font-medium text-white cursor-pointer transition-all duration-200 hover:-translate-y-px hover:bg-[#ff6b6b] sm:h-9 sm:px-4 sm:text-sm"
               onClick={onLoginClick}
             >
               Login
@@ -1254,6 +1314,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
           </>
         )}
       </div>
+
     </header>
   );
 }

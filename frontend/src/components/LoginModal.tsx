@@ -161,7 +161,7 @@ export default function LoginModal({
           <X className="h-4 w-4" />
         </button>
 
-        <h2 className="text-2xl font-extrabold pr-8">Sign in to start building!</h2>
+        <h2 className="text-md pr-8">Sign in to save builds and add to community!</h2>
         {/* <p className="mt-1 text-sm text-slate-600">
           {otpSent
             ? "Enter the code we sent to your email."
