@@ -82,6 +82,11 @@ The response contains `.ldr` and `.mpd` content you can open in any LEGO CAD vie
 - **Backend** → Railway
 - **Serverless worker** → RunPod (Docker image)
 
+## Attributes
+- Voxelization: https://github.com/eisenwave/obj2voxel
+- Legolization: https://github.com/AvaLovelace1/BrickGPT/
+- image-to-3D streaming: https://github.com/rehan-remade/Manifold
+
 ## License
 
 Apache 2.0. LEGO® is a trademark of the LEGO Group, which does not sponsor or endorse this project.
