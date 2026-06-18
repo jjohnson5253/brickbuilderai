@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://brickbuilder.ai/brickbuilder-logo.png" alt="BrickBuilder.AI" width="320" />
+  <img src="https://brickbuilder.ai/brickbuilder-logo.PNG" alt="BrickBuilder.AI" width="320" />
 </p>
 
 <h1 align="center">BrickBuilder.AI</h1>
