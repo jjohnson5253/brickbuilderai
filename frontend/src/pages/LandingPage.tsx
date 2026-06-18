@@ -1091,7 +1091,7 @@ function HowItWorks() {
     {
       icon: MessageSquare,
       title: "Describe or upload",
-      description: "Type a prompt like \"a retro space rover\" or drop in any image you want to build.",
+      description: "Type a prompt like \"a pink elephant\" or drop in any image you want to build.",
     },
     {
       icon: Wand2,
