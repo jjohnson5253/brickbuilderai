@@ -697,7 +697,7 @@ export default function LandingPage() {
           const mpdData = await LdrToMpdApiService.convertLdrToMpd(
             completedGeneration.ldr_content,
             modelName,
-            undefined
+            authToken
           );
           mpdContent = mpdData.mpd_content;
         } catch (mpdError) {

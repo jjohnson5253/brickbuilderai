@@ -8,6 +8,7 @@ import { GetGenerationApiService } from "../services/getGenerationApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { SEO } from "../components/SEO";
 import { SiteFooter } from "../components/SiteFooter";
+import { supabase } from "../lib/supabase";
 
 type LocationState = {
   name?: string;
@@ -185,10 +186,11 @@ export default function OrderKit() {
         if (!mpdContent && generationData.ldr_content) {
           try {
             const modelName = generationData.prompt || name;
+            const authToken = (await supabase.auth.getSession()).data.session?.access_token;
             const mpdData = await LdrToMpdApiService.convertLdrToMpd(
               generationData.ldr_content,
               modelName,
-              undefined
+              authToken
             );
             mpdContent = mpdData.mpd_content;
           } catch (mpdError) {
