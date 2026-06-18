@@ -1,4 +1,4 @@
-import { Instagram, Youtube } from "lucide-react";
+import { Github, Instagram, Youtube } from "lucide-react";
 
 // TikTok icon (not provided by lucide-react)
 function TikTokIcon({ className }: { className?: string }) {
@@ -47,6 +47,15 @@ export function SiteFooter() {
           >
             <TikTokIcon className="h-5 w-5" />
           </a>
+          <a
+            href="https://github.com/jjohnson5253/brickbuilderai"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="GitHub"
+            className="text-slate-500 hover:text-[#f44336] transition-colors"
+          >
+            <Github className="h-5 w-5" />
+          </a>
         </div>
         <div>
           Need help?{" "}
@@ -58,7 +67,7 @@ export function SiteFooter() {
           </a>
         </div>
         <div className="text-xs text-slate-400">
-          © 2026 BrickBuilder.AI
+          © 2026 BrickBuilderAI
         </div>
       </div>
     </footer>
