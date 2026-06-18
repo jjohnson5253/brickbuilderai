@@ -387,10 +387,11 @@ export function InstructionsPage() {
           
           // Convert LDR to MPD
           try {
+            const authToken = (await supabase.auth.getSession()).data.session?.access_token;
             const mpdData = await LdrToMpdApiService.convertLdrToMpd(
               ldr_content, 
               prompt || 'Generated Model', 
-              undefined
+              authToken
             );
             if (mpdData.mpd_content) {
               setMpdContent(mpdData.mpd_content);
@@ -1118,10 +1119,11 @@ export function InstructionsPage() {
 
       // Convert LDR to MPD
       try {
+        const authToken = (await supabase.auth.getSession()).data.session?.access_token;
         const mpdData = await LdrToMpdApiService.convertLdrToMpd(
           content,
           modelName,
-          undefined
+          authToken
         );
         if (mpdData.mpd_content) {
           setMpdContent(mpdData.mpd_content);

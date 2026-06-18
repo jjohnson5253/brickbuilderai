@@ -697,7 +697,7 @@ export default function LandingPage() {
           const mpdData = await LdrToMpdApiService.convertLdrToMpd(
             completedGeneration.ldr_content,
             modelName,
-            undefined
+            authToken
           );
           mpdContent = mpdData.mpd_content;
         } catch (mpdError) {
@@ -1006,19 +1006,19 @@ export default function LandingPage() {
                     </div>
                   ) : previewImageUrl ? (
                     <>
-                      <svg width="0" height="0" style={{ position: 'absolute' }}>
+                      {/* <svg width="0" height="0" style={{ position: 'absolute' }}>
                         <filter id="wavy-edge">
                           <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="3" result="noise" seed="1">
                             <animate attributeName="seed" dur="0.5s" values="1;2;3;4;5" repeatCount="indefinite" />
                           </feTurbulence>
                           <feDisplacementMap in="SourceGraphic" in2="noise" scale="8" xChannelSelector="R" yChannelSelector="G" />
                         </filter>
-                      </svg>
+                      </svg> */}
                       <img
                         src={previewImageUrl}
                         alt="Generation preview"
                         className="w-full"
-                        style={{ filter: 'blur(4px) grayscale(100%) url(#wavy-edge)', transform: 'scale(1.05)' }}
+                        // style={{ filter: 'blur(4px) grayscale(100%) url(#wavy-edge)', transform: 'scale(1.05)' }}
                       />
                     </>
                   ) : (
