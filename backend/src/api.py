@@ -75,7 +75,8 @@ app.add_middleware(
         "https://prompt2bricks.com",  # New domain
         "https://brickai-new-ui.vercel.app",  # New UI domain
         "https://brickbuilder.ai",
-        "https://brickai-frontend.vercel.app"  # New UI domain
+        "https://brickai-frontend.vercel.app",  # New UI domain
+        "https://brickbuilderai-staging.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
