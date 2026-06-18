@@ -1,5 +1,5 @@
-# Jake notes
- - This app creates a docker image that uses sam3d image-to-3d model but stops short of the GLB generation because only voxels are needed for lego conversion. This code is in `/serverless` and code for calling the hosted docker image as serverless endpoint on runpod is in route.ts
+# Notes
+ - This app creates a docker image that uses sam3d image-to-3d model but stops short of the GLB generation because only voxels are needed for lego conversion. This code is in `/serverless` and code for calling the hosted docker image as a serverless endpoint on runpod is in route.ts
  - you can use /frontend to test
 ### uploading to docker
  - `cd serverless`
@@ -10,7 +10,7 @@
   <img src="frontend/public/logo.png" alt="Manifold Logo" width="300" />
 </p>
 
-**Real-time text-to-3D and image-to-3D diffusion with live streaming, powered by [fal.ai](https://fal.ai)**
+**Real-time text-to-3D and image-to-3D diffusion with live streaming**
 
 Manifold lets you turn text prompts or images into 3D models using SAM-3d-objects 3D diffusion, streaming every step as it's generated. See your ideas take shape as voxels, meshes, and textures—all in an interactive, immersive viewer.
 
