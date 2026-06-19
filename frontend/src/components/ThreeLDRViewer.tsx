@@ -1075,13 +1075,13 @@ const createExplodePhysics = async (
     }
     outward.normalize();
 
-    const radialSpeed = THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420);
+    const radialSpeed = THREE.MathUtils.clamp(maxDimension * 1.05, 170, 500);
     const spread = Math.random();
-    const radialMultiplier = THREE.MathUtils.lerp(0.08, 1, spread * spread);
+    const radialMultiplier = THREE.MathUtils.lerp(0.22, 1.08, spread * spread);
     const tangent = new THREE.Vector3(-outward.z, 0, outward.x);
-    const tangentSpeed = THREE.MathUtils.lerp(-90, 90, Math.random());
-    const randomX = THREE.MathUtils.lerp(-35, 35, Math.random());
-    const randomZ = THREE.MathUtils.lerp(-35, 35, Math.random());
+    const tangentSpeed = THREE.MathUtils.lerp(-105, 105, Math.random());
+    const randomX = THREE.MathUtils.lerp(-42, 42, Math.random());
+    const randomZ = THREE.MathUtils.lerp(-42, 42, Math.random());
 
     const body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
