@@ -48,13 +48,15 @@ export default function LoginModal({
     setLoading(false);
   }, [open]);
 
-  // Lock background scroll while open
+  // Lock background scroll while open; scroll to top on close (mobile keyboard
+  // focus can push the page down while the modal is open).
   useEffect(() => {
     if (!open) return;
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previous;
+      window.scrollTo({ top: 0, behavior: "instant" });
     };
   }, [open]);
 
