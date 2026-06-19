@@ -1455,11 +1455,11 @@ export default function GeneratedModel() {
         {!showVoxelEditor && (
           <section className="relative mt-2 mb-2 md:mb-3 landing-fade-in landing-delay-2">
             <h2 className="text-lg sm:text-xl lg:text-2xl font-semibold text-center break-words px-4">
-              Successfully Generated Model
+              Successfully Generated Model 🎉
             </h2>
             {currentGenerationId && (
               <p className="text-xs text-slate-400 text-center mt-1">
-                id: {currentGenerationId}
+                {/* id: {currentGenerationId} */}
               </p>
             )}
             {/* <p className="text-sm text-slate-500 text-center italic mt-3 px-4">
