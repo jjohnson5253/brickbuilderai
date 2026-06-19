@@ -316,6 +316,7 @@ export default function GeneratedModel() {
   // pulsing after the user has discovered the feature (even if they later exit
   // edit mode).
   const [hasClickedEditModel, setHasClickedEditModel] = React.useState<boolean>(false);
+  const [hasExitedVoxelEditor, setHasExitedVoxelEditor] = React.useState<boolean>(false);
   const [previewPngDataUrl, setPreviewPngDataUrl] = React.useState<string | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = React.useState(false);
   const [isExportingVideo, setIsExportingVideo] = React.useState(false);
@@ -1259,6 +1260,13 @@ export default function GeneratedModel() {
     action();
   };
 
+  const exitVoxelEditor = React.useCallback(() => {
+    setShowVoxelEditor(false);
+    setShowResizeScaler(false);
+    setXyzrgbError(null);
+    setHasExitedVoxelEditor(true);
+  }, []);
+
   const handleEditModelClick = async () => {
     // Stop the attention pulse permanently once the user has discovered the
     // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
@@ -1268,16 +1276,12 @@ export default function GeneratedModel() {
     if (showVoxelEditor) {
       if (voxelHasChanges) {
         pendingExitActionRef.current = () => {
-          setShowVoxelEditor(false);
-          setShowResizeScaler(false);
-          setXyzrgbError(null);
+          exitVoxelEditor();
         };
         setShowUnsavedChangesModal(true);
         return;
       }
-      setShowVoxelEditor(false);
-      setShowResizeScaler(false);
-      setXyzrgbError(null);
+      exitVoxelEditor();
       return;
     }
 
@@ -1826,7 +1830,7 @@ export default function GeneratedModel() {
                 )}
             </button>
 
-            {/* Order My Kit button — red with hover lighten */}
+            {/* Order My Kit button — white with grey border, turns red on hover */}
             <button
             type="button"
             aria-label="Order my kit"
@@ -1840,15 +1844,15 @@ export default function GeneratedModel() {
                 priceData: priceData
               }
             }))}
-            className={`inline-flex items-center justify-center h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 text-white font-semibold transition-all duration-150 shadow-lg ${
+            className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 transition-all duration-150 ${
               priceLoading || isSavePolling
-                ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-[#f44336] cursor-pointer shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:scale-[1.03]'
+                ? 'cursor-not-allowed opacity-70' 
+                : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
             }`}
           >
             {priceLoading || isSavePolling ? (
               <>
-                <div className="w-4 h-4 border-2 border-gray-300 border-t-black rounded-full animate-spin mr-2"></div>
+                <div className="w-4 h-4 border-2 border-gray-300 border-t-black rounded-full animate-spin"></div>
                 Order my Kit!
               </>
             ) : (
@@ -1866,9 +1870,7 @@ export default function GeneratedModel() {
             className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold transition-all duration-150 border-2 ${
               !currentGenerationId || communityToggleLoading || isSavePolling
                 ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
-                : isCommunity
-                  ? 'bg-white text-[#f44336] border-[#f44336] cursor-pointer hover:bg-[#f44336] hover:text-white hover:scale-[1.03] hover:shadow-lg'
-                  : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
+                : `bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] ${!isCommunity && hasExitedVoxelEditor && !showVoxelEditor ? 'attention-pulse' : ''}`
             }`}
           >
             {communityToggleLoading ? (
@@ -2045,9 +2047,7 @@ export default function GeneratedModel() {
               <button
                 onClick={() => {
                   setShowUnsavedChangesModal(false);
-                  setShowVoxelEditor(false);
-                  setShowResizeScaler(false);
-                  setXyzrgbError(null);
+                  exitVoxelEditor();
                   setVoxelHasChanges(false);
                   const action = pendingExitActionRef.current;
                   pendingExitActionRef.current = null;
@@ -2063,9 +2063,7 @@ export default function GeneratedModel() {
                   if (voxelSaveRef.current) {
                     await voxelSaveRef.current();
                   }
-                  setShowVoxelEditor(false);
-                  setShowResizeScaler(false);
-                  setXyzrgbError(null);
+                  exitVoxelEditor();
                   setVoxelHasChanges(false);
                   const action = pendingExitActionRef.current;
                   pendingExitActionRef.current = null;
