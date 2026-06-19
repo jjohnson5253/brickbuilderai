@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 import { LDrawConditionalLineMaterial } from 'three/addons/materials/LDrawConditionalLineMaterial.js';
-import { PackageOpen, RotateCcw } from 'lucide-react';
+import { PackageOpen, RotateCcw, Ruler } from 'lucide-react';
 
 // Build a simple stylized room with a table, sized to fit the model.
 const buildRoom = (
@@ -1425,7 +1425,7 @@ export function ThreeLDRViewer({
   const [meshesReady, setMeshesReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [explodeMode, setExplodeMode] = useState<ExplodeMode>('assembled');
-  const [collisionCount, setCollisionCount] = useState(0);
+  const [showRulerGrid, setShowRulerGrid] = useState(false);
   const collisionCountRef = useRef(0);
   const isCaptureInProgressRef = useRef(false);
   const buildAnimationRef = useRef<BuildAnimationState | null>(null);
@@ -1451,7 +1451,6 @@ export function ThreeLDRViewer({
   const updateCollisionCount = (nextCount: number) => {
     if (collisionCountRef.current === nextCount) return;
     collisionCountRef.current = nextCount;
-    setCollisionCount(nextCount);
   };
 
   const handleToggleExplode = async () => {
@@ -1710,6 +1709,8 @@ export function ThreeLDRViewer({
               const minDistance = maxDimension * 1.8;
 
               buildRulerGrid(scene, bbox, maxDimension);
+              const rulerGrid = scene.getObjectByName('ruler-grid');
+              if (rulerGrid) rulerGrid.visible = false;
 
               // ── Build display room with table ──
               buildRoom(scene, bbox, center, size, maxDimension, showBaseplate);
@@ -2008,6 +2009,17 @@ export function ThreeLDRViewer({
     };
   }, [modelPath, modelContent, onExportCaptureReady, animateModelBuild]);
 
+  useEffect(() => {
+    const { scene } = sceneRef.current;
+    const rulerGrid = scene?.getObjectByName('ruler-grid');
+    if (!rulerGrid) return;
+
+    const visibleCount = currentStepIndex === undefined
+      ? meshesRef.current.length || 1
+      : stepBoundariesRef.current[currentStepIndex] ?? meshesRef.current.length;
+    rulerGrid.visible = showRulerGrid && visibleCount > 0;
+  }, [showRulerGrid, currentStepIndex, meshesReady]);
+
   // Update part visibility and materials when step changes (instant - no re-parsing)
   useEffect(() => {
     if (currentStepIndex === undefined || meshesRef.current.length === 0 || !meshesReady) return;
@@ -2036,7 +2048,7 @@ export function ThreeLDRViewer({
       const anyPartVisible = visibleCount > 0;
       if (displayRoom) displayRoom.visible = anyPartVisible;
       if (baseplate) baseplate.visible = anyPartVisible;
-      if (rulerGrid) rulerGrid.visible = anyPartVisible;
+      if (rulerGrid) rulerGrid.visible = showRulerGrid && anyPartVisible;
     }
 
     meshesRef.current.forEach((part, idx) => {
@@ -2084,7 +2096,7 @@ export function ThreeLDRViewer({
         }
       });
     });
-  }, [currentStepIndex, meshesReady, highlightNewParts]);
+  }, [currentStepIndex, meshesReady, highlightNewParts, showRulerGrid]);
 
   // Always render without Card wrapper (simplified embedded mode)
   return (
@@ -2107,22 +2119,31 @@ export function ThreeLDRViewer({
             className="w-full h-full bg-gray-100 rounded-lg overflow-hidden"
             style={{ visibility: loading ? 'hidden' : 'visible' }}
           />
-          <div className="absolute left-3 top-3 z-20 rounded-full border border-slate-700/20 bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-black/20 backdrop-blur-sm">
-            Collisions: {collisionCount}
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowRulerGrid((visible) => !visible)}
+            disabled={loading || !!error}
+            className="absolute left-3 top-3 z-20 inline-flex items-center gap-2 rounded-full border border-slate-700/30 bg-slate-950/85 px-2.5 py-2 text-xs font-semibold text-white shadow-lg shadow-black/25 backdrop-blur-sm transition-all duration-150 hover:bg-slate-800 hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
+            title={showRulerGrid ? 'Hide ruler' : 'Show ruler'}
+            aria-label={showRulerGrid ? 'Hide ruler' : 'Show ruler'}
+            aria-pressed={showRulerGrid}
+          >
+            <Ruler size={14} />
+            <span className="hidden sm:inline">{showRulerGrid ? 'Hide ruler' : 'Show ruler'}</span>
+          </button>
           {canExplodeModel && (
             <button
               type="button"
               onClick={handleToggleExplode}
               disabled={explodeMode === 'rebuilding'}
-              className="absolute bottom-3 left-3 z-20 inline-flex h-10 items-center gap-2 rounded-full border border-slate-700/30 bg-slate-950/85 px-3 text-xs font-semibold text-white shadow-lg shadow-black/25 backdrop-blur-sm transition-all duration-150 hover:bg-slate-800 hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
+              className="absolute bottom-3 left-3 z-20 inline-flex items-center gap-2 rounded-full border border-slate-700/30 bg-slate-950/85 px-2.5 py-2 text-xs font-semibold text-white shadow-lg shadow-black/25 backdrop-blur-sm transition-all duration-150 hover:bg-slate-800 hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
               title={explodeMode === 'assembled' ? 'Explode model' : 'Rebuild model'}
               aria-label={explodeMode === 'assembled' ? 'Explode model' : 'Rebuild model'}
             >
               {explodeMode === 'exploded' || explodeMode === 'exploding' || explodeMode === 'rebuilding' ? (
-                <RotateCcw size={15} />
+                <RotateCcw size={14} />
               ) : (
-                <PackageOpen size={15} />
+                <PackageOpen size={14} />
               )}
               <span className="hidden sm:inline">
                 {explodeMode === 'exploding'

@@ -1749,7 +1749,7 @@ export default function GeneratedModel() {
           </div>
         </div>
         <figcaption className="mt-1 text-xs text-slate-500 text-center">
-          Click/touch and drag to rotate, scroll/pinch to zoom
+          {/* Click/touch and drag to rotate, scroll/pinch to zoom */}
         </figcaption>
       </figure>
     </div>
