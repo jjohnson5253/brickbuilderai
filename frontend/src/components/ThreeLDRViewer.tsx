@@ -1075,6 +1075,15 @@ const createExplodePhysics = async (
     }
     outward.normalize();
 
+    const radialSpeed = THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420);
+    const spreadSeed = Math.sin((index + 1) * 12.9898) * 43758.5453;
+    const spread = spreadSeed - Math.floor(spreadSeed);
+    const radialMultiplier = THREE.MathUtils.lerp(0.08, 1, spread * spread);
+    const tangent = new THREE.Vector3(-outward.z, 0, outward.x);
+    const tangentSpeed = THREE.MathUtils.lerp(-90, 90, spread);
+    const randomX = Math.sin(index * 2.17) * 35;
+    const randomZ = Math.cos(index * 1.73) * 35;
+
     const body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(center.x, center.y, center.z)
@@ -1085,9 +1094,9 @@ const createExplodePhysics = async (
           w: objectWorldQuaternion.w,
         })
         .setLinvel(
-          outward.x * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.sin(index * 2.17) * 22,
+          outward.x * radialSpeed * radialMultiplier + tangent.x * tangentSpeed + randomX,
           THREE.MathUtils.clamp(maxDimension * 0.78, 180, 360) + (index % 6) * 18,
-          outward.z * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.cos(index * 1.73) * 22,
+          outward.z * radialSpeed * radialMultiplier + tangent.z * tangentSpeed + randomZ,
         )
         .setAngvel({
           x: Math.sin(index * 1.37) * 5.5,
