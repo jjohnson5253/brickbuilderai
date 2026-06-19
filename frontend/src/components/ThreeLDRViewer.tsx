@@ -573,10 +573,13 @@ type ExplodePhysicsState = {
   active: boolean;
   world: CANNON.World;
   parts: PhysicsPart[];
-  startTimeMs: number;
   lastStepMs: number;
+  simulatedMs: number;
   maxDurationMs: number;
 };
+
+const PHYSICS_STATIC_GROUP = 1;
+const PHYSICS_PART_GROUP = 2;
 
 const easeOutCubic = (value: number) => 1 - Math.pow(1 - value, 3);
 
@@ -783,15 +786,11 @@ const createExplodePhysics = (
   const roomWidth = typeof table.userData.roomWidth === 'number' ? table.userData.roomWidth : tableWidth * 2;
   const roomDepth = typeof table.userData.roomDepth === 'number' ? table.userData.roomDepth : tableDepth * 2;
 
-  allParts.forEach((object, index) => {
+  allParts.forEach((object) => {
     if (!getStoredVector(object, 'explodeOriginalPosition')) {
       object.userData.explodeOriginalPosition = object.position.clone();
       object.userData.explodeOriginalQuaternion = object.quaternion.clone();
     }
-
-    const landing = computeTableLandingTransform(object, table, index, allParts.length);
-    object.userData.explodeTargetPosition = landing.position.clone();
-    object.userData.explodeTargetQuaternion = landing.quaternion.clone();
   });
 
   const parts = allParts;
@@ -807,11 +806,15 @@ const createExplodePhysics = (
   world.broadphase = new CANNON.SAPBroadphase(world);
 
   const tableBody = new CANNON.Body({ mass: 0 });
+  tableBody.collisionFilterGroup = PHYSICS_STATIC_GROUP;
+  tableBody.collisionFilterMask = PHYSICS_PART_GROUP;
   tableBody.addShape(new CANNON.Box(new CANNON.Vec3(tableWidth / 2, tableThickness / 2, tableDepth / 2)));
   tableBody.position.set(tableCenterX, tableTopSurface - tableThickness / 2, tableCenterZ);
   world.addBody(tableBody);
 
   const floorBody = new CANNON.Body({ mass: 0 });
+  floorBody.collisionFilterGroup = PHYSICS_STATIC_GROUP;
+  floorBody.collisionFilterMask = PHYSICS_PART_GROUP;
   floorBody.addShape(new CANNON.Box(new CANNON.Vec3(roomWidth / 2, 8, roomDepth / 2)));
   floorBody.position.set(tableCenterX, floorY - 8, tableCenterZ);
   world.addBody(floorBody);
@@ -841,6 +844,8 @@ const createExplodePhysics = (
       sleepSpeedLimit: 3.5,
       sleepTimeLimit: 0.45,
     });
+    body.collisionFilterGroup = PHYSICS_PART_GROUP;
+    body.collisionFilterMask = PHYSICS_STATIC_GROUP;
     body.addShape(new CANNON.Box(new CANNON.Vec3(
       Math.max(size.x / 2, 3),
       Math.max(size.y / 2, 3),
@@ -878,9 +883,9 @@ const createExplodePhysics = (
     active: true,
     world,
     parts: physicsParts,
-    startTimeMs: performance.now(),
     lastStepMs: performance.now(),
-    maxDurationMs: 5200,
+    simulatedMs: 0,
+    maxDurationMs: 9000,
   };
 };
 
@@ -896,9 +901,10 @@ const updateExplodePhysics = (physics: ExplodePhysicsState | null, nowMs: number
   const deltaSeconds = Math.min((nowMs - physics.lastStepMs) / 1000, 0.05);
   physics.lastStepMs = nowMs;
   physics.world.step(1 / 60, deltaSeconds, 3);
+  physics.simulatedMs += deltaSeconds * 1000;
   physics.parts.forEach(syncObjectToBody);
 
-  const elapsedMs = nowMs - physics.startTimeMs;
+  const elapsedMs = physics.simulatedMs;
   const allSleeping = physics.parts.every((part) => part.body.sleepState === CANNON.Body.SLEEPING);
   if (elapsedMs < 1200 || (!allSleeping && elapsedMs < physics.maxDurationMs)) return false;
 
