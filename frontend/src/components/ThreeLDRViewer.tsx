@@ -126,10 +126,12 @@ const formatLDrawMeasurement = (lengthLdu: number) => {
   return `${inches.toFixed(inchPrecision)} in (${centimeters.toFixed(cmPrecision)} cm)`;
 };
 
-const createRulerLabel = (text: string, color: string, labelHeight: number) => {
+const RULER_LABEL_PIXEL_HEIGHT = 34;
+
+const createRulerLabel = (text: string) => {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
-  const canvasWidth = 512;
+  const canvasWidth = 640;
   const canvasHeight = 128;
   canvas.width = canvasWidth;
   canvas.height = canvasHeight;
@@ -144,7 +146,7 @@ const createRulerLabel = (text: string, color: string, labelHeight: number) => {
   context.fill();
   context.stroke();
   context.font = '600 38px Arial, sans-serif';
-  context.fillStyle = color;
+  context.fillStyle = '#000000';
   context.textAlign = 'center';
   context.textBaseline = 'middle';
   context.fillText(text, canvasWidth / 2, canvasHeight / 2 + 2, canvasWidth - 48);
@@ -160,10 +162,41 @@ const createRulerLabel = (text: string, color: string, labelHeight: number) => {
     transparent: true,
   });
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(labelHeight * (canvasWidth / canvasHeight), labelHeight, 1);
+  sprite.userData.rulerLabelAspect = canvasWidth / canvasHeight;
+  sprite.userData.rulerLabelPixelHeight = RULER_LABEL_PIXEL_HEIGHT;
+  sprite.scale.set(canvasWidth / canvasHeight, 1, 1);
   sprite.renderOrder = 20;
 
   return sprite;
+};
+
+const updateRulerLabelScales = (
+  scene: THREE.Scene,
+  camera: THREE.PerspectiveCamera,
+  renderer: THREE.WebGLRenderer,
+) => {
+  const rulerGrid = scene.getObjectByName('ruler-grid');
+  if (!rulerGrid?.visible) return;
+
+  const renderSize = renderer.getSize(new THREE.Vector2());
+  const viewportHeight = Math.max(renderSize.y, 1);
+  const fovRadians = THREE.MathUtils.degToRad(camera.fov);
+
+  rulerGrid.traverse((object) => {
+    if (!(object instanceof THREE.Sprite)) return;
+
+    const pixelHeight = typeof object.userData.rulerLabelPixelHeight === 'number'
+      ? object.userData.rulerLabelPixelHeight
+      : RULER_LABEL_PIXEL_HEIGHT;
+    const aspect = typeof object.userData.rulerLabelAspect === 'number'
+      ? object.userData.rulerLabelAspect
+      : 1;
+    const distance = camera.position.distanceTo(object.getWorldPosition(new THREE.Vector3()));
+    const visibleHeight = 2 * Math.tan(fovRadians / 2) * distance;
+    const worldHeight = (pixelHeight / viewportHeight) * visibleHeight;
+
+    object.scale.set(worldHeight * aspect, worldHeight, 1);
+  });
 };
 
 const createLine = (
@@ -206,7 +239,6 @@ const buildRulerGrid = (
   const axisOffset = Math.max(maxDimension * 0.08, 18);
   const labelOffset = Math.max(maxDimension * 0.12, 28);
   const tickSize = Math.max(maxDimension * 0.025, 8);
-  const labelHeight = Math.max(maxDimension * 0.09, 24);
   const xAxisZ = bbox.min.z - axisOffset;
   const zAxisX = bbox.min.x - axisOffset;
 
@@ -278,19 +310,19 @@ const buildRulerGrid = (
     0x16a34a,
   ));
 
-  const xLabel = createRulerLabel(`X ${formatLDrawMeasurement(bbox.max.x - bbox.min.x)}`, '#b91c1c', labelHeight);
+  const xLabel = createRulerLabel(formatLDrawMeasurement(bbox.max.x - bbox.min.x));
   if (xLabel) {
     xLabel.position.set(bbox.max.x + labelOffset, gridY, xAxisZ);
     group.add(xLabel);
   }
 
-  const zLabel = createRulerLabel(`Z ${formatLDrawMeasurement(bbox.max.z - bbox.min.z)}`, '#1d4ed8', labelHeight);
+  const zLabel = createRulerLabel(formatLDrawMeasurement(bbox.max.z - bbox.min.z));
   if (zLabel) {
     zLabel.position.set(zAxisX, gridY, bbox.max.z + labelOffset);
     group.add(zLabel);
   }
 
-  const yLabel = createRulerLabel(`Y ${formatLDrawMeasurement(bbox.max.y - bbox.min.y)}`, '#15803d', labelHeight);
+  const yLabel = createRulerLabel(formatLDrawMeasurement(bbox.max.y - bbox.min.y));
   if (yLabel) {
     yLabel.position.set(zAxisX, bbox.max.y + labelOffset * 0.5, xAxisZ);
     group.add(yLabel);
@@ -1960,6 +1992,8 @@ export function ThreeLDRViewer({
             const isAbove = camera.position.y > floorY;
             baseplate.visible = isAbove;
           }
+
+          updateRulerLabelScales(scene, camera, renderer);
           
           renderer.render(scene, camera);
         };
