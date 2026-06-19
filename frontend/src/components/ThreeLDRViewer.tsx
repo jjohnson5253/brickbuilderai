@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import * as CANNON from 'cannon-es';
+import * as RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -564,13 +564,14 @@ type ExplodeAnimationState = {
 
 type PhysicsPart = {
   object: THREE.Object3D;
-  body: CANNON.Body;
-  objectOffset: CANNON.Vec3;
+  body: RAPIER.RigidBody;
+  collider: RAPIER.Collider;
+  objectOffset: THREE.Vector3;
 };
 
 type ExplodePhysicsState = {
   active: boolean;
-  world: CANNON.World;
+  world: RAPIER.World;
   parts: PhysicsPart[];
   collisionCount: number;
   lastStepMs: number;
@@ -578,13 +579,19 @@ type ExplodePhysicsState = {
   maxDurationMs: number;
 };
 
-type CannonWorldWithContacts = CANNON.World & {
-  contacts?: unknown[];
-};
+const PHYSICS_STATIC_GROUP = 0x0001;
+const PHYSICS_PART_GROUP = 0x0002;
 
-const PHYSICS_STATIC_GROUP = 1;
-const PHYSICS_PART_GROUP = 2;
-const PHYSICS_PART_COLLISION_MASK = PHYSICS_STATIC_GROUP;
+const interactionGroups = (memberships: number, filter: number) => (memberships << 16) | filter;
+
+let rapierInitPromise: Promise<void> | null = null;
+
+const ensureRapierReady = () => {
+  if (!rapierInitPromise) {
+    rapierInitPromise = RAPIER.init();
+  }
+  return rapierInitPromise;
+};
 
 const easeOutCubic = (value: number) => 1 - Math.pow(1 - value, 3);
 
@@ -741,22 +748,11 @@ const getStoredQuaternion = (object: THREE.Object3D, key: string) => {
 };
 
 const syncObjectToBody = (part: PhysicsPart) => {
-  const bodyQuaternion = new THREE.Quaternion(
-    part.body.quaternion.x,
-    part.body.quaternion.y,
-    part.body.quaternion.z,
-    part.body.quaternion.w,
-  );
-  const offset = new THREE.Vector3(
-    part.objectOffset.x,
-    part.objectOffset.y,
-    part.objectOffset.z,
-  ).applyQuaternion(bodyQuaternion);
-  const worldPosition = new THREE.Vector3(
-    part.body.position.x,
-    part.body.position.y,
-    part.body.position.z,
-  ).add(offset);
+  const rotation = part.body.rotation();
+  const translation = part.body.translation();
+  const bodyQuaternion = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w);
+  const offset = part.objectOffset.clone().applyQuaternion(bodyQuaternion);
+  const worldPosition = new THREE.Vector3(translation.x, translation.y, translation.z).add(offset);
 
   if (part.object.parent) {
     part.object.position.copy(part.object.parent.worldToLocal(worldPosition));
@@ -769,10 +765,12 @@ const syncObjectToBody = (part: PhysicsPart) => {
   }
 };
 
-const createExplodePhysics = (
+const createExplodePhysics = async (
   model: THREE.Group,
   table: THREE.Object3D,
-): ExplodePhysicsState | null => {
+): Promise<ExplodePhysicsState | null> => {
+  await ensureRapierReady();
+
   const allParts = getExplodableParts(model);
   if (allParts.length === 0) return null;
 
@@ -801,28 +799,38 @@ const createExplodePhysics = (
   const parts = allParts;
   model.updateMatrixWorld(true);
 
-  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -560, 0) });
-  world.allowSleep = true;
-  (world.solver as CANNON.GSSolver).iterations = 5;
-  world.defaultContactMaterial.friction = 0.55;
-  world.defaultContactMaterial.restitution = 0.22;
-  world.defaultContactMaterial.contactEquationStiffness = 1e7;
-  world.defaultContactMaterial.contactEquationRelaxation = 4;
-  world.broadphase = new CANNON.SAPBroadphase(world);
+  const world = new RAPIER.World({ x: 0, y: -560, z: 0 });
+  world.timestep = 1 / 60;
+  world.numSolverIterations = 5;
+  world.maxCcdSubsteps = 1;
+  world.lengthUnit = Math.max(maxDimension / 8, 20);
 
-  const tableBody = new CANNON.Body({ mass: 0 });
-  tableBody.collisionFilterGroup = PHYSICS_STATIC_GROUP;
-  tableBody.collisionFilterMask = PHYSICS_PART_GROUP;
-  tableBody.addShape(new CANNON.Box(new CANNON.Vec3(tableWidth / 2, tableThickness / 2, tableDepth / 2)));
-  tableBody.position.set(tableCenterX, tableTopSurface - tableThickness / 2, tableCenterZ);
-  world.addBody(tableBody);
+  const staticGroups = interactionGroups(PHYSICS_STATIC_GROUP, PHYSICS_PART_GROUP);
+  const partGroups = interactionGroups(PHYSICS_PART_GROUP, PHYSICS_STATIC_GROUP);
 
-  const floorBody = new CANNON.Body({ mass: 0 });
-  floorBody.collisionFilterGroup = PHYSICS_STATIC_GROUP;
-  floorBody.collisionFilterMask = PHYSICS_PART_GROUP;
-  floorBody.addShape(new CANNON.Box(new CANNON.Vec3(roomWidth / 2, 8, roomDepth / 2)));
-  floorBody.position.set(tableCenterX, floorY - 8, tableCenterZ);
-  world.addBody(floorBody);
+  const tableBody = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(tableCenterX, tableTopSurface - tableThickness / 2, tableCenterZ),
+  );
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(tableWidth / 2, tableThickness / 2, tableDepth / 2)
+      .setFriction(0.55)
+      .setRestitution(0.22)
+      .setCollisionGroups(staticGroups)
+      .setSolverGroups(staticGroups),
+    tableBody,
+  );
+
+  const floorBody = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(tableCenterX, floorY - 8, tableCenterZ),
+  );
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(roomWidth / 2, 8, roomDepth / 2)
+      .setFriction(0.55)
+      .setRestitution(0.22)
+      .setCollisionGroups(staticGroups)
+      .setSolverGroups(staticGroups),
+    floorBody,
+  );
 
   const physicsParts = parts.flatMap<PhysicsPart>((object, index) => {
     object.updateMatrixWorld(true);
@@ -842,43 +850,48 @@ const createExplodePhysics = (
     }
     outward.normalize();
 
-    const body = new CANNON.Body({
-      mass: THREE.MathUtils.clamp((size.x * size.y * size.z) / 18000, 0.35, 3.5),
-      linearDamping: 0.18,
-      angularDamping: 0.28,
-      sleepSpeedLimit: 3.5,
-      sleepTimeLimit: 0.45,
-    });
-    body.collisionFilterGroup = PHYSICS_PART_GROUP;
-    body.collisionFilterMask = PHYSICS_PART_COLLISION_MASK;
-    body.addShape(new CANNON.Box(new CANNON.Vec3(
-      Math.max(size.x / 2, 3),
-      Math.max(size.y / 2, 3),
-      Math.max(size.z / 2, 3),
-    )));
-    body.position.set(center.x, center.y, center.z);
-    body.quaternion.set(
-      objectWorldQuaternion.x,
-      objectWorldQuaternion.y,
-      objectWorldQuaternion.z,
-      objectWorldQuaternion.w,
+    const body = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(center.x, center.y, center.z)
+        .setRotation({
+          x: objectWorldQuaternion.x,
+          y: objectWorldQuaternion.y,
+          z: objectWorldQuaternion.z,
+          w: objectWorldQuaternion.w,
+        })
+        .setLinvel(
+          outward.x * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.sin(index * 2.17) * 22,
+          THREE.MathUtils.clamp(maxDimension * 0.78, 180, 360) + (index % 6) * 18,
+          outward.z * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.cos(index * 1.73) * 22,
+        )
+        .setAngvel({
+          x: Math.sin(index * 1.37) * 5.5,
+          y: Math.cos(index * 1.83) * 4.5,
+          z: Math.sin(index * 2.21) * 5,
+        })
+        .setAdditionalMass(THREE.MathUtils.clamp((size.x * size.y * size.z) / 18000, 0.35, 3.5))
+        .setLinearDamping(0.18)
+        .setAngularDamping(0.28)
+        .setCanSleep(true),
     );
-    body.velocity.set(
-      outward.x * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.sin(index * 2.17) * 22,
-      THREE.MathUtils.clamp(maxDimension * 0.78, 180, 360) + (index % 6) * 18,
-      outward.z * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.cos(index * 1.73) * 22,
+    const collider = world.createCollider(
+      RAPIER.ColliderDesc.cuboid(
+        Math.max(size.x / 2, 3),
+        Math.max(size.y / 2, 3),
+        Math.max(size.z / 2, 3),
+      )
+        .setFriction(0.55)
+        .setRestitution(0.22)
+        .setCollisionGroups(partGroups)
+        .setSolverGroups(partGroups),
+      body,
     );
-    body.angularVelocity.set(
-      Math.sin(index * 1.37) * 5.5,
-      Math.cos(index * 1.83) * 4.5,
-      Math.sin(index * 2.21) * 5,
-    );
-    world.addBody(body);
 
     return [{
       object,
       body,
-      objectOffset: new CANNON.Vec3(objectOffset.x, objectOffset.y, objectOffset.z),
+      collider,
+      objectOffset,
     }];
   });
 
@@ -899,12 +912,26 @@ const completeExplodePhysics = (physics: ExplodePhysicsState | null) => {
   if (!physics) return;
   physics.active = false;
   physics.parts.forEach(syncObjectToBody);
+  physics.world.free();
 };
 
 const stopExplodePhysicsAtCurrentPose = (physics: ExplodePhysicsState | null) => {
   if (!physics) return;
   physics.active = false;
   physics.parts.forEach(syncObjectToBody);
+  physics.world.free();
+};
+
+const countRapierContacts = (physics: ExplodePhysicsState) => {
+  let contactCount = 0;
+  physics.parts.forEach((part) => {
+    physics.world.contactPairsWith(part.collider, (otherCollider) => {
+      physics.world.narrowPhase.contactPair(part.collider.handle, otherCollider.handle, (manifold) => {
+        contactCount += manifold.numContacts();
+      });
+    });
+  });
+  return contactCount;
 };
 
 const updateExplodePhysics = (physics: ExplodePhysicsState | null, nowMs: number) => {
@@ -912,13 +939,14 @@ const updateExplodePhysics = (physics: ExplodePhysicsState | null, nowMs: number
 
   const deltaSeconds = Math.min((nowMs - physics.lastStepMs) / 1000, 0.05);
   physics.lastStepMs = nowMs;
-  physics.world.step(1 / 60, deltaSeconds, 2);
-  physics.collisionCount = (physics.world as CannonWorldWithContacts).contacts?.length ?? 0;
+  physics.world.timestep = deltaSeconds;
+  physics.world.step();
+  physics.collisionCount = countRapierContacts(physics);
   physics.simulatedMs += deltaSeconds * 1000;
   physics.parts.forEach(syncObjectToBody);
 
   const elapsedMs = physics.simulatedMs;
-  const allSleeping = physics.parts.every((part) => part.body.sleepState === CANNON.Body.SLEEPING);
+  const allSleeping = physics.parts.every((part) => part.body.isSleeping());
   if (elapsedMs < 1200 || (!allSleeping && elapsedMs < physics.maxDurationMs)) return false;
 
   completeExplodePhysics(physics);
@@ -1233,7 +1261,7 @@ export function ThreeLDRViewer({
     setCollisionCount(nextCount);
   };
 
-  const handleToggleExplode = () => {
+  const handleToggleExplode = async () => {
     const { scene, controls } = sceneRef.current;
     const model = scene?.getObjectByName('ldraw-model') as THREE.Group | undefined;
     const table = scene?.getObjectByName('display-table');
@@ -1250,7 +1278,7 @@ export function ThreeLDRViewer({
       completeExplodePhysics(explodePhysicsRef.current);
       explodePhysicsRef.current = null;
       explodeAnimationRef.current = null;
-      explodePhysicsRef.current = createExplodePhysics(model, table);
+      explodePhysicsRef.current = await createExplodePhysics(model, table);
       if (!explodePhysicsRef.current) return;
       updateCollisionCount(0);
       setExplodeMode('exploding');
@@ -1274,6 +1302,7 @@ export function ThreeLDRViewer({
     setMeshesReady(false);
     setExplodeMode('assembled');
     updateCollisionCount(0);
+    stopExplodePhysicsAtCurrentPose(explodePhysicsRef.current);
     buildAnimationRef.current = null;
     explodeAnimationRef.current = null;
     explodePhysicsRef.current = null;
@@ -1773,6 +1802,8 @@ export function ThreeLDRViewer({
       if (sceneRef.current.animationId) {
         cancelAnimationFrame(sceneRef.current.animationId);
       }
+      stopExplodePhysicsAtCurrentPose(explodePhysicsRef.current);
+      explodePhysicsRef.current = null;
       if (sceneRef.current.renderer) {
         sceneRef.current.renderer.dispose();
         if (containerRef.current && sceneRef.current.renderer.domElement) {
