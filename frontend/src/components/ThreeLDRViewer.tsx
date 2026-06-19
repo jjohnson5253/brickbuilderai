@@ -114,6 +114,165 @@ const buildRoom = (
   scene.add(room);
 };
 
+// Build a ruler grid at the bottom of the model showing measurements
+const buildRulerGrid = (
+  scene: THREE.Scene,
+  bbox: THREE.Box3,
+  center: THREE.Vector3,
+  size: THREE.Vector3
+) => {
+  const existing = scene.getObjectByName('ruler-grid');
+  if (existing) scene.remove(existing);
+
+  const rulerGroup = new THREE.Group();
+  rulerGroup.name = 'ruler-grid';
+
+  // LDraw scale: 1 LDU = 0.4mm
+  const LDU_TO_MM = 0.4;
+  const MM_TO_INCH = 0.0393701;
+  const MM_TO_CM = 0.1;
+  const LDU_TO_INCH = LDU_TO_MM * MM_TO_INCH;
+  const LDU_TO_CM = LDU_TO_MM * MM_TO_CM;
+
+  // Grid properties
+  const lineColor = 0x333333;
+  const textColor = '#333333';
+  const lineMaterial = new THREE.LineBasicMaterial({ color: lineColor, linewidth: 1 });
+  
+  // Position rulers at the bottom of the model
+  const bottomY = bbox.min.y;
+  const offsetFromEdge = Math.max(size.x, size.z) * 0.05;
+
+  // Helper to create text sprite
+  const createTextLabel = (text: string, position: THREE.Vector3, fontSize = 24) => {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d')!;
+    canvas.width = 256;
+    canvas.height = 64;
+    
+    context.fillStyle = 'rgba(255, 255, 255, 0.9)';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    
+    context.font = `bold ${fontSize}px Arial`;
+    context.fillStyle = textColor;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, canvas.width / 2, canvas.height / 2);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.position.copy(position);
+    sprite.scale.set(40, 10, 1);
+    
+    return sprite;
+  };
+
+  // X-axis ruler (along width)
+  const xStart = bbox.min.x;
+  const xEnd = bbox.max.x;
+  const xLength = size.x;
+  const xLengthInches = xLength * LDU_TO_INCH;
+  const xLengthCm = xLength * LDU_TO_CM;
+  
+  // X-axis line
+  const xLineGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(xStart, bottomY - offsetFromEdge, bbox.min.z - offsetFromEdge),
+    new THREE.Vector3(xEnd, bottomY - offsetFromEdge, bbox.min.z - offsetFromEdge)
+  ]);
+  const xLine = new THREE.Line(xLineGeometry, lineMaterial);
+  rulerGroup.add(xLine);
+  
+  // X-axis label
+  const xLabel = createTextLabel(
+    `X: ${xLengthInches.toFixed(1)}" (${xLengthCm.toFixed(1)}cm)`,
+    new THREE.Vector3(center.x, bottomY - offsetFromEdge - 15, bbox.min.z - offsetFromEdge)
+  );
+  rulerGroup.add(xLabel);
+
+  // Z-axis ruler (along depth)
+  const zStart = bbox.min.z;
+  const zEnd = bbox.max.z;
+  const zLength = size.z;
+  const zLengthInches = zLength * LDU_TO_INCH;
+  const zLengthCm = zLength * LDU_TO_CM;
+  
+  // Z-axis line
+  const zLineGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(bbox.min.x - offsetFromEdge, bottomY - offsetFromEdge, zStart),
+    new THREE.Vector3(bbox.min.x - offsetFromEdge, bottomY - offsetFromEdge, zEnd)
+  ]);
+  const zLine = new THREE.Line(zLineGeometry, lineMaterial);
+  rulerGroup.add(zLine);
+  
+  // Z-axis label
+  const zLabel = createTextLabel(
+    `Z: ${zLengthInches.toFixed(1)}" (${zLengthCm.toFixed(1)}cm)`,
+    new THREE.Vector3(bbox.min.x - offsetFromEdge - 15, bottomY - offsetFromEdge, center.z)
+  );
+  rulerGroup.add(zLabel);
+
+  // Y-axis ruler (height)
+  const yStart = bbox.min.y;
+  const yEnd = bbox.max.y;
+  const yLength = size.y;
+  const yLengthInches = yLength * LDU_TO_INCH;
+  const yLengthCm = yLength * LDU_TO_CM;
+  
+  // Y-axis line
+  const yLineGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(bbox.min.x - offsetFromEdge, yStart, bbox.min.z - offsetFromEdge),
+    new THREE.Vector3(bbox.min.x - offsetFromEdge, yEnd, bbox.min.z - offsetFromEdge)
+  ]);
+  const yLine = new THREE.Line(yLineGeometry, lineMaterial);
+  rulerGroup.add(yLine);
+  
+  // Y-axis label
+  const yLabel = createTextLabel(
+    `Y: ${yLengthInches.toFixed(1)}" (${yLengthCm.toFixed(1)}cm)`,
+    new THREE.Vector3(bbox.min.x - offsetFromEdge - 15, center.y, bbox.min.z - offsetFromEdge - 15)
+  );
+  rulerGroup.add(yLabel);
+
+  // Add tick marks at regular intervals
+  const addTickMarks = (axis: 'x' | 'y' | 'z', start: number, end: number, basePos: THREE.Vector3) => {
+    const length = end - start;
+    const tickInterval = Math.pow(10, Math.floor(Math.log10(length))) / 2; // Dynamic tick spacing
+    const tickSize = Math.max(size.x, size.y, size.z) * 0.02;
+    
+    for (let pos = Math.ceil(start / tickInterval) * tickInterval; pos < end; pos += tickInterval) {
+      if (Math.abs(pos - start) < tickInterval * 0.1) continue; // Skip start
+      
+      let tickGeometry: THREE.BufferGeometry;
+      if (axis === 'x') {
+        tickGeometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(pos, basePos.y, basePos.z),
+          new THREE.Vector3(pos, basePos.y, basePos.z - tickSize)
+        ]);
+      } else if (axis === 'y') {
+        tickGeometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(basePos.x, pos, basePos.z),
+          new THREE.Vector3(basePos.x - tickSize, pos, basePos.z)
+        ]);
+      } else {
+        tickGeometry = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(basePos.x, basePos.y, pos),
+          new THREE.Vector3(basePos.x - tickSize, basePos.y, pos)
+        ]);
+      }
+      
+      const tick = new THREE.Line(tickGeometry, lineMaterial);
+      rulerGroup.add(tick);
+    }
+  };
+  
+  addTickMarks('x', xStart, xEnd, new THREE.Vector3(0, bottomY - offsetFromEdge, bbox.min.z - offsetFromEdge));
+  addTickMarks('y', yStart, yEnd, new THREE.Vector3(bbox.min.x - offsetFromEdge, 0, bbox.min.z - offsetFromEdge));
+  addTickMarks('z', zStart, zEnd, new THREE.Vector3(bbox.min.x - offsetFromEdge, bottomY - offsetFromEdge, 0));
+
+  scene.add(rulerGroup);
+};
+
 // Capture a clean preview of just the model on a pure white background.
 // Hides the display room (floor, walls, table) and the baseplate, renders one
 // frame from a flattering front-left angle, then restores all original state.
@@ -132,8 +291,10 @@ const captureCleanPreview = (
   const originalBackground = scene.background;
   const room = scene.getObjectByName('display-room');
   const baseplate = scene.getObjectByName('baseplate');
+  const ruler = scene.getObjectByName('ruler-grid');
   const roomWasVisible = room ? room.visible : false;
   const baseplateWasVisible = baseplate ? baseplate.visible : false;
+  const rulerWasVisible = ruler ? ruler.visible : false;
 
   // Renderer size + camera aspect are temporarily changed so the captured
   // image is a tight square around the model rather than the wide aspect of
@@ -146,6 +307,7 @@ const captureCleanPreview = (
     // Hide environment so only the model is visible.
     if (room) room.visible = false;
     if (baseplate) baseplate.visible = false;
+    if (ruler) ruler.visible = false;
 
     // Pure white background.
     scene.background = new THREE.Color(0xffffff);
@@ -188,6 +350,7 @@ const captureCleanPreview = (
     scene.background = originalBackground;
     if (room) room.visible = roomWasVisible;
     if (baseplate) baseplate.visible = baseplateWasVisible;
+    if (ruler) ruler.visible = rulerWasVisible;
     renderer.setSize(originalSize.x, originalSize.y, false);
     camera.aspect = originalAspect;
     camera.updateProjectionMatrix();
@@ -412,8 +575,10 @@ const capturePreviewVideo = async (
   const originalAutoRotate = controls.autoRotate;
   const room = scene.getObjectByName('display-room');
   const baseplate = scene.getObjectByName('baseplate');
+  const ruler = scene.getObjectByName('ruler-grid');
   const roomWasVisible = room ? room.visible : false;
   const baseplateWasVisible = baseplate ? baseplate.visible : false;
+  const rulerWasVisible = ruler ? ruler.visible : false;
 
   const originalSize = new THREE.Vector2();
   renderer.getSize(originalSize);
@@ -442,6 +607,7 @@ const capturePreviewVideo = async (
   camera.updateProjectionMatrix();
   if (room) room.visible = false;
   if (baseplate) baseplate.visible = false;
+  if (ruler) ruler.visible = false;
   scene.background = new THREE.Color(0xffffff);
 
   const videoBuildAnimation = animateFirstSpin
@@ -507,6 +673,7 @@ const capturePreviewVideo = async (
     controls.autoRotate = originalAutoRotate;
     if (room) room.visible = roomWasVisible;
     if (baseplate) baseplate.visible = baseplateWasVisible;
+    if (ruler) ruler.visible = rulerWasVisible;
     renderer.setSize(originalSize.x, originalSize.y, false);
     camera.aspect = originalAspect;
     camera.updateProjectionMatrix();
@@ -1518,6 +1685,9 @@ export function ThreeLDRViewer({
 
               // ── Build display room with table ──
               buildRoom(scene, bbox, center, size, maxDimension, showBaseplate);
+              
+              // ── Build ruler grid ──
+              buildRulerGrid(scene, bbox, center, size);
               
               if (preserveOrientation && initialCameraState) {
                 // Preserve orientation but ensure zoom is sufficient to fit model
