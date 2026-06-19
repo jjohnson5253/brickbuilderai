@@ -578,8 +578,6 @@ type ExplodePhysicsState = {
   maxDurationMs: number;
 };
 
-const MAX_EXPLODE_PHYSICS_PARTS = 260;
-
 const easeOutCubic = (value: number) => 1 - Math.pow(1 - value, 3);
 
 const easeInOutCubic = (value: number) => value < 0.5
@@ -734,14 +732,6 @@ const getStoredQuaternion = (object: THREE.Object3D, key: string) => {
   return value instanceof THREE.Quaternion ? value.clone() : null;
 };
 
-const addWorldYOffset = (object: THREE.Object3D, position: THREE.Vector3, yOffset: number) => {
-  const worldPosition = object.parent
-    ? object.parent.localToWorld(position.clone())
-    : position.clone();
-  worldPosition.y += yOffset;
-  return object.parent ? object.parent.worldToLocal(worldPosition) : worldPosition;
-};
-
 const syncObjectToBody = (part: PhysicsPart) => {
   const bodyQuaternion = new THREE.Quaternion(
     part.body.quaternion.x,
@@ -776,18 +766,13 @@ const createExplodePhysics = (
   table: THREE.Object3D,
 ): ExplodePhysicsState | null => {
   const allParts = getExplodableParts(model);
-  const parts = allParts.slice(0, MAX_EXPLODE_PHYSICS_PARTS);
-  const staticOverflowParts = allParts.slice(MAX_EXPLODE_PHYSICS_PARTS);
-  if (parts.length === 0) return null;
-
-  staticOverflowParts.forEach((object) => {
-    const targetPosition = getStoredVector(object, 'explodeTargetPosition');
-    const targetQuaternion = getStoredQuaternion(object, 'explodeTargetQuaternion');
-    if (targetPosition) object.position.copy(targetPosition);
-    if (targetQuaternion) object.quaternion.copy(targetQuaternion);
-  });
+  if (allParts.length === 0) return null;
 
   model.updateMatrixWorld(true);
+  const modelBounds = new THREE.Box3().setFromObject(model);
+  const modelCenter = modelBounds.getCenter(new THREE.Vector3());
+  const modelSize = modelBounds.getSize(new THREE.Vector3());
+  const maxDimension = Math.max(modelSize.x, modelSize.y, modelSize.z);
   const tableTopSurface = typeof table.userData.tableTopSurface === 'number' ? table.userData.tableTopSurface : 0;
   const tableThickness = typeof table.userData.tableThickness === 'number' ? table.userData.tableThickness : 12;
   const tableWidth = typeof table.userData.tableWidth === 'number' ? table.userData.tableWidth : 300;
@@ -797,6 +782,20 @@ const createExplodePhysics = (
   const floorY = typeof table.userData.floorY === 'number' ? table.userData.floorY : tableTopSurface - 220;
   const roomWidth = typeof table.userData.roomWidth === 'number' ? table.userData.roomWidth : tableWidth * 2;
   const roomDepth = typeof table.userData.roomDepth === 'number' ? table.userData.roomDepth : tableDepth * 2;
+
+  allParts.forEach((object, index) => {
+    if (!getStoredVector(object, 'explodeOriginalPosition')) {
+      object.userData.explodeOriginalPosition = object.position.clone();
+      object.userData.explodeOriginalQuaternion = object.quaternion.clone();
+    }
+
+    const landing = computeTableLandingTransform(object, table, index, allParts.length);
+    object.userData.explodeTargetPosition = landing.position.clone();
+    object.userData.explodeTargetQuaternion = landing.quaternion.clone();
+  });
+
+  const parts = allParts;
+  model.updateMatrixWorld(true);
 
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -560, 0) });
   world.allowSleep = true;
@@ -817,7 +816,6 @@ const createExplodePhysics = (
   floorBody.position.set(tableCenterX, floorY - 8, tableCenterZ);
   world.addBody(floorBody);
 
-  const tableCenter = new THREE.Vector3(tableCenterX, tableTopSurface, tableCenterZ);
   const physicsParts = parts.flatMap<PhysicsPart>((object, index) => {
     object.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(object);
@@ -829,7 +827,7 @@ const createExplodePhysics = (
     const objectWorldQuaternion = object.getWorldQuaternion(new THREE.Quaternion());
     const inverseWorldQuaternion = objectWorldQuaternion.clone().invert();
     const objectOffset = objectWorldPosition.clone().sub(center).applyQuaternion(inverseWorldQuaternion);
-    const outward = center.clone().sub(tableCenter);
+    const outward = center.clone().sub(modelCenter);
     outward.y = 0;
     if (outward.lengthSq() < 0.001) {
       outward.set(Math.sin(index * 1.91), 0, Math.cos(index * 2.43));
@@ -856,9 +854,9 @@ const createExplodePhysics = (
       objectWorldQuaternion.w,
     );
     body.velocity.set(
-      outward.x * (35 + (index % 5) * 9),
-      -80 - (index % 6) * 14,
-      outward.z * (35 + (index % 4) * 10),
+      outward.x * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.sin(index * 2.17) * 22,
+      THREE.MathUtils.clamp(maxDimension * 0.78, 180, 360) + (index % 6) * 18,
+      outward.z * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.cos(index * 1.73) * 22,
     );
     body.angularVelocity.set(
       Math.sin(index * 1.37) * 5.5,
@@ -1022,19 +1020,13 @@ const createExplodeAnimation = (
         Math.PI * (0.55 + (index % 4) * 0.3),
       )),
     );
-    const releaseHeight = direction === 'explode'
-      ? THREE.MathUtils.clamp(modelSize.y * 0.12, 36, 90) + (index % 5) * 6
-      : 0;
-    const releasePosition = direction === 'explode'
-      ? addWorldYOffset(object, landing.position, releaseHeight)
-      : originalPosition;
     const delayMs = direction === 'explode' ? distanceDelay * 170 : (1 - distanceDelay) * 140;
 
     return {
       object,
       fromPosition: object.position.clone(),
       arcPosition: direction === 'explode' ? arcPosition : null,
-      toPosition: releasePosition,
+      toPosition: direction === 'explode' ? landing.position : originalPosition,
       fromQuaternion: object.quaternion.clone(),
       tumbleQuaternion: direction === 'explode' ? tumbleQuaternion : null,
       toQuaternion: direction === 'explode' ? landing.quaternion : originalQuaternion,
@@ -1229,11 +1221,18 @@ export function ThreeLDRViewer({
     }
 
     const direction = explodeMode === 'exploded' ? 'rebuild' : 'explode';
+    if (direction === 'explode') {
+      explodeAnimationRef.current = null;
+      explodePhysicsRef.current = createExplodePhysics(model, table);
+      if (!explodePhysicsRef.current) return;
+      setExplodeMode('exploding');
+      return;
+    }
+
     const animation = createExplodeAnimation(model, table, direction);
     if (!animation) return;
-
     explodeAnimationRef.current = animation;
-    setExplodeMode(direction === 'explode' ? 'exploding' : 'rebuilding');
+    setExplodeMode('rebuilding');
   };
 
   useEffect(() => {
@@ -1669,17 +1668,8 @@ export function ThreeLDRViewer({
           const completedExplodeDirection = updateExplodeAnimation(explodeAnimationRef.current, nowMs);
           if (completedExplodeDirection) {
             explodeAnimationRef.current = null;
-            if (completedExplodeDirection === 'explode') {
-              const model = scene.getObjectByName('ldraw-model') as THREE.Group | undefined;
-              const table = scene.getObjectByName('display-table');
-              explodePhysicsRef.current = model && table ? createExplodePhysics(model, table) : null;
-              if (!explodePhysicsRef.current) {
-                setExplodeMode('exploded');
-              }
-            } else {
-              explodePhysicsRef.current = null;
-              setExplodeMode('assembled');
-            }
+            explodePhysicsRef.current = null;
+            setExplodeMode(completedExplodeDirection === 'rebuild' ? 'assembled' : 'exploded');
           }
           if (updateExplodePhysics(explodePhysicsRef.current, nowMs)) {
             explodePhysicsRef.current = null;
