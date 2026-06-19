@@ -34,7 +34,7 @@ def update_processed_image_url(generation_id: str, local_path: str) -> str:
     # Confirm the generation exists
     existing = (
         supabase_client.table("generations")
-        .select("id, processed_image_url")
+        .select("id, preview_image_url")
         .eq("id", generation_id)
         .execute()
     )
@@ -61,7 +61,7 @@ def update_processed_image_url(generation_id: str, local_path: str) -> str:
 
     update = (
         supabase_client.table("generations")
-        .update({"processed_image_url": public_url})
+        .update({"preview_image_url": public_url})
         .eq("id", generation_id)
         .execute()
     )
@@ -72,7 +72,7 @@ def update_processed_image_url(generation_id: str, local_path: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Upload a local image and set it as a generation's processed_image_url."
+        description="Upload a local image and set it as a generation's preview_image_url."
     )
     parser.add_argument("generation_id", help="UUID of the generation to update")
     parser.add_argument("local_image_path", help="Path to the local image file (PNG)")
