@@ -917,6 +917,14 @@ const completeExplodePhysics = (physics: ExplodePhysicsState | null) => {
   });
 };
 
+const stopExplodePhysicsAtCurrentPose = (physics: ExplodePhysicsState | null) => {
+  if (!physics) return;
+  physics.active = false;
+  physics.parts.forEach((part) => {
+    if (part.active) syncObjectToBody(part);
+  });
+};
+
 const updateExplodePhysics = (physics: ExplodePhysicsState | null, nowMs: number) => {
   if (!physics || !physics.active) return false;
 
@@ -1278,19 +1286,19 @@ export function ThreeLDRViewer({
     const { scene, controls } = sceneRef.current;
     const model = scene?.getObjectByName('ldraw-model') as THREE.Group | undefined;
     const table = scene?.getObjectByName('display-table');
-    if (!model || !table || explodeMode === 'exploding' || explodeMode === 'rebuilding') return;
+    if (!model || !table || explodeMode === 'rebuilding') return;
 
     completeBuildAnimation(buildAnimationRef.current);
     buildAnimationRef.current = null;
-    completeExplodePhysics(explodePhysicsRef.current);
-    explodePhysicsRef.current = null;
-    setExplosionRenderQuality(false);
     if (controls?.autoRotate) {
       controls.autoRotate = false;
     }
 
-    const direction = explodeMode === 'exploded' ? 'rebuild' : 'explode';
+    const direction = explodeMode === 'assembled' ? 'explode' : 'rebuild';
     if (direction === 'explode') {
+      completeExplodePhysics(explodePhysicsRef.current);
+      explodePhysicsRef.current = null;
+      setExplosionRenderQuality(false);
       explodeAnimationRef.current = null;
       setExplosionRenderQuality(true);
       explodePhysicsRef.current = createExplodePhysics(model, table);
@@ -1301,6 +1309,10 @@ export function ThreeLDRViewer({
       setExplodeMode('exploding');
       return;
     }
+
+    stopExplodePhysicsAtCurrentPose(explodePhysicsRef.current);
+    explodePhysicsRef.current = null;
+    setExplosionRenderQuality(false);
 
     const animation = createExplodeAnimation(model, table, direction);
     if (!animation) return;
@@ -1900,19 +1912,19 @@ export function ThreeLDRViewer({
             <button
               type="button"
               onClick={handleToggleExplode}
-              disabled={explodeMode === 'exploding' || explodeMode === 'rebuilding'}
+              disabled={explodeMode === 'rebuilding'}
               className="absolute bottom-3 left-3 z-20 inline-flex h-10 items-center gap-2 rounded-full border border-slate-700/30 bg-slate-950/85 px-3 text-xs font-semibold text-white shadow-lg shadow-black/25 backdrop-blur-sm transition-all duration-150 hover:bg-slate-800 hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
-              title={explodeMode === 'exploded' ? 'Rebuild model' : 'Explode model'}
-              aria-label={explodeMode === 'exploded' ? 'Rebuild model' : 'Explode model'}
+              title={explodeMode === 'assembled' ? 'Explode model' : 'Rebuild model'}
+              aria-label={explodeMode === 'assembled' ? 'Explode model' : 'Rebuild model'}
             >
-              {explodeMode === 'exploded' || explodeMode === 'rebuilding' ? (
+              {explodeMode === 'exploded' || explodeMode === 'exploding' || explodeMode === 'rebuilding' ? (
                 <RotateCcw size={15} />
               ) : (
                 <PackageOpen size={15} />
               )}
               <span className="hidden sm:inline">
                 {explodeMode === 'exploding'
-                  ? 'Exploding...'
+                  ? 'Rebuild'
                   : explodeMode === 'rebuilding'
                     ? 'Rebuilding...'
                     : explodeMode === 'exploded'
