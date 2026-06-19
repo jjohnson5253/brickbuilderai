@@ -566,7 +566,13 @@ type ExplodeAnimationState = {
 type PhysicsPart = {
   object: THREE.Object3D;
   body: CANNON.Body;
-  objectOffset: CANNON.Vec3;
+  active: boolean;
+  startDelayMs: number;
+  objectOffset: THREE.Vector3;
+  bodyQuaternion: THREE.Quaternion;
+  offsetVector: THREE.Vector3;
+  worldPosition: THREE.Vector3;
+  parentWorldQuaternion: THREE.Quaternion;
 };
 
 type ExplodePhysicsState = {
@@ -737,18 +743,14 @@ const getStoredQuaternion = (object: THREE.Object3D, key: string) => {
 };
 
 const syncObjectToBody = (part: PhysicsPart) => {
-  const bodyQuaternion = new THREE.Quaternion(
+  const bodyQuaternion = part.bodyQuaternion.set(
     part.body.quaternion.x,
     part.body.quaternion.y,
     part.body.quaternion.z,
     part.body.quaternion.w,
   );
-  const offset = new THREE.Vector3(
-    part.objectOffset.x,
-    part.objectOffset.y,
-    part.objectOffset.z,
-  ).applyQuaternion(bodyQuaternion);
-  const worldPosition = new THREE.Vector3(
+  const offset = part.offsetVector.copy(part.objectOffset).applyQuaternion(bodyQuaternion);
+  const worldPosition = part.worldPosition.set(
     part.body.position.x,
     part.body.position.y,
     part.body.position.z,
@@ -757,7 +759,7 @@ const syncObjectToBody = (part: PhysicsPart) => {
   if (part.object.parent) {
     part.object.position.copy(part.object.parent.worldToLocal(worldPosition));
 
-    const parentWorldQuaternion = part.object.parent.getWorldQuaternion(new THREE.Quaternion());
+    const parentWorldQuaternion = part.object.parent.getWorldQuaternion(part.parentWorldQuaternion);
     part.object.quaternion.copy(parentWorldQuaternion.invert().multiply(bodyQuaternion));
   } else {
     part.object.position.copy(worldPosition);
@@ -799,11 +801,11 @@ const createExplodePhysics = (
 
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -560, 0) });
   world.allowSleep = true;
-  (world.solver as CANNON.GSSolver).iterations = 5;
+  (world.solver as CANNON.GSSolver).iterations = 2;
   world.defaultContactMaterial.friction = 0.55;
-  world.defaultContactMaterial.restitution = 0.22;
-  world.defaultContactMaterial.contactEquationStiffness = 1e7;
-  world.defaultContactMaterial.contactEquationRelaxation = 4;
+  world.defaultContactMaterial.restitution = 0.12;
+  world.defaultContactMaterial.contactEquationStiffness = 1e6;
+  world.defaultContactMaterial.contactEquationRelaxation = 5;
   world.broadphase = new CANNON.SAPBroadphase(world);
 
   const tableBody = new CANNON.Body({ mass: 0 });
@@ -840,10 +842,10 @@ const createExplodePhysics = (
 
     const body = new CANNON.Body({
       mass: THREE.MathUtils.clamp((size.x * size.y * size.z) / 18000, 0.35, 3.5),
-      linearDamping: 0.18,
-      angularDamping: 0.28,
-      sleepSpeedLimit: 3.5,
-      sleepTimeLimit: 0.45,
+      linearDamping: 0.28,
+      angularDamping: 0.38,
+      sleepSpeedLimit: 8,
+      sleepTimeLimit: 0.25,
     });
     body.collisionFilterGroup = PHYSICS_PART_GROUP;
     body.collisionFilterMask = PHYSICS_PART_COLLISION_MASK;
@@ -869,12 +871,25 @@ const createExplodePhysics = (
       Math.cos(index * 1.83) * 4.5,
       Math.sin(index * 2.21) * 5,
     );
-    world.addBody(body);
+
+    const normalizedHeight = THREE.MathUtils.clamp(
+      (center.y - modelBounds.min.y) / Math.max(modelSize.y, 1),
+      0,
+      1,
+    );
+    const stagger = ((index * 37) % 17) * 35;
+    const startDelayMs = normalizedHeight * 220 + stagger;
 
     return [{
       object,
       body,
-      objectOffset: new CANNON.Vec3(objectOffset.x, objectOffset.y, objectOffset.z),
+      active: false,
+      startDelayMs,
+      objectOffset,
+      bodyQuaternion: new THREE.Quaternion(),
+      offsetVector: new THREE.Vector3(),
+      worldPosition: new THREE.Vector3(),
+      parentWorldQuaternion: new THREE.Quaternion(),
     }];
   });
 
@@ -893,20 +908,37 @@ const createExplodePhysics = (
 const completeExplodePhysics = (physics: ExplodePhysicsState | null) => {
   if (!physics) return;
   physics.active = false;
-  physics.parts.forEach(syncObjectToBody);
+  physics.parts.forEach((part) => {
+    if (!part.active) {
+      physics.world.addBody(part.body);
+      part.active = true;
+    }
+    syncObjectToBody(part);
+  });
 };
 
 const updateExplodePhysics = (physics: ExplodePhysicsState | null, nowMs: number) => {
   if (!physics || !physics.active) return false;
 
-  const deltaSeconds = Math.min((nowMs - physics.lastStepMs) / 1000, 0.05);
+  const deltaSeconds = Math.min((nowMs - physics.lastStepMs) / 1000, 1 / 30);
   physics.lastStepMs = nowMs;
-  physics.world.step(1 / 60, deltaSeconds, 2);
   physics.simulatedMs += deltaSeconds * 1000;
-  physics.parts.forEach(syncObjectToBody);
+
+  physics.parts.forEach((part) => {
+    if (!part.active && physics.simulatedMs >= part.startDelayMs) {
+      physics.world.addBody(part.body);
+      part.active = true;
+    }
+  });
+
+  physics.world.step(1 / 30, deltaSeconds, 1);
+  physics.parts.forEach((part) => {
+    if (part.active) syncObjectToBody(part);
+  });
 
   const elapsedMs = physics.simulatedMs;
-  const allSleeping = physics.parts.every((part) => part.body.sleepState === CANNON.Body.SLEEPING);
+  const allActive = physics.parts.every((part) => part.active);
+  const allSleeping = allActive && physics.parts.every((part) => part.body.sleepState === CANNON.Body.SLEEPING);
   if (elapsedMs < 1200 || (!allSleeping && elapsedMs < physics.maxDurationMs)) return false;
 
   completeExplodePhysics(physics);
@@ -1196,6 +1228,10 @@ export function ThreeLDRViewer({
   const buildAnimationRef = useRef<BuildAnimationState | null>(null);
   const explodeAnimationRef = useRef<ExplodeAnimationState | null>(null);
   const explodePhysicsRef = useRef<ExplodePhysicsState | null>(null);
+  const explosionRenderQualityRef = useRef<{
+    pixelRatio: number;
+    shadowAutoUpdate: boolean;
+  } | null>(null);
   
   const sceneRef = useRef<{
     scene: THREE.Scene | null;
@@ -1213,6 +1249,31 @@ export function ThreeLDRViewer({
 
   const canExplodeModel = !loading && !error && currentStepIndex === undefined;
 
+  const setExplosionRenderQuality = (enabled: boolean) => {
+    const { renderer } = sceneRef.current;
+    if (!renderer) return;
+
+    if (enabled) {
+      if (!explosionRenderQualityRef.current) {
+        explosionRenderQualityRef.current = {
+          pixelRatio: renderer.getPixelRatio(),
+          shadowAutoUpdate: renderer.shadowMap.autoUpdate,
+        };
+      }
+
+      renderer.setPixelRatio(Math.min(explosionRenderQualityRef.current.pixelRatio, 1.5));
+      renderer.shadowMap.autoUpdate = false;
+      return;
+    }
+
+    if (!explosionRenderQualityRef.current) return;
+
+    renderer.setPixelRatio(explosionRenderQualityRef.current.pixelRatio);
+    renderer.shadowMap.autoUpdate = explosionRenderQualityRef.current.shadowAutoUpdate;
+    renderer.shadowMap.needsUpdate = true;
+    explosionRenderQualityRef.current = null;
+  };
+
   const handleToggleExplode = () => {
     const { scene, controls } = sceneRef.current;
     const model = scene?.getObjectByName('ldraw-model') as THREE.Group | undefined;
@@ -1223,6 +1284,7 @@ export function ThreeLDRViewer({
     buildAnimationRef.current = null;
     completeExplodePhysics(explodePhysicsRef.current);
     explodePhysicsRef.current = null;
+    setExplosionRenderQuality(false);
     if (controls?.autoRotate) {
       controls.autoRotate = false;
     }
@@ -1230,8 +1292,12 @@ export function ThreeLDRViewer({
     const direction = explodeMode === 'exploded' ? 'rebuild' : 'explode';
     if (direction === 'explode') {
       explodeAnimationRef.current = null;
+      setExplosionRenderQuality(true);
       explodePhysicsRef.current = createExplodePhysics(model, table);
-      if (!explodePhysicsRef.current) return;
+      if (!explodePhysicsRef.current) {
+        setExplosionRenderQuality(false);
+        return;
+      }
       setExplodeMode('exploding');
       return;
     }
@@ -1325,27 +1391,6 @@ export function ThreeLDRViewer({
           renderer.domElement.addEventListener('pointerdown', disableAutoRotate);
           renderer.domElement.addEventListener('wheel', disableAutoRotate);
           renderer.domElement.addEventListener('touchstart', disableAutoRotate);
-        }
-
-        // Add camera change listener to track orientation
-        if (onCameraChange) {
-          const handleCameraChange = () => {
-            const cameraState: CameraState = {
-              position: {
-                x: camera.position.x,
-                y: camera.position.y,
-                z: camera.position.z
-              },
-              target: {
-                x: controls.target.x,
-                y: controls.target.y,
-                z: controls.target.z
-              }
-            };
-            onCameraChange(cameraState);
-          };
-          
-          controls.addEventListener('change', handleCameraChange);
         }
 
         // Add camera change listener to track orientation
@@ -1680,6 +1725,7 @@ export function ThreeLDRViewer({
           }
           if (updateExplodePhysics(explodePhysicsRef.current, nowMs)) {
             explodePhysicsRef.current = null;
+            setExplosionRenderQuality(false);
             setExplodeMode('exploded');
           }
           controls.update();
@@ -1743,6 +1789,7 @@ export function ThreeLDRViewer({
       if (sceneRef.current.animationId) {
         cancelAnimationFrame(sceneRef.current.animationId);
       }
+      setExplosionRenderQuality(false);
       if (sceneRef.current.renderer) {
         sceneRef.current.renderer.dispose();
         if (containerRef.current && sceneRef.current.renderer.domElement) {
