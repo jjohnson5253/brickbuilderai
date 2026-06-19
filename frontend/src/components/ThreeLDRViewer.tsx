@@ -71,9 +71,8 @@ const buildRoom = (
   const tableGroup = new THREE.Group();
   tableGroup.name = 'display-table';
 
-  const tablePad = maxDim * 0.5;
-  const tableW = size.x + tablePad * 2;
-  const tableD = size.z + tablePad * 2;
+  const tableW = roomW;
+  const tableD = roomD;
   tableGroup.userData.hideBelowY = tableTopSurface;
   tableGroup.userData.tableTopSurface = tableTopSurface;
   tableGroup.userData.tableThickness = tableThick;
@@ -573,9 +572,14 @@ type ExplodePhysicsState = {
   active: boolean;
   world: CANNON.World;
   parts: PhysicsPart[];
+  collisionCount: number;
   lastStepMs: number;
   simulatedMs: number;
   maxDurationMs: number;
+};
+
+type CannonWorldWithContacts = CANNON.World & {
+  contacts?: unknown[];
 };
 
 const PHYSICS_STATIC_GROUP = 1;
@@ -884,6 +888,7 @@ const createExplodePhysics = (
     active: true,
     world,
     parts: physicsParts,
+    collisionCount: 0,
     lastStepMs: performance.now(),
     simulatedMs: 0,
     maxDurationMs: 9000,
@@ -908,6 +913,7 @@ const updateExplodePhysics = (physics: ExplodePhysicsState | null, nowMs: number
   const deltaSeconds = Math.min((nowMs - physics.lastStepMs) / 1000, 0.05);
   physics.lastStepMs = nowMs;
   physics.world.step(1 / 60, deltaSeconds, 2);
+  physics.collisionCount = (physics.world as CannonWorldWithContacts).contacts?.length ?? 0;
   physics.simulatedMs += deltaSeconds * 1000;
   physics.parts.forEach(syncObjectToBody);
 
@@ -1198,6 +1204,8 @@ export function ThreeLDRViewer({
   const [meshesReady, setMeshesReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [explodeMode, setExplodeMode] = useState<ExplodeMode>('assembled');
+  const [collisionCount, setCollisionCount] = useState(0);
+  const collisionCountRef = useRef(0);
   const isCaptureInProgressRef = useRef(false);
   const buildAnimationRef = useRef<BuildAnimationState | null>(null);
   const explodeAnimationRef = useRef<ExplodeAnimationState | null>(null);
@@ -1219,6 +1227,12 @@ export function ThreeLDRViewer({
 
   const canExplodeModel = !loading && !error && currentStepIndex === undefined;
 
+  const updateCollisionCount = (nextCount: number) => {
+    if (collisionCountRef.current === nextCount) return;
+    collisionCountRef.current = nextCount;
+    setCollisionCount(nextCount);
+  };
+
   const handleToggleExplode = () => {
     const { scene, controls } = sceneRef.current;
     const model = scene?.getObjectByName('ldraw-model') as THREE.Group | undefined;
@@ -1238,12 +1252,14 @@ export function ThreeLDRViewer({
       explodeAnimationRef.current = null;
       explodePhysicsRef.current = createExplodePhysics(model, table);
       if (!explodePhysicsRef.current) return;
+      updateCollisionCount(0);
       setExplodeMode('exploding');
       return;
     }
 
     stopExplodePhysicsAtCurrentPose(explodePhysicsRef.current);
     explodePhysicsRef.current = null;
+    updateCollisionCount(0);
 
     const animation = createExplodeAnimation(model, table, direction);
     if (!animation) return;
@@ -1257,6 +1273,7 @@ export function ThreeLDRViewer({
     // Reset meshesReady for new model load
     setMeshesReady(false);
     setExplodeMode('assembled');
+    updateCollisionCount(0);
     buildAnimationRef.current = null;
     explodeAnimationRef.current = null;
     explodePhysicsRef.current = null;
@@ -1687,9 +1704,13 @@ export function ThreeLDRViewer({
             explodePhysicsRef.current = null;
             setExplodeMode(completedExplodeDirection === 'rebuild' ? 'assembled' : 'exploded');
           }
-          if (updateExplodePhysics(explodePhysicsRef.current, nowMs)) {
+          const physicsCompleted = updateExplodePhysics(explodePhysicsRef.current, nowMs);
+          if (physicsCompleted) {
             explodePhysicsRef.current = null;
+            updateCollisionCount(0);
             setExplodeMode('exploded');
+          } else {
+            updateCollisionCount(explodePhysicsRef.current?.collisionCount ?? 0);
           }
           controls.update();
           
@@ -1858,6 +1879,9 @@ export function ThreeLDRViewer({
             className="w-full h-full bg-gray-100 rounded-lg overflow-hidden"
             style={{ visibility: loading ? 'hidden' : 'visible' }}
           />
+          <div className="absolute left-3 top-3 z-20 rounded-full border border-slate-700/20 bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-black/20 backdrop-blur-sm">
+            Collisions: {collisionCount}
+          </div>
           {canExplodeModel && (
             <button
               type="button"
