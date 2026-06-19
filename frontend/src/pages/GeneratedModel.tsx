@@ -738,36 +738,43 @@ export default function GeneratedModel() {
     currentUser?.id && generationOwnerId && currentUser.id === generationOwnerId
   );
 
-  // Called once after ThreeLDRViewer finishes loading the model. Uploads a
-  // clean white-background PNG preview of the model if the generation is
-  // missing one, only for the authenticated owner.
-  const handlePreviewCaptured = React.useCallback(
-    async (dataUrl: string) => {
-      setPreviewPngDataUrl(dataUrl);
-      if (!currentGenerationId) return;
-      if (!needsPreviewUpload) return;
-      if (!isGenerationOwner) return;
-      if (!accessToken) return;
-      if (previewUploadedForRef.current.has(currentGenerationId)) return;
+  // Called once after ThreeLDRViewer finishes loading the model. Stores the
+  // captured PNG so the upload effect below can send it once all async state
+  // (auth token, generation ownership, needsPreviewUpload) has resolved.
+  const handlePreviewCaptured = React.useCallback((dataUrl: string) => {
+    setPreviewPngDataUrl(dataUrl);
+  }, []);
 
-      // Mark as uploaded immediately so concurrent renders don't double-fire.
-      previewUploadedForRef.current.add(currentGenerationId);
-      try {
-        await UpdateImagePreviewApiService.updateImagePreview(
-          currentGenerationId,
-          dataUrl,
-          accessToken,
-        );
-        // Reflect in local state so we don't try again this session.
+  // Upload the captured preview image once every required piece of async state
+  // is ready. This effect re-runs whenever any dependency changes, so it
+  // correctly handles the race where the 3D viewer fires onPreviewCaptured
+  // before the auth token or Supabase generation query have returned (e.g.
+  // when navigating from the landing page with in-memory model data).
+  React.useEffect(() => {
+    if (!previewPngDataUrl) return;
+    if (!currentGenerationId) return;
+    if (!needsPreviewUpload) return;
+    if (!isGenerationOwner) return;
+    if (!accessToken) return;
+    if (previewUploadedForRef.current.has(currentGenerationId)) return;
+
+    // Mark as uploaded immediately so concurrent renders don't double-fire.
+    previewUploadedForRef.current.add(currentGenerationId);
+
+    UpdateImagePreviewApiService.updateImagePreview(
+      currentGenerationId,
+      previewPngDataUrl,
+      accessToken,
+    )
+      .then(() => {
         setNeedsPreviewUpload(false);
-      } catch (err) {
+      })
+      .catch((err) => {
         // Allow retrying on next mount if the upload fails.
         previewUploadedForRef.current.delete(currentGenerationId);
         console.warn('Failed to upload preview image:', err);
-      }
-    },
-    [currentGenerationId, needsPreviewUpload, isGenerationOwner, accessToken],
-  );
+      });
+  }, [previewPngDataUrl, currentGenerationId, needsPreviewUpload, isGenerationOwner, accessToken]);
 
   React.useEffect(() => {
     if (!exportMenuOpen) return;
