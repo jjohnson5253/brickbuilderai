@@ -542,8 +542,10 @@ type ExplodeMode = 'assembled' | 'exploding' | 'exploded' | 'rebuilding';
 type ExplodeAnimationPart = {
   object: THREE.Object3D;
   fromPosition: THREE.Vector3;
+  arcPosition: THREE.Vector3 | null;
   toPosition: THREE.Vector3;
   fromQuaternion: THREE.Quaternion;
+  tumbleQuaternion: THREE.Quaternion | null;
   toQuaternion: THREE.Quaternion;
   delayMs: number;
   durationMs: number;
@@ -781,6 +783,8 @@ const createExplodeAnimation = (
   model.updateMatrixWorld(true);
   const modelBounds = new THREE.Box3().setFromObject(model);
   const modelCenter = modelBounds.getCenter(new THREE.Vector3());
+  const modelSize = modelBounds.getSize(new THREE.Vector3());
+  const blastHeight = THREE.MathUtils.clamp(Math.max(modelSize.x, modelSize.y, modelSize.z) * 0.5, 90, 340);
   const maxDistance = Math.max(...parts.map((part) => part.getWorldPosition(new THREE.Vector3()).distanceTo(modelCenter)), 1);
 
   const animationParts = parts.map<ExplodeAnimationPart>((object, index) => {
@@ -796,17 +800,44 @@ const createExplodeAnimation = (
     object.userData.explodeTargetQuaternion = landing.quaternion.clone();
 
     const currentWorldPosition = object.getWorldPosition(new THREE.Vector3());
+    const landingWorldPosition = object.parent
+      ? object.parent.localToWorld(landing.position.clone())
+      : landing.position.clone();
     const distanceDelay = currentWorldPosition.distanceTo(modelCenter) / maxDistance;
-    const delayMs = direction === 'explode' ? distanceDelay * 260 : (1 - distanceDelay) * 180;
+    const outwardDirection = currentWorldPosition.clone().sub(modelCenter);
+    if (outwardDirection.lengthSq() < 0.001) {
+      outwardDirection.set(Math.sin(index * 2.17), 0, Math.cos(index * 1.73));
+    }
+    outwardDirection.y = 0;
+    outwardDirection.normalize();
+
+    const popProgress = 0.25 + (index % 5) * 0.055;
+    const popWorldPosition = currentWorldPosition.clone().lerp(landingWorldPosition, popProgress);
+    popWorldPosition.add(outwardDirection.multiplyScalar(blastHeight * (0.18 + (index % 4) * 0.035)));
+    popWorldPosition.y = Math.max(currentWorldPosition.y, landingWorldPosition.y) + blastHeight * (0.78 + (index % 6) * 0.055);
+
+    const arcPosition = object.parent
+      ? object.parent.worldToLocal(popWorldPosition.clone())
+      : popWorldPosition;
+    const tumbleQuaternion = object.quaternion.clone().multiply(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        Math.PI * (1.25 + (index % 3) * 0.35),
+        Math.PI * (0.85 + (index % 5) * 0.22),
+        Math.PI * (0.55 + (index % 4) * 0.3),
+      )),
+    );
+    const delayMs = direction === 'explode' ? distanceDelay * 170 : (1 - distanceDelay) * 140;
 
     return {
       object,
       fromPosition: object.position.clone(),
+      arcPosition: direction === 'explode' ? arcPosition : null,
       toPosition: direction === 'explode' ? landing.position : originalPosition,
       fromQuaternion: object.quaternion.clone(),
+      tumbleQuaternion: direction === 'explode' ? tumbleQuaternion : null,
       toQuaternion: direction === 'explode' ? landing.quaternion : originalQuaternion,
       delayMs,
-      durationMs: direction === 'explode' ? 1050 : 850,
+      durationMs: direction === 'explode' ? 1350 : 850,
     };
   });
 
@@ -843,10 +874,24 @@ const updateExplodeAnimation = (animation: ExplodeAnimationState | null, nowMs: 
     }
 
     const progress = Math.min(partElapsed / part.durationMs, 1);
-    const eased = easeInOutCubic(progress);
+    const eased = part.arcPosition ? progress : easeInOutCubic(progress);
     part.object.visible = true;
-    part.object.position.lerpVectors(part.fromPosition, part.toPosition, eased);
-    part.object.quaternion.slerpQuaternions(part.fromQuaternion, part.toQuaternion, eased);
+
+    if (part.arcPosition) {
+      const firstLeg = part.fromPosition.clone().lerp(part.arcPosition, eased);
+      const secondLeg = part.arcPosition.clone().lerp(part.toPosition, eased);
+      part.object.position.copy(firstLeg.lerp(secondLeg, eased));
+    } else {
+      part.object.position.lerpVectors(part.fromPosition, part.toPosition, eased);
+    }
+
+    if (part.tumbleQuaternion && progress < 0.58) {
+      part.object.quaternion.slerpQuaternions(part.fromQuaternion, part.tumbleQuaternion, easeOutCubic(progress / 0.58));
+    } else if (part.tumbleQuaternion) {
+      part.object.quaternion.slerpQuaternions(part.tumbleQuaternion, part.toQuaternion, easeInOutCubic((progress - 0.58) / 0.42));
+    } else {
+      part.object.quaternion.slerpQuaternions(part.fromQuaternion, part.toQuaternion, eased);
+    }
 
     if (progress < 1) {
       allComplete = false;
