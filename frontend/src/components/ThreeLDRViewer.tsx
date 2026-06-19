@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
+import * as CANNON from 'cannon-es';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 import { LDrawConditionalLineMaterial } from 'three/addons/materials/LDrawConditionalLineMaterial.js';
+import { PackageOpen, RotateCcw } from 'lucide-react';
 
 // Build a simple stylized room with a table, sized to fit the model.
 const buildRoom = (
@@ -68,11 +70,20 @@ const buildRoom = (
   // ── Table (in its own group so it can be hidden independently) ──
   const tableGroup = new THREE.Group();
   tableGroup.name = 'display-table';
-  tableGroup.userData.hideBelowY = tableTopSurface;
 
   const tablePad = maxDim * 0.5;
   const tableW = size.x + tablePad * 2;
   const tableD = size.z + tablePad * 2;
+  tableGroup.userData.hideBelowY = tableTopSurface;
+  tableGroup.userData.tableTopSurface = tableTopSurface;
+  tableGroup.userData.tableThickness = tableThick;
+  tableGroup.userData.tableWidth = tableW;
+  tableGroup.userData.tableDepth = tableD;
+  tableGroup.userData.tableCenterX = center.x;
+  tableGroup.userData.tableCenterZ = center.z;
+  tableGroup.userData.floorY = floorY;
+  tableGroup.userData.roomWidth = roomW;
+  tableGroup.userData.roomDepth = roomD;
 
   // Tabletop
   const topGeo = new THREE.BoxGeometry(tableW, tableThick, tableD);
@@ -531,7 +542,50 @@ type BuildAnimationCandidate = BuildAnimationPart & {
   finalWorldY: number;
 };
 
+type ExplodeMode = 'assembled' | 'exploding' | 'exploded' | 'rebuilding';
+
+type ExplodeAnimationPart = {
+  object: THREE.Object3D;
+  fromPosition: THREE.Vector3;
+  arcPosition: THREE.Vector3 | null;
+  toPosition: THREE.Vector3;
+  fromQuaternion: THREE.Quaternion;
+  tumbleQuaternion: THREE.Quaternion | null;
+  toQuaternion: THREE.Quaternion;
+  delayMs: number;
+  durationMs: number;
+};
+
+type ExplodeAnimationState = {
+  active: boolean;
+  direction: 'explode' | 'rebuild';
+  startTimeMs: number;
+  parts: ExplodeAnimationPart[];
+};
+
+type PhysicsPart = {
+  object: THREE.Object3D;
+  body: CANNON.Body;
+  objectOffset: CANNON.Vec3;
+};
+
+type ExplodePhysicsState = {
+  active: boolean;
+  world: CANNON.World;
+  parts: PhysicsPart[];
+  lastStepMs: number;
+  simulatedMs: number;
+  maxDurationMs: number;
+};
+
+const PHYSICS_STATIC_GROUP = 1;
+const PHYSICS_PART_GROUP = 2;
+
 const easeOutCubic = (value: number) => 1 - Math.pow(1 - value, 3);
+
+const easeInOutCubic = (value: number) => value < 0.5
+  ? 4 * value * value * value
+  : 1 - Math.pow(-2 * value + 2, 3) / 2;
 
 const completeBuildAnimation = (animation: BuildAnimationState | null) => {
   if (!animation) return;
@@ -669,6 +723,388 @@ const createBuildAnimation = (
   };
 };
 
+const getExplodableParts = (model: THREE.Group) => model.children.filter((child) => child.name !== 'baseplate');
+
+const getStoredVector = (object: THREE.Object3D, key: string) => {
+  const value = object.userData[key];
+  return value instanceof THREE.Vector3 ? value.clone() : null;
+};
+
+const getStoredQuaternion = (object: THREE.Object3D, key: string) => {
+  const value = object.userData[key];
+  return value instanceof THREE.Quaternion ? value.clone() : null;
+};
+
+const syncObjectToBody = (part: PhysicsPart) => {
+  const bodyQuaternion = new THREE.Quaternion(
+    part.body.quaternion.x,
+    part.body.quaternion.y,
+    part.body.quaternion.z,
+    part.body.quaternion.w,
+  );
+  const offset = new THREE.Vector3(
+    part.objectOffset.x,
+    part.objectOffset.y,
+    part.objectOffset.z,
+  ).applyQuaternion(bodyQuaternion);
+  const worldPosition = new THREE.Vector3(
+    part.body.position.x,
+    part.body.position.y,
+    part.body.position.z,
+  ).add(offset);
+
+  if (part.object.parent) {
+    part.object.position.copy(part.object.parent.worldToLocal(worldPosition));
+
+    const parentWorldQuaternion = part.object.parent.getWorldQuaternion(new THREE.Quaternion());
+    part.object.quaternion.copy(parentWorldQuaternion.invert().multiply(bodyQuaternion));
+  } else {
+    part.object.position.copy(worldPosition);
+    part.object.quaternion.copy(bodyQuaternion);
+  }
+};
+
+const createExplodePhysics = (
+  model: THREE.Group,
+  table: THREE.Object3D,
+): ExplodePhysicsState | null => {
+  const allParts = getExplodableParts(model);
+  if (allParts.length === 0) return null;
+
+  model.updateMatrixWorld(true);
+  const modelBounds = new THREE.Box3().setFromObject(model);
+  const modelCenter = modelBounds.getCenter(new THREE.Vector3());
+  const modelSize = modelBounds.getSize(new THREE.Vector3());
+  const maxDimension = Math.max(modelSize.x, modelSize.y, modelSize.z);
+  const tableTopSurface = typeof table.userData.tableTopSurface === 'number' ? table.userData.tableTopSurface : 0;
+  const tableThickness = typeof table.userData.tableThickness === 'number' ? table.userData.tableThickness : 12;
+  const tableWidth = typeof table.userData.tableWidth === 'number' ? table.userData.tableWidth : 300;
+  const tableDepth = typeof table.userData.tableDepth === 'number' ? table.userData.tableDepth : 300;
+  const tableCenterX = typeof table.userData.tableCenterX === 'number' ? table.userData.tableCenterX : 0;
+  const tableCenterZ = typeof table.userData.tableCenterZ === 'number' ? table.userData.tableCenterZ : 0;
+  const floorY = typeof table.userData.floorY === 'number' ? table.userData.floorY : tableTopSurface - 220;
+  const roomWidth = typeof table.userData.roomWidth === 'number' ? table.userData.roomWidth : tableWidth * 2;
+  const roomDepth = typeof table.userData.roomDepth === 'number' ? table.userData.roomDepth : tableDepth * 2;
+
+  allParts.forEach((object) => {
+    if (!getStoredVector(object, 'explodeOriginalPosition')) {
+      object.userData.explodeOriginalPosition = object.position.clone();
+      object.userData.explodeOriginalQuaternion = object.quaternion.clone();
+    }
+  });
+
+  const parts = allParts;
+  model.updateMatrixWorld(true);
+
+  const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -560, 0) });
+  world.allowSleep = true;
+  (world.solver as CANNON.GSSolver).iterations = 8;
+  world.defaultContactMaterial.friction = 0.55;
+  world.defaultContactMaterial.restitution = 0.22;
+  world.defaultContactMaterial.contactEquationStiffness = 1e7;
+  world.defaultContactMaterial.contactEquationRelaxation = 4;
+  world.broadphase = new CANNON.SAPBroadphase(world);
+
+  const tableBody = new CANNON.Body({ mass: 0 });
+  tableBody.collisionFilterGroup = PHYSICS_STATIC_GROUP;
+  tableBody.collisionFilterMask = PHYSICS_PART_GROUP;
+  tableBody.addShape(new CANNON.Box(new CANNON.Vec3(tableWidth / 2, tableThickness / 2, tableDepth / 2)));
+  tableBody.position.set(tableCenterX, tableTopSurface - tableThickness / 2, tableCenterZ);
+  world.addBody(tableBody);
+
+  const floorBody = new CANNON.Body({ mass: 0 });
+  floorBody.collisionFilterGroup = PHYSICS_STATIC_GROUP;
+  floorBody.collisionFilterMask = PHYSICS_PART_GROUP;
+  floorBody.addShape(new CANNON.Box(new CANNON.Vec3(roomWidth / 2, 8, roomDepth / 2)));
+  floorBody.position.set(tableCenterX, floorY - 8, tableCenterZ);
+  world.addBody(floorBody);
+
+  const physicsParts = parts.flatMap<PhysicsPart>((object, index) => {
+    object.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(object);
+    if (bounds.isEmpty()) return [];
+
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const objectWorldPosition = object.getWorldPosition(new THREE.Vector3());
+    const objectWorldQuaternion = object.getWorldQuaternion(new THREE.Quaternion());
+    const inverseWorldQuaternion = objectWorldQuaternion.clone().invert();
+    const objectOffset = objectWorldPosition.clone().sub(center).applyQuaternion(inverseWorldQuaternion);
+    const outward = center.clone().sub(modelCenter);
+    outward.y = 0;
+    if (outward.lengthSq() < 0.001) {
+      outward.set(Math.sin(index * 1.91), 0, Math.cos(index * 2.43));
+    }
+    outward.normalize();
+
+    const body = new CANNON.Body({
+      mass: THREE.MathUtils.clamp((size.x * size.y * size.z) / 18000, 0.35, 3.5),
+      linearDamping: 0.18,
+      angularDamping: 0.28,
+      sleepSpeedLimit: 3.5,
+      sleepTimeLimit: 0.45,
+    });
+    body.collisionFilterGroup = PHYSICS_PART_GROUP;
+    body.collisionFilterMask = PHYSICS_STATIC_GROUP;
+    body.addShape(new CANNON.Box(new CANNON.Vec3(
+      Math.max(size.x / 2, 3),
+      Math.max(size.y / 2, 3),
+      Math.max(size.z / 2, 3),
+    )));
+    body.position.set(center.x, center.y, center.z);
+    body.quaternion.set(
+      objectWorldQuaternion.x,
+      objectWorldQuaternion.y,
+      objectWorldQuaternion.z,
+      objectWorldQuaternion.w,
+    );
+    body.velocity.set(
+      outward.x * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.sin(index * 2.17) * 22,
+      THREE.MathUtils.clamp(maxDimension * 0.78, 180, 360) + (index % 6) * 18,
+      outward.z * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.cos(index * 1.73) * 22,
+    );
+    body.angularVelocity.set(
+      Math.sin(index * 1.37) * 5.5,
+      Math.cos(index * 1.83) * 4.5,
+      Math.sin(index * 2.21) * 5,
+    );
+    world.addBody(body);
+
+    return [{
+      object,
+      body,
+      objectOffset: new CANNON.Vec3(objectOffset.x, objectOffset.y, objectOffset.z),
+    }];
+  });
+
+  if (physicsParts.length === 0) return null;
+
+  return {
+    active: true,
+    world,
+    parts: physicsParts,
+    lastStepMs: performance.now(),
+    simulatedMs: 0,
+    maxDurationMs: 9000,
+  };
+};
+
+const completeExplodePhysics = (physics: ExplodePhysicsState | null) => {
+  if (!physics) return;
+  physics.active = false;
+  physics.parts.forEach(syncObjectToBody);
+};
+
+const updateExplodePhysics = (physics: ExplodePhysicsState | null, nowMs: number) => {
+  if (!physics || !physics.active) return false;
+
+  const deltaSeconds = Math.min((nowMs - physics.lastStepMs) / 1000, 0.05);
+  physics.lastStepMs = nowMs;
+  physics.world.step(1 / 60, deltaSeconds, 3);
+  physics.simulatedMs += deltaSeconds * 1000;
+  physics.parts.forEach(syncObjectToBody);
+
+  const elapsedMs = physics.simulatedMs;
+  const allSleeping = physics.parts.every((part) => part.body.sleepState === CANNON.Body.SLEEPING);
+  if (elapsedMs < 1200 || (!allSleeping && elapsedMs < physics.maxDurationMs)) return false;
+
+  completeExplodePhysics(physics);
+  return true;
+};
+
+const computeTableLandingTransform = (
+  object: THREE.Object3D,
+  table: THREE.Object3D,
+  index: number,
+  partCount: number,
+): { position: THREE.Vector3; quaternion: THREE.Quaternion } => {
+  const parent = object.parent;
+  const originalPosition = object.position.clone();
+  const originalQuaternion = object.quaternion.clone();
+  const tableTopSurface = typeof table.userData.tableTopSurface === 'number' ? table.userData.tableTopSurface : 0;
+  const tableWidth = typeof table.userData.tableWidth === 'number' ? table.userData.tableWidth : 300;
+  const tableDepth = typeof table.userData.tableDepth === 'number' ? table.userData.tableDepth : 300;
+  const tableCenterX = typeof table.userData.tableCenterX === 'number' ? table.userData.tableCenterX : 0;
+  const tableCenterZ = typeof table.userData.tableCenterZ === 'number' ? table.userData.tableCenterZ : 0;
+  const aspect = Math.max(tableWidth / Math.max(tableDepth, 1), 0.35);
+  const columns = Math.max(1, Math.ceil(Math.sqrt(partCount * aspect)));
+  const rows = Math.max(1, Math.ceil(partCount / columns));
+  const usableWidth = tableWidth * 0.78;
+  const usableDepth = tableDepth * 0.78;
+  const cellWidth = usableWidth / columns;
+  const cellDepth = usableDepth / rows;
+  const column = index % columns;
+  const row = Math.floor(index / columns);
+  const jitterSeed = Math.sin((index + 1) * 12.9898) * 43758.5453;
+  const jitter = jitterSeed - Math.floor(jitterSeed);
+  const xJitter = (jitter - 0.5) * cellWidth * 0.35;
+  const zJitter = (Math.sin((index + 1) * 78.233) - Math.floor(Math.sin((index + 1) * 78.233))) * cellDepth * 0.25;
+  const targetWorld = new THREE.Vector3(
+    tableCenterX - usableWidth / 2 + cellWidth * (column + 0.5) + xJitter,
+    tableTopSurface + 24,
+    tableCenterZ - usableDepth / 2 + cellDepth * (row + 0.5) + zJitter,
+  );
+  const targetPosition = parent ? parent.worldToLocal(targetWorld.clone()) : targetWorld;
+  const layFlatX = index % 2 === 0 ? Math.PI / 2 : -Math.PI / 2;
+  const layFlatZ = index % 3 === 0 ? Math.PI / 2 : 0;
+  const targetQuaternion = originalQuaternion.clone().multiply(
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      layFlatX,
+      (index % 8) * Math.PI / 4,
+      layFlatZ,
+    )),
+  );
+
+  object.position.copy(targetPosition);
+  object.quaternion.copy(targetQuaternion);
+  object.updateMatrixWorld(true);
+
+  const partBounds = new THREE.Box3().setFromObject(object);
+  const yCorrection = tableTopSurface + 1 - partBounds.min.y;
+  const currentWorldPosition = object.getWorldPosition(new THREE.Vector3());
+  const correctedWorldPosition = currentWorldPosition.add(new THREE.Vector3(0, yCorrection, 0));
+  const correctedPosition = parent ? parent.worldToLocal(correctedWorldPosition) : correctedWorldPosition;
+
+  object.position.copy(originalPosition);
+  object.quaternion.copy(originalQuaternion);
+  object.updateMatrixWorld(true);
+
+  return { position: correctedPosition, quaternion: targetQuaternion };
+};
+
+const createExplodeAnimation = (
+  model: THREE.Group,
+  table: THREE.Object3D,
+  direction: 'explode' | 'rebuild',
+): ExplodeAnimationState | null => {
+  const parts = getExplodableParts(model);
+  if (parts.length === 0) return null;
+
+  model.updateMatrixWorld(true);
+  const modelBounds = new THREE.Box3().setFromObject(model);
+  const modelCenter = modelBounds.getCenter(new THREE.Vector3());
+  const modelSize = modelBounds.getSize(new THREE.Vector3());
+  const blastHeight = THREE.MathUtils.clamp(Math.max(modelSize.x, modelSize.y, modelSize.z) * 0.5, 90, 340);
+  const maxDistance = Math.max(...parts.map((part) => part.getWorldPosition(new THREE.Vector3()).distanceTo(modelCenter)), 1);
+
+  const animationParts = parts.map<ExplodeAnimationPart>((object, index) => {
+    if (!getStoredVector(object, 'explodeOriginalPosition')) {
+      object.userData.explodeOriginalPosition = object.position.clone();
+      object.userData.explodeOriginalQuaternion = object.quaternion.clone();
+    }
+
+    const originalPosition = getStoredVector(object, 'explodeOriginalPosition') ?? object.position.clone();
+    const originalQuaternion = getStoredQuaternion(object, 'explodeOriginalQuaternion') ?? object.quaternion.clone();
+    const landing = computeTableLandingTransform(object, table, index, parts.length);
+    object.userData.explodeTargetPosition = landing.position.clone();
+    object.userData.explodeTargetQuaternion = landing.quaternion.clone();
+
+    const currentWorldPosition = object.getWorldPosition(new THREE.Vector3());
+    const landingWorldPosition = object.parent
+      ? object.parent.localToWorld(landing.position.clone())
+      : landing.position.clone();
+    const distanceDelay = currentWorldPosition.distanceTo(modelCenter) / maxDistance;
+    const outwardDirection = currentWorldPosition.clone().sub(modelCenter);
+    if (outwardDirection.lengthSq() < 0.001) {
+      outwardDirection.set(Math.sin(index * 2.17), 0, Math.cos(index * 1.73));
+    }
+    outwardDirection.y = 0;
+    outwardDirection.normalize();
+
+    const popProgress = 0.25 + (index % 5) * 0.055;
+    const popWorldPosition = currentWorldPosition.clone().lerp(landingWorldPosition, popProgress);
+    popWorldPosition.add(outwardDirection.multiplyScalar(blastHeight * (0.18 + (index % 4) * 0.035)));
+    popWorldPosition.y = Math.max(currentWorldPosition.y, landingWorldPosition.y) + blastHeight * (0.78 + (index % 6) * 0.055);
+
+    const arcPosition = object.parent
+      ? object.parent.worldToLocal(popWorldPosition.clone())
+      : popWorldPosition;
+    const tumbleQuaternion = object.quaternion.clone().multiply(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        Math.PI * (1.25 + (index % 3) * 0.35),
+        Math.PI * (0.85 + (index % 5) * 0.22),
+        Math.PI * (0.55 + (index % 4) * 0.3),
+      )),
+    );
+    const delayMs = direction === 'explode' ? distanceDelay * 170 : (1 - distanceDelay) * 140;
+
+    return {
+      object,
+      fromPosition: object.position.clone(),
+      arcPosition: direction === 'explode' ? arcPosition : null,
+      toPosition: direction === 'explode' ? landing.position : originalPosition,
+      fromQuaternion: object.quaternion.clone(),
+      tumbleQuaternion: direction === 'explode' ? tumbleQuaternion : null,
+      toQuaternion: direction === 'explode' ? landing.quaternion : originalQuaternion,
+      delayMs,
+      durationMs: direction === 'explode' ? 1350 : 850,
+    };
+  });
+
+  return {
+    active: true,
+    direction,
+    startTimeMs: performance.now(),
+    parts: animationParts,
+  };
+};
+
+const completeExplodeAnimation = (animation: ExplodeAnimationState | null) => {
+  if (!animation) return;
+  animation.active = false;
+  animation.parts.forEach((part) => {
+    part.object.visible = true;
+    part.object.position.copy(part.toPosition);
+    part.object.quaternion.copy(part.toQuaternion);
+  });
+};
+
+const updateExplodeAnimation = (animation: ExplodeAnimationState | null, nowMs: number) => {
+  if (!animation || !animation.active) return null;
+
+  let allComplete = true;
+  const elapsedMs = nowMs - animation.startTimeMs;
+
+  animation.parts.forEach((part) => {
+    const partElapsed = elapsedMs - part.delayMs;
+
+    if (partElapsed <= 0) {
+      allComplete = false;
+      return;
+    }
+
+    const progress = Math.min(partElapsed / part.durationMs, 1);
+    const eased = part.arcPosition ? progress : easeInOutCubic(progress);
+    part.object.visible = true;
+
+    if (part.arcPosition) {
+      const firstLeg = part.fromPosition.clone().lerp(part.arcPosition, eased);
+      const secondLeg = part.arcPosition.clone().lerp(part.toPosition, eased);
+      part.object.position.copy(firstLeg.lerp(secondLeg, eased));
+    } else {
+      part.object.position.lerpVectors(part.fromPosition, part.toPosition, eased);
+    }
+
+    if (part.tumbleQuaternion && progress < 0.58) {
+      part.object.quaternion.slerpQuaternions(part.fromQuaternion, part.tumbleQuaternion, easeOutCubic(progress / 0.58));
+    } else if (part.tumbleQuaternion) {
+      part.object.quaternion.slerpQuaternions(part.tumbleQuaternion, part.toQuaternion, easeInOutCubic((progress - 0.58) / 0.42));
+    } else {
+      part.object.quaternion.slerpQuaternions(part.fromQuaternion, part.toQuaternion, eased);
+    }
+
+    if (progress < 1) {
+      allComplete = false;
+    }
+  });
+
+  if (!allComplete) return null;
+
+  const completedDirection = animation.direction;
+  completeExplodeAnimation(animation);
+  return completedDirection;
+};
+
 interface ThreeLDRViewerProps {
   modelPath?: string;
   modelContent?: string;
@@ -754,8 +1190,11 @@ export function ThreeLDRViewer({
   // Track when meshes are ready to trigger material effect
   const [meshesReady, setMeshesReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [explodeMode, setExplodeMode] = useState<ExplodeMode>('assembled');
   const isCaptureInProgressRef = useRef(false);
   const buildAnimationRef = useRef<BuildAnimationState | null>(null);
+  const explodeAnimationRef = useRef<ExplodeAnimationState | null>(null);
+  const explodePhysicsRef = useRef<ExplodePhysicsState | null>(null);
   
   const sceneRef = useRef<{
     scene: THREE.Scene | null;
@@ -771,12 +1210,46 @@ export function ThreeLDRViewer({
     animationId: null
   });
 
+  const canExplodeModel = !loading && !error && currentStepIndex === undefined;
+
+  const handleToggleExplode = () => {
+    const { scene, controls } = sceneRef.current;
+    const model = scene?.getObjectByName('ldraw-model') as THREE.Group | undefined;
+    const table = scene?.getObjectByName('display-table');
+    if (!model || !table || explodeMode === 'exploding' || explodeMode === 'rebuilding') return;
+
+    completeBuildAnimation(buildAnimationRef.current);
+    buildAnimationRef.current = null;
+    completeExplodePhysics(explodePhysicsRef.current);
+    explodePhysicsRef.current = null;
+    if (controls?.autoRotate) {
+      controls.autoRotate = false;
+    }
+
+    const direction = explodeMode === 'exploded' ? 'rebuild' : 'explode';
+    if (direction === 'explode') {
+      explodeAnimationRef.current = null;
+      explodePhysicsRef.current = createExplodePhysics(model, table);
+      if (!explodePhysicsRef.current) return;
+      setExplodeMode('exploding');
+      return;
+    }
+
+    const animation = createExplodeAnimation(model, table, direction);
+    if (!animation) return;
+    explodeAnimationRef.current = animation;
+    setExplodeMode('rebuilding');
+  };
+
   useEffect(() => {
     if (!containerRef.current) return;
     
     // Reset meshesReady for new model load
     setMeshesReady(false);
+    setExplodeMode('assembled');
     buildAnimationRef.current = null;
+    explodeAnimationRef.current = null;
+    explodePhysicsRef.current = null;
 
     const initThreeJS = async () => {
       try {
@@ -1196,7 +1669,18 @@ export function ThreeLDRViewer({
             return;
           }
 
-          updateBuildAnimation(buildAnimationRef.current, performance.now());
+          const nowMs = performance.now();
+          updateBuildAnimation(buildAnimationRef.current, nowMs);
+          const completedExplodeDirection = updateExplodeAnimation(explodeAnimationRef.current, nowMs);
+          if (completedExplodeDirection) {
+            explodeAnimationRef.current = null;
+            explodePhysicsRef.current = null;
+            setExplodeMode(completedExplodeDirection === 'rebuild' ? 'assembled' : 'exploded');
+          }
+          if (updateExplodePhysics(explodePhysicsRef.current, nowMs)) {
+            explodePhysicsRef.current = null;
+            setExplodeMode('exploded');
+          }
           controls.update();
           
           // Hide table when camera rotates underneath the model so the underside
@@ -1345,7 +1829,7 @@ export function ThreeLDRViewer({
 
   // Always render without Card wrapper (simplified embedded mode)
   return (
-    <div className={`w-full h-full ${className}`}>
+    <div className={`relative w-full h-full ${className}`}>
       {error ? (
         <div className="flex items-center justify-center h-full text-red-500 text-sm">
           {error}
@@ -1364,6 +1848,31 @@ export function ThreeLDRViewer({
             className="w-full h-full bg-gray-100 rounded-lg overflow-hidden"
             style={{ visibility: loading ? 'hidden' : 'visible' }}
           />
+          {canExplodeModel && (
+            <button
+              type="button"
+              onClick={handleToggleExplode}
+              disabled={explodeMode === 'exploding' || explodeMode === 'rebuilding'}
+              className="absolute bottom-3 left-3 z-20 inline-flex h-10 items-center gap-2 rounded-full border border-slate-700/30 bg-slate-950/85 px-3 text-xs font-semibold text-white shadow-lg shadow-black/25 backdrop-blur-sm transition-all duration-150 hover:bg-slate-800 hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
+              title={explodeMode === 'exploded' ? 'Rebuild model' : 'Explode model'}
+              aria-label={explodeMode === 'exploded' ? 'Rebuild model' : 'Explode model'}
+            >
+              {explodeMode === 'exploded' || explodeMode === 'rebuilding' ? (
+                <RotateCcw size={15} />
+              ) : (
+                <PackageOpen size={15} />
+              )}
+              <span className="hidden sm:inline">
+                {explodeMode === 'exploding'
+                  ? 'Exploding...'
+                  : explodeMode === 'rebuilding'
+                    ? 'Rebuilding...'
+                    : explodeMode === 'exploded'
+                      ? 'Rebuild'
+                      : 'Explode'}
+              </span>
+            </button>
+          )}
         </>
       )}
     </div>

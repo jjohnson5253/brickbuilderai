@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Turn any image or text prompt into a buildable LEGO®-compatible brick model.</b><br/>
-  Get a 3D model, step-by-step building instructions, downloadable LDR/MPD files, and a parts list you can order.
+  Get a 3D preview, step-by-step building instructions, downloadable LDR/MPD files, and a parts list you can order.
 </p>
 
 <p align="center">
@@ -81,6 +81,11 @@ The response contains `.ldr` and `.mpd` content you can open in any LEGO CAD vie
 - **Frontend** → Vercel
 - **Backend** → Railway
 - **Serverless worker** → RunPod (Docker image)
+
+## Attributes
+- Voxelization: https://github.com/eisenwave/obj2voxel
+- Legolization: https://github.com/AvaLovelace1/BrickGPT/
+- image-to-3D streaming: https://github.com/rehan-remade/Manifold
 
 ## License
 

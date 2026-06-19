@@ -573,10 +573,11 @@ export default function GeneratedModel() {
             
             if (!mpdContent) {
               try {
+                const authToken = (await supabase.auth.getSession()).data.session?.access_token;
                 const mpdData = await LdrToMpdApiService.convertLdrToMpd(
                   statusResponse.ldr_content,
                   freshModelName,
-                  undefined
+                  authToken
                 );
                 mpdContent = mpdData.mpd_content;
               } catch (mpdError) {
@@ -650,10 +651,11 @@ export default function GeneratedModel() {
       
       if (!mpdContent) {
         try {
+          const authToken = (await supabase.auth.getSession()).data.session?.access_token;
           const mpdData = await LdrToMpdApiService.convertLdrToMpd(
             data.ldr_content,
             fetchedModelName,
-            undefined
+            authToken
           );
           mpdContent = mpdData.mpd_content;
         } catch (mpdError) {
@@ -956,7 +958,8 @@ export default function GeneratedModel() {
       
       try {
         const priceResponse = await GetPriceApiService.getPrice(
-          currentGenerationId
+          currentGenerationId,
+          accessToken || undefined
         );
         setPriceData(priceResponse);
       } catch (error) {
@@ -968,7 +971,7 @@ export default function GeneratedModel() {
     };
 
     fetchPriceEstimate();
-  }, [currentGenerationId, priceRefreshCounter]);
+  }, [currentGenerationId, priceRefreshCounter, accessToken]);
 
   // Handle resize model functionality
   const handleResizeModel = React.useCallback(async (detailLevel: number) => {
@@ -1060,10 +1063,11 @@ export default function GeneratedModel() {
         
         if (!newMpdContent && completedGeneration.ldr_content) {
           try {
+            const authToken = (await supabase.auth.getSession()).data.session?.access_token;
             const mpdData = await LdrToMpdApiService.convertLdrToMpd(
               completedGeneration.ldr_content,
               modelName,
-              undefined
+              authToken
             );
             newMpdContent = mpdData.mpd_content;
           } catch (mpdError) {
@@ -1205,10 +1209,11 @@ export default function GeneratedModel() {
       
       if (!mpdContent) {
         try {
+          const authToken = (await supabase.auth.getSession()).data.session?.access_token;
           const mpdData = await LdrToMpdApiService.convertLdrToMpd(
             completedGeneration.ldr_content,
             modelName,
-            undefined
+            authToken
           );
           mpdContent = mpdData.mpd_content;
         } catch (mpdError) {
@@ -1542,10 +1547,11 @@ export default function GeneratedModel() {
               
               if (!newMpdContent && completedGeneration.ldr_content) {
                 try {
+                  const authToken = (await supabase.auth.getSession()).data.session?.access_token;
                   const mpdData = await LdrToMpdApiService.convertLdrToMpd(
                     completedGeneration.ldr_content,
                     modelName,
-                    undefined
+                    authToken
                   );
                   newMpdContent = mpdData.mpd_content;
                 } catch (mpdError) {
