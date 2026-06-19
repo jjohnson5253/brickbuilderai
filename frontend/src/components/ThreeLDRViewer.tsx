@@ -580,6 +580,7 @@ type ExplodePhysicsState = {
 
 const PHYSICS_STATIC_GROUP = 1;
 const PHYSICS_PART_GROUP = 2;
+const PHYSICS_PART_COLLISION_MASK = PHYSICS_STATIC_GROUP;
 
 const easeOutCubic = (value: number) => 1 - Math.pow(1 - value, 3);
 
@@ -798,7 +799,7 @@ const createExplodePhysics = (
 
   const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -560, 0) });
   world.allowSleep = true;
-  (world.solver as CANNON.GSSolver).iterations = 8;
+  (world.solver as CANNON.GSSolver).iterations = 5;
   world.defaultContactMaterial.friction = 0.55;
   world.defaultContactMaterial.restitution = 0.22;
   world.defaultContactMaterial.contactEquationStiffness = 1e7;
@@ -845,7 +846,7 @@ const createExplodePhysics = (
       sleepTimeLimit: 0.45,
     });
     body.collisionFilterGroup = PHYSICS_PART_GROUP;
-    body.collisionFilterMask = PHYSICS_STATIC_GROUP;
+    body.collisionFilterMask = PHYSICS_PART_COLLISION_MASK;
     body.addShape(new CANNON.Box(new CANNON.Vec3(
       Math.max(size.x / 2, 3),
       Math.max(size.y / 2, 3),
@@ -900,7 +901,7 @@ const updateExplodePhysics = (physics: ExplodePhysicsState | null, nowMs: number
 
   const deltaSeconds = Math.min((nowMs - physics.lastStepMs) / 1000, 0.05);
   physics.lastStepMs = nowMs;
-  physics.world.step(1 / 60, deltaSeconds, 3);
+  physics.world.step(1 / 60, deltaSeconds, 2);
   physics.simulatedMs += deltaSeconds * 1000;
   physics.parts.forEach(syncObjectToBody);
 
