@@ -3,6 +3,7 @@
       "version": "0.1.0",
       "private": true,
       "dependencies": {
+            "@dimforge/rapier3d-compat": "^0.19.3",
             "@react-three/drei": "^9.103.0",
             "@react-three/fiber": "^8.15.16",
             "@stripe/stripe-js": "^8.3.0",
@@ -10,7 +11,6 @@
             "@tailwindcss/vite": "^4.1.17",
             "@types/react-router-dom": "^5.3.3",
             "@types/three": "^0.181.0",
-            "cannon-es": "^0.20.0",
             "cors": "^2.8.5",
             "dotenv": "^17.2.3",
             "express": "^5.1.0",
