@@ -45,6 +45,9 @@ import {
   Image,
   FileText,
   Video,
+  BookOpen,
+  ShoppingCart,
+  X,
 } from "lucide-react";
 
 interface HeaderProps {
@@ -255,6 +258,8 @@ export default function GeneratedModel() {
   const [isResizing, setIsResizing] = React.useState(false);
   const [showResizeScaler, setShowResizeScaler] = React.useState(false);
   const [showPriceResize, setShowPriceResize] = React.useState(false);
+  // Resize prompt shown over the 3D viewer when entering the Block Editor.
+  const [showResizePrompt, setShowResizePrompt] = React.useState(false);
   const [isPromptEditing, setIsPromptEditing] = React.useState(false);
   const [editPrompt, setEditPrompt] = React.useState("");
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
@@ -269,6 +274,9 @@ export default function GeneratedModel() {
   // (Save or Discard). Defaults to simply exiting the editor.
   const pendingExitActionRef = React.useRef<PendingExitAction | null>(null);
   const voxelSaveRef = React.useRef<(() => Promise<void>) | null>(null);
+  // Captures a PNG preview straight from the voxel editor scene after a save,
+  // so the user can stay in the editor (no need to exit to the 3D viewer).
+  const voxelCapturePreviewRef = React.useRef<(() => string | null) | null>(null);
   const [xyzrgbContent, setXyzrgbContent] = React.useState<string | null>(null);
   const [xyzrgbUrl, setXyzrgbUrl] = React.useState<string | null>(null);
   const [problematicXyzrgbContent, setProblematicXyzrgbContent] = React.useState<string | null>(null);
@@ -1169,6 +1177,11 @@ export default function GeneratedModel() {
         // Clear screenshots and re-trigger price fetch
         setScreenshots(null);
         setPriceRefreshCounter(c => c + 1);
+
+        // The model is now this size — update the baseline so the Resize
+        // button is disabled until the slider is moved again.
+        setDetailLevel(detailLevel);
+        setCurrentScaler(detailLevel);
         
         console.log(`Resize completed. New generation ID: ${response.generation_id}`);
       } catch (error) {
@@ -1318,24 +1331,9 @@ export default function GeneratedModel() {
     setHasExitedVoxelEditor(true);
   }, []);
 
-  const handleEditModelClick = async () => {
-    // Stop the attention pulse permanently once the user has discovered the
-    // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
-    setHasClickedEditModel(true);
-
-    // If already in edit mode, check for unsaved changes before exiting
-    if (showVoxelEditor) {
-      if (voxelHasChanges) {
-        pendingExitActionRef.current = () => {
-          exitVoxelEditor();
-        };
-        setShowUnsavedChangesModal(true);
-        return;
-      }
-      exitVoxelEditor();
-      return;
-    }
-
+  // Fetch the voxel data and switch into the Block Editor. Extracted so it can
+  // be invoked either directly or after the user dismisses the resize prompt.
+  const enterVoxelEditor = async () => {
     // Enter edit mode - fetch xyzrgb content
     if (!xyzrgbUrl) {
       setXyzrgbError('No voxel data available for this model');
@@ -1377,6 +1375,34 @@ export default function GeneratedModel() {
     } finally {
       setXyzrgbLoading(false);
     }
+  };
+
+  const handleEditModelClick = async () => {
+    // Stop the attention pulse permanently once the user has discovered the
+    // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
+    setHasClickedEditModel(true);
+
+    // If already in edit mode, check for unsaved changes before exiting
+    if (showVoxelEditor) {
+      if (voxelHasChanges) {
+        pendingExitActionRef.current = () => {
+          exitVoxelEditor();
+        };
+        setShowUnsavedChangesModal(true);
+        return;
+      }
+      exitVoxelEditor();
+      return;
+    }
+
+    // Before entering the editor, offer the user a chance to resize first.
+    // Skip the prompt for demo models (which can't be resized).
+    if (!isDemoModel && xyzrgbUrl) {
+      setShowResizePrompt(true);
+      return;
+    }
+
+    await enterVoxelEditor();
   };
 
   const angles = [
@@ -1442,6 +1468,58 @@ export default function GeneratedModel() {
         setIsExportingVideo(false);
       }
     }, [downloadBlob, getSafeExportName, isExportingVideo]);
+
+
+  // Shared resize-prompt card. Rendered both as a desktop overlay inside the
+  // 3D viewer and as a mobile block below the preview.
+  const resizePromptCard = (
+    <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
+      <button
+        type="button"
+        aria-label="Close resize prompt"
+        onClick={() => setShowResizePrompt(false)}
+        disabled={isResizing || isSavePolling}
+        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <X size={16} />
+      </button>
+      <p className="mb-3 px-6 text-center text-sm text-slate-700">
+        Before editing, want to resize your model?
+        {priceData && (
+          <>
+            {' '}Currently it uses{' '}
+            <span className="font-semibold text-slate-900">{priceData.total_parts} pieces</span>
+            {' '}and will cost{' '}
+            <span className="font-semibold text-slate-900">
+              ${priceData.total_price} {priceData.currency}
+            </span>.
+          </>
+        )}
+      </p>
+      <ResizeScaler
+        onResize={handleResizeModel}
+        disabled={!mpdContent}
+        isResizing={isResizing}
+        scaler={currentScaler}
+        onScalerChange={setCurrentScaler}
+        baselineScaler={detailLevel ?? undefined}
+        hideHeader
+        rightAction={(
+          <button
+            type="button"
+            onClick={() => {
+              setShowResizePrompt(false);
+              void enterVoxelEditor();
+            }}
+            disabled={isResizing || isSavePolling}
+            className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            No, go to editor
+          </button>
+        )}
+      />
+    </div>
+  );
 
 
   return (
@@ -1538,6 +1616,7 @@ export default function GeneratedModel() {
             isProcessingSave={isSavePolling}
             onHasChangesChange={setVoxelHasChanges}
             saveRef={voxelSaveRef}
+            capturePreviewRef={voxelCapturePreviewRef}
             showResizeScaler={!isDemoModel && showResizeScaler && !!mpdContent}
             onResize={handleResizeModel}
             isResizing={isResizing}
@@ -1616,11 +1695,15 @@ export default function GeneratedModel() {
               
               if (newMpdContent) {
                 previewUploadedForRef.current.delete(response.generation_id);
-                setPreviewPngDataUrl(null);
                 setNeedsPreviewUpload(true);
                 activeSavePreviewUploadRef.current = waitForPreviewUpload(response.generation_id).finally(() => {
                   activeSavePreviewUploadRef.current = null;
                 });
+                // Grab a fresh preview straight from the voxel editor scene so
+                // the user can stay in the editor — no need to exit to the 3D
+                // viewer just to capture one. The upload effect picks this up.
+                const voxelPreview = voxelCapturePreviewRef.current?.() ?? null;
+                setPreviewPngDataUrl(voxelPreview);
                 setMpdContent(newMpdContent);
                 localStorage.setItem('MPD_CONTENT', newMpdContent);
                 localStorage.setItem('lastMpdContent', newMpdContent);
@@ -1668,8 +1751,7 @@ export default function GeneratedModel() {
               
               // Clear screenshots to regenerate with new model
               setScreenshots(null);
-              exitVoxelEditor();
-              
+
               // Re-trigger price fetch now that the generation is complete
               setPriceRefreshCounter(c => c + 1);
               
@@ -1797,7 +1879,7 @@ export default function GeneratedModel() {
               </div>
             ) : mpdContent ? (
               <ThreeLDRViewer
-                key={mpdContent.length}
+                key={`${currentGenerationId ?? 'model'}-${mpdContent.length}`}
                 modelContent={mpdContent}
                 modelName={modelName}
                 onPreviewCaptured={handlePreviewCaptured}
@@ -1819,6 +1901,14 @@ export default function GeneratedModel() {
   </section>
 )}
 
+        {/* Resize prompt — appears below the preview and replaces the
+            action buttons / tip text while it is open. */}
+        {showResizePrompt && !showVoxelEditor && (
+          <div className="mt-4 flex justify-center">
+            {resizePromptCard}
+          </div>
+        )}
+
         {/* Sections below the 3D preview fade in once the scene is ready */}
         <div
           className={sceneReady ? "below-preview-sequence" : ""}
@@ -1838,11 +1928,11 @@ export default function GeneratedModel() {
         )}
 
         {/* Centered dual buttons: Edit Model + Order My Kit */}
-        <section className="mt-4 mb-4 flex flex-col items-center gap-3 px-4">
+        <section className={`mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden' : 'flex'}`}>
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
-              Not what you were expecting? Try coloring and shaping using the Block Editor!
+              Not what you were expecting? Press "Edit" to color and shape your model!
             </p>
           )}
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
@@ -1855,11 +1945,11 @@ export default function GeneratedModel() {
                 className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold border-2 transition-all duration-150 ${
                   showVoxelEditor
                     ? 'border-[#f44336] bg-[#f44336] text-white shadow-lg shadow-[#f44336]/25 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2'
-                    : `bg-white text-black border-gray-300 ${
-                        xyzrgbLoading
-                          ? 'cursor-not-allowed opacity-70'
-                          : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
-                      } ${!xyzrgbLoading && !hasClickedEditModel ? 'attention-pulse' : ''}`
+                    : xyzrgbLoading
+                      ? 'bg-white text-black border-gray-300 cursor-not-allowed opacity-70'
+                      : !hasClickedEditModel
+                        ? 'bg-[#f44336] text-white border-[#f44336] shadow-lg shadow-[#f44336]/25 cursor-pointer hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
+                        : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
                 }`}
             >
                 {xyzrgbLoading ? (
@@ -1869,8 +1959,8 @@ export default function GeneratedModel() {
                   </>
                 ) : (
                   <>
-                    {/* <Pencil size={16} /> */}
-                    {showVoxelEditor ? 'Exit Block Editor' : 'Edit Model'}
+                    <Pencil size={16} />
+                    {showVoxelEditor ? 'Exit Block Editor' : 'Edit'}
                   </>
                 )}
             </button>
@@ -1889,7 +1979,10 @@ export default function GeneratedModel() {
                     Processing...
                   </>
                 ) : (
-                  'View Instructions'
+                  <>
+                    <BookOpen size={16} />
+                    View Instructions
+                  </>
                 )}
             </button>
 
@@ -1919,7 +2012,10 @@ export default function GeneratedModel() {
                 Order my Kit!
               </>
             ) : (
-              'Order these bricks!'
+              <>
+                <ShoppingCart size={16} />
+                Order These Bricks!
+              </>
             )}
           </button>
 
@@ -1933,7 +2029,9 @@ export default function GeneratedModel() {
             className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold transition-all duration-150 border-2 ${
               !currentGenerationId || communityToggleLoading || isSavePolling
                 ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
-                : `bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] ${!isCommunity && hasExitedVoxelEditor && !showVoxelEditor ? 'attention-pulse' : ''}`
+                : (!isCommunity && hasExitedVoxelEditor && !showVoxelEditor)
+                  ? 'bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
+                  : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
             }`}
           >
             {communityToggleLoading ? (
@@ -1970,6 +2068,19 @@ export default function GeneratedModel() {
             <span className="text-slate-700">your model is generated.</span>
           </p>
         </section>
+
+        {/* Resize panel — shown above the stats badges when "Try resizing!" is pressed */}
+        {showPriceResize && priceData && !priceLoading && !isSavePolling && !isDemoModel && (
+          <section className="mt-6 max-w-xs mx-auto">
+            <ResizeScaler
+              onResize={handleResizeModel}
+              disabled={!mpdContent}
+              isResizing={isResizing}
+              scaler={currentScaler}
+              onScalerChange={setCurrentScaler}
+            />
+          </section>
+        )}
 
         {/* Stats grid with hover animation */}
         <section className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
@@ -2012,17 +2123,6 @@ export default function GeneratedModel() {
                     Try resizing!
                   </button>
                 </p>
-                {showPriceResize && (
-                  <div className="mt-3 max-w-xs mx-auto">
-                    <ResizeScaler
-                      onResize={handleResizeModel}
-                      disabled={!mpdContent}
-                      isResizing={isResizing}
-                      scaler={currentScaler}
-                      onScalerChange={setCurrentScaler}
-                    />
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -2082,8 +2182,8 @@ export default function GeneratedModel() {
       {/* Unsaved changes confirmation modal */}
       {showUnsavedChangesModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+          className="fixed inset-0 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 3000 }}
           onClick={() => {
             pendingExitActionRef.current = null;
             setShowUnsavedChangesModal(false);
