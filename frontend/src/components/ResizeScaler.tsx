@@ -22,11 +22,28 @@ export function ResizeScaler({
   const MAX = 60;
   const DEFAULT = 25;
 
+  // The slider is presented to the user on a 1-100 scale, but the underlying
+  // value passed around stays within [MIN, MAX]. These helpers convert between
+  // the displayed (1-100) value and the actual scaler value.
+  const DISPLAY_MIN = 1;
+  const DISPLAY_MAX = 100;
+
+  const toDisplay = (actual: number) =>
+    Math.round(
+      DISPLAY_MIN + ((actual - MIN) / (MAX - MIN)) * (DISPLAY_MAX - DISPLAY_MIN)
+    );
+
+  const toActual = (display: number) =>
+    Math.round(
+      MIN + ((display - DISPLAY_MIN) / (DISPLAY_MAX - DISPLAY_MIN)) * (MAX - MIN)
+    );
+
   const [internalScaler, setInternalScaler] = useState<number>(DEFAULT);
   const trackRef = useRef<HTMLInputElement | null>(null);
   
   // Use external scaler if provided, otherwise use internal state
   const scaler = externalScaler !== undefined ? externalScaler : internalScaler;
+  const displayScaler = toDisplay(scaler);
 
   const handleResize = async () => {
     if (disabled || isResizing) return;
@@ -34,7 +51,7 @@ export function ResizeScaler({
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = parseInt(e.target.value, 10);
+    const newValue = toActual(parseInt(e.target.value, 10));
     if (onScalerChange) {
       onScalerChange(newValue);
     } else {
@@ -57,17 +74,19 @@ export function ResizeScaler({
             <input
               aria-label="Model scaler"
               type="range"
-              min={MIN}
-              max={MAX}
+              min={DISPLAY_MIN}
+              max={DISPLAY_MAX}
               step={1}
-              value={scaler}
+              value={displayScaler}
               onChange={handleInputChange}
               className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider:bg-red-500 slider:rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
               ref={trackRef}
               disabled={disabled || isResizing}
             />
-            <div className="flex justify-center text-sm text-gray-500 mt-2">
-              <span>{scaler}</span>
+            <div className="flex justify-between text-xs text-gray-400 mt-2">
+              <span>{DISPLAY_MIN}</span>
+              <span className="text-sm font-medium text-gray-500">{displayScaler}</span>
+              <span>{DISPLAY_MAX}</span>
             </div>
 
           </div>
