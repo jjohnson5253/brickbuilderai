@@ -45,6 +45,8 @@ import {
   Image,
   FileText,
   Video,
+  BookOpen,
+  ShoppingCart,
   X,
 } from "lucide-react";
 
@@ -1957,7 +1959,7 @@ export default function GeneratedModel() {
                   </>
                 ) : (
                   <>
-                    {/* <Pencil size={16} /> */}
+                    <Pencil size={16} />
                     {showVoxelEditor ? 'Exit Block Editor' : 'Edit'}
                   </>
                 )}
@@ -1977,7 +1979,10 @@ export default function GeneratedModel() {
                     Processing...
                   </>
                 ) : (
-                  'View Instructions'
+                  <>
+                    <BookOpen size={16} />
+                    View Instructions
+                  </>
                 )}
             </button>
 
@@ -2007,7 +2012,10 @@ export default function GeneratedModel() {
                 Order my Kit!
               </>
             ) : (
-              'Order These Bricks!'
+              <>
+                <ShoppingCart size={16} />
+                Order These Bricks!
+              </>
             )}
           </button>
 
