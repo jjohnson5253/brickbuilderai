@@ -1172,6 +1172,11 @@ export default function GeneratedModel() {
         // Clear screenshots and re-trigger price fetch
         setScreenshots(null);
         setPriceRefreshCounter(c => c + 1);
+
+        // The model is now this size — update the baseline so the Resize
+        // button is disabled until the slider is moved again.
+        setDetailLevel(detailLevel);
+        setCurrentScaler(detailLevel);
         
         console.log(`Resize completed. New generation ID: ${response.generation_id}`);
       } catch (error) {
@@ -1492,6 +1497,7 @@ export default function GeneratedModel() {
         isResizing={isResizing}
         scaler={currentScaler}
         onScalerChange={setCurrentScaler}
+        baselineScaler={detailLevel ?? undefined}
         hideHeader
         rightAction={(
           <button
@@ -1501,7 +1507,7 @@ export default function GeneratedModel() {
               void enterVoxelEditor();
             }}
             disabled={isResizing || isSavePolling}
-            className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
           >
             No, go to editor
           </button>

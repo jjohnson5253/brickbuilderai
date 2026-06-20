@@ -9,6 +9,9 @@ interface ResizeScalerProps {
   onScalerChange?: (value: number) => void;
   hideHeader?: boolean;
   rightAction?: React.ReactNode;
+  // When provided, the Resize button is disabled while the slider value equals
+  // this baseline (i.e. the model is already that size).
+  baselineScaler?: number;
 }
 
 export function ResizeScaler({ 
@@ -18,7 +21,8 @@ export function ResizeScaler({
   scaler: externalScaler,
   onScalerChange,
   hideHeader = false,
-  rightAction
+  rightAction,
+  baselineScaler
 }: ResizeScalerProps) {
   const MIN = 10;
   const MAX = 60;
@@ -47,8 +51,12 @@ export function ResizeScaler({
   const scaler = externalScaler !== undefined ? externalScaler : internalScaler;
   const displayScaler = toDisplay(scaler);
 
+  // Disable resizing when the slider already matches the model's current size.
+  const isUnchanged = baselineScaler !== undefined && scaler === baselineScaler;
+  const resizeDisabled = disabled || isResizing || isUnchanged;
+
   const handleResize = async () => {
-    if (disabled || isResizing) return;
+    if (disabled || isResizing || isUnchanged) return;
     await onResize(scaler);
   };
 
@@ -94,11 +102,11 @@ export function ResizeScaler({
           </div>
 
           {/* Resize Action Button */}
-          <div className="flex items-center justify-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               onClick={handleResize}
-              disabled={disabled || isResizing}
-              className="inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md text-white bg-red-500 hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:hover:bg-gray-400 transition-colors"
+              disabled={resizeDisabled}
+              className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 font-semibold border-2 transition-all duration-150 bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] disabled:bg-gray-300 disabled:border-gray-300 disabled:text-white disabled:shadow-none disabled:cursor-not-allowed disabled:hover:scale-100"
             >
               {isResizing ? (
                 <>
