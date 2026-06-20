@@ -39,6 +39,9 @@ interface VoxelViewerProps {
   onSaveSuccess?: (response: UpdateModelResponse) => void | Promise<void>;
   onHasChangesChange?: (hasChanges: boolean) => void;
   saveRef?: React.MutableRefObject<(() => Promise<void>) | null>;
+  // Exposes a function that renders the current voxel scene to a clean PNG
+  // data URL, so the parent can capture a preview without leaving the editor.
+  capturePreviewRef?: React.MutableRefObject<(() => string | null) | null>;
   // Resize scaler props
   showResizeScaler?: boolean;
   onResize?: (detailLevel: number) => Promise<void>;
@@ -281,7 +284,7 @@ function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.Buffer
   return merged;
 }
 
-export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className = '', generationId, accessToken, referenceImageUrl, isProcessingSave, onVoxelSelect, onVoxelsChange, onSaveSuccess, onHasChangesChange, saveRef, showResizeScaler, onResize, isResizing, resizeScaler, onResizeScalerChange }: VoxelViewerProps) {
+export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className = '', generationId, accessToken, referenceImageUrl, isProcessingSave, onVoxelSelect, onVoxelsChange, onSaveSuccess, onHasChangesChange, saveRef, capturePreviewRef, showResizeScaler, onResize, isResizing, resizeScaler, onResizeScalerChange }: VoxelViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -328,14 +331,20 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // Expose save function to parent via ref
+  // Expose save + preview-capture functions to parent via refs
   useEffect(() => {
     if (saveRef) {
       saveRef.current = handleSave;
     }
+    if (capturePreviewRef) {
+      capturePreviewRef.current = capturePreview;
+    }
     return () => {
       if (saveRef) {
         saveRef.current = null;
+      }
+      if (capturePreviewRef) {
+        capturePreviewRef.current = null;
       }
     };
   });
@@ -993,6 +1002,37 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     }
   };
 
+  // Render the current voxel scene to a clean PNG data URL. Selection and
+  // problematic highlights are hidden so they don't appear in the preview.
+  const capturePreview = (): string | null => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !scene || !camera) return null;
+
+    const hidden: THREE.Object3D[] = [];
+    const hide = (obj: THREE.Object3D | null | undefined) => {
+      if (obj && obj.visible) {
+        obj.visible = false;
+        hidden.push(obj);
+      }
+    };
+    highlightMeshesRef.current.forEach(hide);
+    problematicHighlightsRef.current.forEach(hide);
+
+    try {
+      renderer.render(scene, camera);
+      return renderer.domElement.toDataURL('image/png');
+    } catch (err) {
+      console.warn('Failed to capture voxel preview:', err);
+      return null;
+    } finally {
+      hidden.forEach((obj) => {
+        obj.visible = true;
+      });
+    }
+  };
+
   // Save changes to backend
   const handleSave = async () => {
     if (!generationId) {
@@ -1073,8 +1113,9 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
     cameraRef.current = camera;
 
-    // Create renderer with accurate color output
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Create renderer with accurate color output. preserveDrawingBuffer lets
+    // us read the canvas via toDataURL() for preview capture after a save.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;

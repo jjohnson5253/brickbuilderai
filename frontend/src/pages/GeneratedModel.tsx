@@ -272,6 +272,9 @@ export default function GeneratedModel() {
   // (Save or Discard). Defaults to simply exiting the editor.
   const pendingExitActionRef = React.useRef<PendingExitAction | null>(null);
   const voxelSaveRef = React.useRef<(() => Promise<void>) | null>(null);
+  // Captures a PNG preview straight from the voxel editor scene after a save,
+  // so the user can stay in the editor (no need to exit to the 3D viewer).
+  const voxelCapturePreviewRef = React.useRef<(() => string | null) | null>(null);
   const [xyzrgbContent, setXyzrgbContent] = React.useState<string | null>(null);
   const [xyzrgbUrl, setXyzrgbUrl] = React.useState<string | null>(null);
   const [problematicXyzrgbContent, setProblematicXyzrgbContent] = React.useState<string | null>(null);
@@ -1611,6 +1614,7 @@ export default function GeneratedModel() {
             isProcessingSave={isSavePolling}
             onHasChangesChange={setVoxelHasChanges}
             saveRef={voxelSaveRef}
+            capturePreviewRef={voxelCapturePreviewRef}
             showResizeScaler={!isDemoModel && showResizeScaler && !!mpdContent}
             onResize={handleResizeModel}
             isResizing={isResizing}
@@ -1689,11 +1693,15 @@ export default function GeneratedModel() {
               
               if (newMpdContent) {
                 previewUploadedForRef.current.delete(response.generation_id);
-                setPreviewPngDataUrl(null);
                 setNeedsPreviewUpload(true);
                 activeSavePreviewUploadRef.current = waitForPreviewUpload(response.generation_id).finally(() => {
                   activeSavePreviewUploadRef.current = null;
                 });
+                // Grab a fresh preview straight from the voxel editor scene so
+                // the user can stay in the editor — no need to exit to the 3D
+                // viewer just to capture one. The upload effect picks this up.
+                const voxelPreview = voxelCapturePreviewRef.current?.() ?? null;
+                setPreviewPngDataUrl(voxelPreview);
                 setMpdContent(newMpdContent);
                 localStorage.setItem('MPD_CONTENT', newMpdContent);
                 localStorage.setItem('lastMpdContent', newMpdContent);
@@ -1741,8 +1749,7 @@ export default function GeneratedModel() {
               
               // Clear screenshots to regenerate with new model
               setScreenshots(null);
-              exitVoxelEditor();
-              
+
               // Re-trigger price fetch now that the generation is complete
               setPriceRefreshCounter(c => c + 1);
               
@@ -1870,7 +1877,7 @@ export default function GeneratedModel() {
               </div>
             ) : mpdContent ? (
               <ThreeLDRViewer
-                key={mpdContent.length}
+                key={`${currentGenerationId ?? 'model'}-${mpdContent.length}`}
                 modelContent={mpdContent}
                 modelName={modelName}
                 onPreviewCaptured={handlePreviewCaptured}
@@ -1923,7 +1930,7 @@ export default function GeneratedModel() {
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
-              Not what you were expecting? Try coloring and shaping using the Block Editor!
+              Not what you were expecting? Press "Edit" to color and shape your model!
             </p>
           )}
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
@@ -1951,7 +1958,7 @@ export default function GeneratedModel() {
                 ) : (
                   <>
                     {/* <Pencil size={16} /> */}
-                    {showVoxelEditor ? 'Exit Block Editor' : 'Edit Model'}
+                    {showVoxelEditor ? 'Exit Block Editor' : 'Edit'}
                   </>
                 )}
             </button>
@@ -2000,7 +2007,7 @@ export default function GeneratedModel() {
                 Order my Kit!
               </>
             ) : (
-              'Order these bricks!'
+              'Order These Bricks!'
             )}
           </button>
 
