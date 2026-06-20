@@ -45,6 +45,7 @@ import {
   Image,
   FileText,
   Video,
+  X,
 } from "lucide-react";
 
 interface HeaderProps {
@@ -255,6 +256,8 @@ export default function GeneratedModel() {
   const [isResizing, setIsResizing] = React.useState(false);
   const [showResizeScaler, setShowResizeScaler] = React.useState(false);
   const [showPriceResize, setShowPriceResize] = React.useState(false);
+  // Resize prompt shown over the 3D viewer when entering the Block Editor.
+  const [showResizePrompt, setShowResizePrompt] = React.useState(false);
   const [isPromptEditing, setIsPromptEditing] = React.useState(false);
   const [editPrompt, setEditPrompt] = React.useState("");
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
@@ -1318,24 +1321,9 @@ export default function GeneratedModel() {
     setHasExitedVoxelEditor(true);
   }, []);
 
-  const handleEditModelClick = async () => {
-    // Stop the attention pulse permanently once the user has discovered the
-    // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
-    setHasClickedEditModel(true);
-
-    // If already in edit mode, check for unsaved changes before exiting
-    if (showVoxelEditor) {
-      if (voxelHasChanges) {
-        pendingExitActionRef.current = () => {
-          exitVoxelEditor();
-        };
-        setShowUnsavedChangesModal(true);
-        return;
-      }
-      exitVoxelEditor();
-      return;
-    }
-
+  // Fetch the voxel data and switch into the Block Editor. Extracted so it can
+  // be invoked either directly or after the user dismisses the resize prompt.
+  const enterVoxelEditor = async () => {
     // Enter edit mode - fetch xyzrgb content
     if (!xyzrgbUrl) {
       setXyzrgbError('No voxel data available for this model');
@@ -1377,6 +1365,34 @@ export default function GeneratedModel() {
     } finally {
       setXyzrgbLoading(false);
     }
+  };
+
+  const handleEditModelClick = async () => {
+    // Stop the attention pulse permanently once the user has discovered the
+    // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
+    setHasClickedEditModel(true);
+
+    // If already in edit mode, check for unsaved changes before exiting
+    if (showVoxelEditor) {
+      if (voxelHasChanges) {
+        pendingExitActionRef.current = () => {
+          exitVoxelEditor();
+        };
+        setShowUnsavedChangesModal(true);
+        return;
+      }
+      exitVoxelEditor();
+      return;
+    }
+
+    // Before entering the editor, offer the user a chance to resize first.
+    // Skip the prompt for demo models (which can't be resized).
+    if (!isDemoModel && xyzrgbUrl) {
+      setShowResizePrompt(true);
+      return;
+    }
+
+    await enterVoxelEditor();
   };
 
   const angles = [
@@ -1810,6 +1826,57 @@ export default function GeneratedModel() {
               <div className="w-full h-full bg-slate-50"></div>
             )}
           </div>
+
+          {/* Resize prompt overlay — shown in the bottom third of the viewer
+              when the user clicks Edit Model, before entering the Block Editor. */}
+          {showResizePrompt && (
+            <div className="absolute inset-x-0 bottom-0 z-30 flex justify-center p-3">
+              <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
+                <button
+                  type="button"
+                  aria-label="Close resize prompt"
+                  onClick={() => setShowResizePrompt(false)}
+                  disabled={isResizing || isSavePolling}
+                  className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <X size={16} />
+                </button>
+                <p className="mb-3 pr-6 text-sm text-slate-700">
+                  First, would you like to resize your model?
+                  {priceData && (
+                    <>
+                      {' '}Currently it uses{' '}
+                      <span className="font-semibold text-slate-900">{priceData.total_parts} pieces</span>
+                      {' '}and will cost{' '}
+                      <span className="font-semibold text-slate-900">
+                        ${priceData.total_price} {priceData.currency}
+                      </span>.
+                    </>
+                  )}
+                </p>
+                <ResizeScaler
+                  onResize={handleResizeModel}
+                  disabled={!mpdContent}
+                  isResizing={isResizing}
+                  scaler={currentScaler}
+                  onScalerChange={setCurrentScaler}
+                />
+                <div className="mt-3 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowResizePrompt(false);
+                      void enterVoxelEditor();
+                    }}
+                    disabled={isResizing || isSavePolling}
+                    className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    No thanks, continue to editor
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         <figcaption className="mt-1 text-xs text-slate-500 text-center">
           {/* Click/touch and drag to rotate, scroll/pinch to zoom */}

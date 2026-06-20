@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 import { LDrawConditionalLineMaterial } from 'three/addons/materials/LDrawConditionalLineMaterial.js';
-import { PackageOpen, RotateCcw, Ruler } from 'lucide-react';
+import { Sparkles, RotateCcw, Ruler } from 'lucide-react';
 
 // Build a simple stylized room with a table, sized to fit the model.
 const buildRoom = (
@@ -2185,7 +2185,7 @@ export function ThreeLDRViewer({
               {explodeMode === 'exploded' || explodeMode === 'exploding' || explodeMode === 'rebuilding' ? (
                 <RotateCcw size={14} />
               ) : (
-                <PackageOpen size={14} />
+                <Sparkles size={14} />
               )}
               <span className="hidden sm:inline">
                 {explodeMode === 'exploding'
