@@ -1538,8 +1538,12 @@ export default function GeneratedModel() {
         <p className="text-sm text-slate-500">Select blocks to change color or add/remove</p>
       </div>
       {/* Voxel editor */}
-      <div className="relative border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: '700px' }}>
-        <VoxelViewer 
+      <figure className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+        <div
+          className="relative w-full overflow-hidden rounded-xl bg-slate-50"
+          style={{ aspectRatio: '3 / 2', maxHeight: '50vh' }}
+        >
+          <VoxelViewer 
             xyzrgbContent={xyzrgbContent}
             problematicXyzrgbContent={problematicXyzrgbContent || undefined}
             generationId={currentGenerationId || undefined}
@@ -1700,8 +1704,9 @@ export default function GeneratedModel() {
               }
             }
           }}
-        />
-      </div>
+          />
+        </div>
+      </figure>
     </div>
   </section>
 ) : (
