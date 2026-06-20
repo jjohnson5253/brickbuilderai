@@ -44,6 +44,7 @@ import {
   Image,
   FileText,
   Video,
+  X,
 } from "lucide-react";
 
 function Header() {
@@ -1473,11 +1474,20 @@ export default function GeneratedModel() {
   <section className="mt-6 md:mt-8 lg:mt-10">
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-[#f44336]">Edit Mode</h2>
+        <button
+          type="button"
+          onClick={handleEditModelClick}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 border-[#f44336] bg-[#f44336] px-7 font-semibold text-white shadow-lg shadow-[#f44336]/25 transition-all duration-150 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2 sm:w-auto sm:min-w-44"
+          title="Exit block editor"
+          aria-label="Exit block editor"
+        >
+          <X size={16} />
+          Exit Block Editor
+        </button>
         <p className="text-sm text-slate-500">Select blocks to change color or add/remove</p>
       </div>
       {/* Voxel editor */}
-      <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: '700px' }}>
+      <div className="relative border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: '700px' }}>
         <VoxelViewer 
             xyzrgbContent={xyzrgbContent}
             problematicXyzrgbContent={problematicXyzrgbContent || undefined}
