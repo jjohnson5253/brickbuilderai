@@ -44,9 +44,14 @@ import {
   Image,
   FileText,
   Video,
+  X,
 } from "lucide-react";
 
-function Header() {
+interface HeaderProps {
+  onGuardedNavigate: (path: string) => void;
+}
+
+function Header({ onGuardedNavigate }: HeaderProps) {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -119,7 +124,7 @@ function Header() {
       <div className="flex items-center gap-3">
         <button
           className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px"
-          onClick={() => navigate("/community")}
+          onClick={() => onGuardedNavigate("/community")}
         >
           <Users className="h-4 w-4" />
           Community
@@ -156,7 +161,7 @@ function Header() {
                     <button
                       onClick={() => {
                         setDropdownOpen(false);
-                        navigate('/dashboard');
+                        onGuardedNavigate('/dashboard');
                       }}
                       className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
                     >
@@ -316,6 +321,7 @@ export default function GeneratedModel() {
   // pulsing after the user has discovered the feature (even if they later exit
   // edit mode).
   const [hasClickedEditModel, setHasClickedEditModel] = React.useState<boolean>(false);
+  const [hasExitedVoxelEditor, setHasExitedVoxelEditor] = React.useState<boolean>(false);
   const [previewPngDataUrl, setPreviewPngDataUrl] = React.useState<string | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = React.useState(false);
   const [isExportingVideo, setIsExportingVideo] = React.useState(false);
@@ -1259,6 +1265,13 @@ export default function GeneratedModel() {
     action();
   };
 
+  const exitVoxelEditor = React.useCallback(() => {
+    setShowVoxelEditor(false);
+    setShowResizeScaler(false);
+    setXyzrgbError(null);
+    setHasExitedVoxelEditor(true);
+  }, []);
+
   const handleEditModelClick = async () => {
     // Stop the attention pulse permanently once the user has discovered the
     // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
@@ -1268,16 +1281,12 @@ export default function GeneratedModel() {
     if (showVoxelEditor) {
       if (voxelHasChanges) {
         pendingExitActionRef.current = () => {
-          setShowVoxelEditor(false);
-          setShowResizeScaler(false);
-          setXyzrgbError(null);
+          exitVoxelEditor();
         };
         setShowUnsavedChangesModal(true);
         return;
       }
-      setShowVoxelEditor(false);
-      setShowResizeScaler(false);
-      setXyzrgbError(null);
+      exitVoxelEditor();
       return;
     }
 
@@ -1398,7 +1407,7 @@ export default function GeneratedModel() {
       />
 
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 sm:px-6 md:px-8 lg:px-10 pb-16 pt-3">
-        <Header />
+        <Header onGuardedNavigate={(path) => guardUnsavedChanges(() => navigate(path))} />
         
         {/* Generate Another Button */}
         <button
@@ -1451,11 +1460,11 @@ export default function GeneratedModel() {
         {!showVoxelEditor && (
           <section className="relative mt-2 mb-2 md:mb-3 landing-fade-in landing-delay-2">
             <h2 className="text-lg sm:text-xl lg:text-2xl font-semibold text-center break-words px-4">
-              Successfully Generated Model
+              Successfully Generated Model 🎉
             </h2>
             {currentGenerationId && (
               <p className="text-xs text-slate-400 text-center mt-1">
-                id: {currentGenerationId}
+                {/* id: {currentGenerationId} */}
               </p>
             )}
             {/* <p className="text-sm text-slate-500 text-center italic mt-3 px-4">
@@ -1469,11 +1478,20 @@ export default function GeneratedModel() {
   <section className="mt-6 md:mt-8 lg:mt-10">
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-[#f44336]">Edit Mode</h2>
+        <button
+          type="button"
+          onClick={handleEditModelClick}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 border-[#f44336] bg-[#f44336] px-7 font-semibold text-white shadow-lg shadow-[#f44336]/25 transition-all duration-150 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2 sm:w-auto sm:min-w-44"
+          title="Exit block editor"
+          aria-label="Exit block editor"
+        >
+          <X size={16} />
+          Exit Block Editor
+        </button>
         <p className="text-sm text-slate-500">Select blocks to change color or add/remove</p>
       </div>
       {/* Voxel editor */}
-      <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: '700px' }}>
+      <div className="relative border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: '700px' }}>
         <VoxelViewer 
             xyzrgbContent={xyzrgbContent}
             problematicXyzrgbContent={problematicXyzrgbContent || undefined}
@@ -1749,7 +1767,7 @@ export default function GeneratedModel() {
           </div>
         </div>
         <figcaption className="mt-1 text-xs text-slate-500 text-center">
-          Click/touch and drag to rotate, scroll/pinch to zoom
+          {/* Click/touch and drag to rotate, scroll/pinch to zoom */}
         </figcaption>
       </figure>
     </div>
@@ -1826,7 +1844,7 @@ export default function GeneratedModel() {
                 )}
             </button>
 
-            {/* Order My Kit button — red with hover lighten */}
+            {/* Order My Kit button — white with grey border, turns red on hover */}
             <button
             type="button"
             aria-label="Order my kit"
@@ -1840,15 +1858,15 @@ export default function GeneratedModel() {
                 priceData: priceData
               }
             }))}
-            className={`inline-flex items-center justify-center h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 text-white font-semibold transition-all duration-150 shadow-lg ${
+            className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 transition-all duration-150 ${
               priceLoading || isSavePolling
-                ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-[#f44336] cursor-pointer shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:scale-[1.03]'
+                ? 'cursor-not-allowed opacity-70' 
+                : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
             }`}
           >
             {priceLoading || isSavePolling ? (
               <>
-                <div className="w-4 h-4 border-2 border-gray-300 border-t-black rounded-full animate-spin mr-2"></div>
+                <div className="w-4 h-4 border-2 border-gray-300 border-t-black rounded-full animate-spin"></div>
                 Order my Kit!
               </>
             ) : (
@@ -1862,13 +1880,11 @@ export default function GeneratedModel() {
             type="button"
             aria-label={isCommunity ? 'Remove from community' : 'Post to community'}
             disabled={!currentGenerationId || communityToggleLoading || isSavePolling}
-            onClick={handleToggleCommunity}
+            onClick={() => guardUnsavedChanges(() => { void handleToggleCommunity(); })}
             className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold transition-all duration-150 border-2 ${
               !currentGenerationId || communityToggleLoading || isSavePolling
                 ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
-                : isCommunity
-                  ? 'bg-white text-[#f44336] border-[#f44336] cursor-pointer hover:bg-[#f44336] hover:text-white hover:scale-[1.03] hover:shadow-lg'
-                  : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
+                : `bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] ${!isCommunity && hasExitedVoxelEditor && !showVoxelEditor ? 'attention-pulse' : ''}`
             }`}
           >
             {communityToggleLoading ? (
@@ -2045,9 +2061,7 @@ export default function GeneratedModel() {
               <button
                 onClick={() => {
                   setShowUnsavedChangesModal(false);
-                  setShowVoxelEditor(false);
-                  setShowResizeScaler(false);
-                  setXyzrgbError(null);
+                  exitVoxelEditor();
                   setVoxelHasChanges(false);
                   const action = pendingExitActionRef.current;
                   pendingExitActionRef.current = null;
@@ -2063,9 +2077,7 @@ export default function GeneratedModel() {
                   if (voxelSaveRef.current) {
                     await voxelSaveRef.current();
                   }
-                  setShowVoxelEditor(false);
-                  setShowResizeScaler(false);
-                  setXyzrgbError(null);
+                  exitVoxelEditor();
                   setVoxelHasChanges(false);
                   const action = pendingExitActionRef.current;
                   pendingExitActionRef.current = null;

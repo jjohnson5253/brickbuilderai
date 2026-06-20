@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { LDrawLoader } from 'three/addons/loaders/LDrawLoader.js';
 import { LDrawConditionalLineMaterial } from 'three/addons/materials/LDrawConditionalLineMaterial.js';
-import { PackageOpen, RotateCcw } from 'lucide-react';
+import { PackageOpen, RotateCcw, Ruler } from 'lucide-react';
 
 // Build a simple stylized room with a table, sized to fit the model.
 const buildRoom = (
@@ -114,6 +114,223 @@ const buildRoom = (
   scene.add(room);
 };
 
+const LDRAW_UNIT_TO_MM = 0.4;
+
+const formatLDrawMeasurement = (lengthLdu: number) => {
+  const millimeters = Math.abs(lengthLdu) * LDRAW_UNIT_TO_MM;
+  const inches = millimeters / 25.4;
+  const centimeters = millimeters / 10;
+  const inchPrecision = inches < 10 ? 2 : 1;
+  const cmPrecision = centimeters < 10 ? 1 : 0;
+
+  return `${inches.toFixed(inchPrecision)} in (${centimeters.toFixed(cmPrecision)} cm)`;
+};
+
+const RULER_LABEL_PIXEL_HEIGHT = 34;
+
+const createRulerLabel = (text: string) => {
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  const canvasWidth = 640;
+  const canvasHeight = 128;
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
+
+  if (!context) return null;
+
+  context.clearRect(0, 0, canvasWidth, canvasHeight);
+  context.fillStyle = 'rgba(255, 255, 255, 0.88)';
+  context.strokeStyle = 'rgba(15, 23, 42, 0.18)';
+  context.lineWidth = 8;
+  context.roundRect(8, 18, canvasWidth - 16, canvasHeight - 36, 22);
+  context.fill();
+  context.stroke();
+  context.font = '600 38px Arial, sans-serif';
+  context.fillStyle = '#000000';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, canvasWidth / 2, canvasHeight / 2 + 2, canvasWidth - 48);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.userData.rulerLabelAspect = canvasWidth / canvasHeight;
+  sprite.userData.rulerLabelPixelHeight = RULER_LABEL_PIXEL_HEIGHT;
+  sprite.scale.set(canvasWidth / canvasHeight, 1, 1);
+  sprite.renderOrder = 20;
+
+  return sprite;
+};
+
+const updateRulerLabelScales = (
+  scene: THREE.Scene,
+  camera: THREE.PerspectiveCamera,
+  renderer: THREE.WebGLRenderer,
+) => {
+  const rulerGrid = scene.getObjectByName('ruler-grid');
+  if (!rulerGrid?.visible) return;
+
+  const renderSize = renderer.getSize(new THREE.Vector2());
+  const viewportHeight = Math.max(renderSize.y, 1);
+  const fovRadians = THREE.MathUtils.degToRad(camera.fov);
+
+  rulerGrid.traverse((object) => {
+    if (!(object instanceof THREE.Sprite)) return;
+
+    const pixelHeight = typeof object.userData.rulerLabelPixelHeight === 'number'
+      ? object.userData.rulerLabelPixelHeight
+      : RULER_LABEL_PIXEL_HEIGHT;
+    const aspect = typeof object.userData.rulerLabelAspect === 'number'
+      ? object.userData.rulerLabelAspect
+      : 1;
+    const distance = camera.position.distanceTo(object.getWorldPosition(new THREE.Vector3()));
+    const visibleHeight = 2 * Math.tan(fovRadians / 2) * distance;
+    const worldHeight = (pixelHeight / viewportHeight) * visibleHeight;
+
+    object.scale.set(worldHeight * aspect, worldHeight, 1);
+  });
+};
+
+const createLine = (
+  start: THREE.Vector3,
+  end: THREE.Vector3,
+  color: number,
+  opacity = 1,
+) => {
+  const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+  const material = new THREE.LineBasicMaterial({
+    color,
+    transparent: opacity < 1,
+    opacity,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const line = new THREE.Line(geometry, material);
+  line.renderOrder = 10;
+  return line;
+};
+
+const getGridSpacing = (maxDimension: number) => {
+  const targetSpacing = maxDimension / 10;
+  const candidates = [10, 20, 40, 80, 160, 320, 640];
+  return candidates.find((candidate) => candidate >= targetSpacing) ?? candidates[candidates.length - 1];
+};
+
+const buildRulerGrid = (
+  scene: THREE.Scene,
+  bbox: THREE.Box3,
+  maxDimension: number,
+) => {
+  const existing = scene.getObjectByName('ruler-grid');
+  if (existing) scene.remove(existing);
+
+  const group = new THREE.Group();
+  group.name = 'ruler-grid';
+
+  const gridY = bbox.min.y + Math.max(maxDimension * 0.01, 2);
+  const axisOffset = Math.max(maxDimension * 0.08, 18);
+  const labelOffset = Math.max(maxDimension * 0.12, 28);
+  const tickSize = Math.max(maxDimension * 0.025, 8);
+  const xAxisZ = bbox.min.z - axisOffset;
+  const zAxisX = bbox.min.x - axisOffset;
+
+  const gridSpacing = getGridSpacing(maxDimension);
+  const gridMaterialColor = 0x64748b;
+  for (let x = Math.ceil(bbox.min.x / gridSpacing) * gridSpacing; x <= bbox.max.x; x += gridSpacing) {
+    group.add(createLine(
+      new THREE.Vector3(x, gridY, bbox.min.z),
+      new THREE.Vector3(x, gridY, bbox.max.z),
+      gridMaterialColor,
+      0.22,
+    ));
+  }
+
+  for (let z = Math.ceil(bbox.min.z / gridSpacing) * gridSpacing; z <= bbox.max.z; z += gridSpacing) {
+    group.add(createLine(
+      new THREE.Vector3(bbox.min.x, gridY, z),
+      new THREE.Vector3(bbox.max.x, gridY, z),
+      gridMaterialColor,
+      0.22,
+    ));
+  }
+
+  group.add(createLine(
+    new THREE.Vector3(bbox.min.x, gridY, xAxisZ),
+    new THREE.Vector3(bbox.max.x, gridY, xAxisZ),
+    0xef4444,
+  ));
+  group.add(createLine(
+    new THREE.Vector3(bbox.min.x, gridY - tickSize / 2, xAxisZ),
+    new THREE.Vector3(bbox.min.x, gridY + tickSize / 2, xAxisZ),
+    0xef4444,
+  ));
+  group.add(createLine(
+    new THREE.Vector3(bbox.max.x, gridY - tickSize / 2, xAxisZ),
+    new THREE.Vector3(bbox.max.x, gridY + tickSize / 2, xAxisZ),
+    0xef4444,
+  ));
+
+  group.add(createLine(
+    new THREE.Vector3(zAxisX, gridY, bbox.min.z),
+    new THREE.Vector3(zAxisX, gridY, bbox.max.z),
+    0x2563eb,
+  ));
+  group.add(createLine(
+    new THREE.Vector3(zAxisX - tickSize / 2, gridY, bbox.min.z),
+    new THREE.Vector3(zAxisX + tickSize / 2, gridY, bbox.min.z),
+    0x2563eb,
+  ));
+  group.add(createLine(
+    new THREE.Vector3(zAxisX - tickSize / 2, gridY, bbox.max.z),
+    new THREE.Vector3(zAxisX + tickSize / 2, gridY, bbox.max.z),
+    0x2563eb,
+  ));
+
+  group.add(createLine(
+    new THREE.Vector3(zAxisX, bbox.min.y, xAxisZ),
+    new THREE.Vector3(zAxisX, bbox.max.y, xAxisZ),
+    0x16a34a,
+  ));
+  group.add(createLine(
+    new THREE.Vector3(zAxisX - tickSize / 2, bbox.min.y, xAxisZ),
+    new THREE.Vector3(zAxisX + tickSize / 2, bbox.min.y, xAxisZ),
+    0x16a34a,
+  ));
+  group.add(createLine(
+    new THREE.Vector3(zAxisX - tickSize / 2, bbox.max.y, xAxisZ),
+    new THREE.Vector3(zAxisX + tickSize / 2, bbox.max.y, xAxisZ),
+    0x16a34a,
+  ));
+
+  const xLabel = createRulerLabel(formatLDrawMeasurement(bbox.max.x - bbox.min.x));
+  if (xLabel) {
+    xLabel.position.set(bbox.max.x + labelOffset, gridY, xAxisZ);
+    group.add(xLabel);
+  }
+
+  const zLabel = createRulerLabel(formatLDrawMeasurement(bbox.max.z - bbox.min.z));
+  if (zLabel) {
+    zLabel.position.set(zAxisX, gridY, bbox.max.z + labelOffset);
+    group.add(zLabel);
+  }
+
+  const yLabel = createRulerLabel(formatLDrawMeasurement(bbox.max.y - bbox.min.y));
+  if (yLabel) {
+    yLabel.position.set(zAxisX, bbox.max.y + labelOffset * 0.5, xAxisZ);
+    group.add(yLabel);
+  }
+
+  scene.add(group);
+};
+
 // Capture a clean preview of just the model on a pure white background.
 // Hides the display room (floor, walls, table) and the baseplate, renders one
 // frame from a flattering front-left angle, then restores all original state.
@@ -132,8 +349,10 @@ const captureCleanPreview = (
   const originalBackground = scene.background;
   const room = scene.getObjectByName('display-room');
   const baseplate = scene.getObjectByName('baseplate');
+  const rulerGrid = scene.getObjectByName('ruler-grid');
   const roomWasVisible = room ? room.visible : false;
   const baseplateWasVisible = baseplate ? baseplate.visible : false;
+  const rulerGridWasVisible = rulerGrid ? rulerGrid.visible : false;
 
   // Renderer size + camera aspect are temporarily changed so the captured
   // image is a tight square around the model rather than the wide aspect of
@@ -146,6 +365,7 @@ const captureCleanPreview = (
     // Hide environment so only the model is visible.
     if (room) room.visible = false;
     if (baseplate) baseplate.visible = false;
+    if (rulerGrid) rulerGrid.visible = false;
 
     // Pure white background.
     scene.background = new THREE.Color(0xffffff);
@@ -188,6 +408,7 @@ const captureCleanPreview = (
     scene.background = originalBackground;
     if (room) room.visible = roomWasVisible;
     if (baseplate) baseplate.visible = baseplateWasVisible;
+    if (rulerGrid) rulerGrid.visible = rulerGridWasVisible;
     renderer.setSize(originalSize.x, originalSize.y, false);
     camera.aspect = originalAspect;
     camera.updateProjectionMatrix();
@@ -412,8 +633,10 @@ const capturePreviewVideo = async (
   const originalAutoRotate = controls.autoRotate;
   const room = scene.getObjectByName('display-room');
   const baseplate = scene.getObjectByName('baseplate');
+  const rulerGrid = scene.getObjectByName('ruler-grid');
   const roomWasVisible = room ? room.visible : false;
   const baseplateWasVisible = baseplate ? baseplate.visible : false;
+  const rulerGridWasVisible = rulerGrid ? rulerGrid.visible : false;
 
   const originalSize = new THREE.Vector2();
   renderer.getSize(originalSize);
@@ -442,6 +665,7 @@ const capturePreviewVideo = async (
   camera.updateProjectionMatrix();
   if (room) room.visible = false;
   if (baseplate) baseplate.visible = false;
+  if (rulerGrid) rulerGrid.visible = false;
   scene.background = new THREE.Color(0xffffff);
 
   const videoBuildAnimation = animateFirstSpin
@@ -507,6 +731,7 @@ const capturePreviewVideo = async (
     controls.autoRotate = originalAutoRotate;
     if (room) room.visible = roomWasVisible;
     if (baseplate) baseplate.visible = baseplateWasVisible;
+    if (rulerGrid) rulerGrid.visible = rulerGridWasVisible;
     renderer.setSize(originalSize.x, originalSize.y, false);
     camera.aspect = originalAspect;
     camera.updateProjectionMatrix();
@@ -850,6 +1075,14 @@ const createExplodePhysics = async (
     }
     outward.normalize();
 
+    const radialSpeed = THREE.MathUtils.clamp(maxDimension * 1.05, 170, 500);
+    const spread = Math.random();
+    const radialMultiplier = THREE.MathUtils.lerp(0.22, 1.08, spread * spread);
+    const tangent = new THREE.Vector3(-outward.z, 0, outward.x);
+    const tangentSpeed = THREE.MathUtils.lerp(-105, 105, Math.random());
+    const randomX = THREE.MathUtils.lerp(-42, 42, Math.random());
+    const randomZ = THREE.MathUtils.lerp(-42, 42, Math.random());
+
     const body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(center.x, center.y, center.z)
@@ -860,9 +1093,9 @@ const createExplodePhysics = async (
           w: objectWorldQuaternion.w,
         })
         .setLinvel(
-          outward.x * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.sin(index * 2.17) * 22,
+          outward.x * radialSpeed * radialMultiplier + tangent.x * tangentSpeed + randomX,
           THREE.MathUtils.clamp(maxDimension * 0.78, 180, 360) + (index % 6) * 18,
-          outward.z * THREE.MathUtils.clamp(maxDimension * 0.9, 140, 420) + Math.cos(index * 1.73) * 22,
+          outward.z * radialSpeed * radialMultiplier + tangent.z * tangentSpeed + randomZ,
         )
         .setAngvel({
           x: Math.sin(index * 1.37) * 5.5,
@@ -1232,7 +1465,7 @@ export function ThreeLDRViewer({
   const [meshesReady, setMeshesReady] = useState(false);
   const [loading, setLoading] = useState(true);
   const [explodeMode, setExplodeMode] = useState<ExplodeMode>('assembled');
-  const [collisionCount, setCollisionCount] = useState(0);
+  const [showRulerGrid, setShowRulerGrid] = useState(false);
   const collisionCountRef = useRef(0);
   const isCaptureInProgressRef = useRef(false);
   const buildAnimationRef = useRef<BuildAnimationState | null>(null);
@@ -1258,7 +1491,6 @@ export function ThreeLDRViewer({
   const updateCollisionCount = (nextCount: number) => {
     if (collisionCountRef.current === nextCount) return;
     collisionCountRef.current = nextCount;
-    setCollisionCount(nextCount);
   };
 
   const handleToggleExplode = async () => {
@@ -1516,6 +1748,10 @@ export function ThreeLDRViewer({
               // Calculate minimum distance needed to fit the model (50% more zoomed out)
               const minDistance = maxDimension * 1.8;
 
+              buildRulerGrid(scene, bbox, maxDimension);
+              const rulerGrid = scene.getObjectByName('ruler-grid');
+              if (rulerGrid) rulerGrid.visible = false;
+
               // ── Build display room with table ──
               buildRoom(scene, bbox, center, size, maxDimension, showBaseplate);
               
@@ -1764,6 +2000,8 @@ export function ThreeLDRViewer({
             const isAbove = camera.position.y > floorY;
             baseplate.visible = isAbove;
           }
+
+          updateRulerLabelScales(scene, camera, renderer);
           
           renderer.render(scene, camera);
         };
@@ -1813,6 +2051,17 @@ export function ThreeLDRViewer({
     };
   }, [modelPath, modelContent, onExportCaptureReady, animateModelBuild]);
 
+  useEffect(() => {
+    const { scene } = sceneRef.current;
+    const rulerGrid = scene?.getObjectByName('ruler-grid');
+    if (!rulerGrid) return;
+
+    const visibleCount = currentStepIndex === undefined
+      ? meshesRef.current.length || 1
+      : stepBoundariesRef.current[currentStepIndex] ?? meshesRef.current.length;
+    rulerGrid.visible = showRulerGrid && visibleCount > 0;
+  }, [showRulerGrid, currentStepIndex, meshesReady]);
+
   // Update part visibility and materials when step changes (instant - no re-parsing)
   useEffect(() => {
     if (currentStepIndex === undefined || meshesRef.current.length === 0 || !meshesReady) return;
@@ -1836,10 +2085,12 @@ export function ThreeLDRViewer({
     if (scene) {
       const displayRoom = scene.getObjectByName('display-room');
       const baseplate = scene.getObjectByName('baseplate');
+      const rulerGrid = scene.getObjectByName('ruler-grid');
       // Show room only when at least one part is visible (model is being displayed)
       const anyPartVisible = visibleCount > 0;
       if (displayRoom) displayRoom.visible = anyPartVisible;
       if (baseplate) baseplate.visible = anyPartVisible;
+      if (rulerGrid) rulerGrid.visible = showRulerGrid && anyPartVisible;
     }
 
     meshesRef.current.forEach((part, idx) => {
@@ -1887,7 +2138,7 @@ export function ThreeLDRViewer({
         }
       });
     });
-  }, [currentStepIndex, meshesReady, highlightNewParts]);
+  }, [currentStepIndex, meshesReady, highlightNewParts, showRulerGrid]);
 
   // Always render without Card wrapper (simplified embedded mode)
   return (
@@ -1910,22 +2161,31 @@ export function ThreeLDRViewer({
             className="w-full h-full bg-gray-100 rounded-lg overflow-hidden"
             style={{ visibility: loading ? 'hidden' : 'visible' }}
           />
-          <div className="absolute left-3 top-3 z-20 rounded-full border border-slate-700/20 bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-white shadow-lg shadow-black/20 backdrop-blur-sm">
-            Collisions: {collisionCount}
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowRulerGrid((visible) => !visible)}
+            disabled={loading || !!error}
+            className="absolute left-3 top-3 z-20 inline-flex items-center gap-2 rounded-full border border-slate-700/30 bg-slate-950/85 px-2.5 py-2 text-xs font-semibold text-white shadow-lg shadow-black/25 backdrop-blur-sm transition-all duration-150 hover:bg-slate-800 hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
+            title={showRulerGrid ? 'Hide ruler' : 'Show ruler'}
+            aria-label={showRulerGrid ? 'Hide ruler' : 'Show ruler'}
+            aria-pressed={showRulerGrid}
+          >
+            <Ruler size={14} />
+            <span className="hidden sm:inline">{showRulerGrid ? 'Hide ruler' : 'Show ruler'}</span>
+          </button>
           {canExplodeModel && (
             <button
               type="button"
               onClick={handleToggleExplode}
               disabled={explodeMode === 'rebuilding'}
-              className="absolute bottom-3 left-3 z-20 inline-flex h-10 items-center gap-2 rounded-full border border-slate-700/30 bg-slate-950/85 px-3 text-xs font-semibold text-white shadow-lg shadow-black/25 backdrop-blur-sm transition-all duration-150 hover:bg-slate-800 hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-60"
+              className="absolute bottom-3 left-3 z-20 inline-flex items-center gap-2 rounded-full border border-slate-700/30 bg-slate-950/85 px-2.5 py-2 text-xs font-semibold text-white shadow-lg shadow-black/25 backdrop-blur-sm transition-all duration-150 hover:bg-slate-800 hover:scale-[1.03] disabled:cursor-not-allowed disabled:opacity-60 sm:px-4"
               title={explodeMode === 'assembled' ? 'Explode model' : 'Rebuild model'}
               aria-label={explodeMode === 'assembled' ? 'Explode model' : 'Rebuild model'}
             >
               {explodeMode === 'exploded' || explodeMode === 'exploding' || explodeMode === 'rebuilding' ? (
-                <RotateCcw size={15} />
+                <RotateCcw size={14} />
               ) : (
-                <PackageOpen size={15} />
+                <PackageOpen size={14} />
               )}
               <span className="hidden sm:inline">
                 {explodeMode === 'exploding'
