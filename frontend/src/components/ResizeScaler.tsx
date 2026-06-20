@@ -7,6 +7,7 @@ interface ResizeScalerProps {
   isResizing?: boolean;
   scaler?: number;
   onScalerChange?: (value: number) => void;
+  hideHeader?: boolean;
 }
 
 export function ResizeScaler({ 
@@ -14,7 +15,8 @@ export function ResizeScaler({
   disabled = false, 
   isResizing = false, 
   scaler: externalScaler,
-  onScalerChange 
+  onScalerChange,
+  hideHeader = false
 }: ResizeScalerProps) {
   const MIN = 10;
   const MAX = 60;
@@ -44,11 +46,12 @@ export function ResizeScaler({
     <div className="w-full bg-white rounded-lg border border-gray-200 shadow-sm">
       <div className="p-4">
         <div className="space-y-4">
-          <div className="text-center">
-            <h4 className="text-sm font-medium text-gray-700 mb-3">Resize Model</h4>
-            <h6 className="text-xs font-medium text-gray-700 mb-3">Increase size to increase resolution</h6>
-          </div>
-
+          {!hideHeader && (
+            <div className="text-center">
+              <h4 className="text-sm font-medium text-gray-700 mb-3">Resize Model</h4>
+              <h6 className="text-xs font-medium text-gray-700 mb-3">Increase size to increase resolution</h6>
+            </div>
+          )}
           {/* Scaler line with draggable thumb (native range input for accessibility) */}
           <div className="px-4">
             <input

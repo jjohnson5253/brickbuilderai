@@ -1860,6 +1860,7 @@ export default function GeneratedModel() {
                   isResizing={isResizing}
                   scaler={currentScaler}
                   onScalerChange={setCurrentScaler}
+                  hideHeader
                 />
                 <div className="mt-3 flex justify-center">
                   <button
