@@ -2163,8 +2163,8 @@ export default function GeneratedModel() {
       {/* Unsaved changes confirmation modal */}
       {showUnsavedChangesModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+          className="fixed inset-0 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 3000 }}
           onClick={() => {
             pendingExitActionRef.current = null;
             setShowUnsavedChangesModal(false);
