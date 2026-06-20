@@ -2976,7 +2976,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       >
         <span style={{
           fontSize: '12px',
-          color: 'white',
+          color: '#D1D5DB',
           fontWeight: 500,
           textAlign: 'center',
           userSelect: 'none'
@@ -3379,7 +3379,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         
         <span style={{
           fontSize: '12px',
-          color: 'white',
+          color: '#D1D5DB',
           fontWeight: 500,
           textAlign: 'center',
           userSelect: 'none'
