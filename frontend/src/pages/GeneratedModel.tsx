@@ -1473,7 +1473,7 @@ export default function GeneratedModel() {
       >
         <X size={16} />
       </button>
-      <p className="mb-3 pr-6 text-sm text-slate-700">
+      <p className="mb-3 px-6 text-center text-sm text-slate-700">
         Before editing, want to resize your model?
         {priceData && (
           <>
@@ -1503,7 +1503,7 @@ export default function GeneratedModel() {
             disabled={isResizing || isSavePolling}
             className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            No thanks, continue to editor
+            No, go to editor
           </button>
         )}
       />
