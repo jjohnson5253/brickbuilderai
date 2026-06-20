@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Link } from 'react-router-dom';
 import { MousePointer2, Move, Save, Pipette, Brush, Plus, Trash2, Undo2, Redo2, BoxSelect, ChevronDown, Box, Minus, ChevronLeft, ChevronRight, HelpCircle, X, AlertTriangle } from 'lucide-react';
 import { UpdateModelApiService, UpdateModelResponse } from '../services/updateModelApi';
@@ -1052,15 +1051,10 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.85;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.NoToneMapping;
+    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
-
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmremGenerator.fromScene(new RoomEnvironment()).texture;
 
     // Create controls
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -1080,15 +1074,14 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     controlsRef.current = controls;
 
     // Add lighting - balanced for accurate color reproduction
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
     scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xfff5e6, 0.8);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
     directionalLight.position.set(10, 20, 10);
-    directionalLight.castShadow = true;
     scene.add(directionalLight);
 
-    const directionalLight2 = new THREE.DirectionalLight(0xe8f0ff, 0.35);
+    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.6);
     directionalLight2.position.set(-10, -10, -10);
     scene.add(directionalLight2);
 
@@ -1729,8 +1722,6 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       if (controlsRef.current) {
         controlsRef.current.dispose();
       }
-
-      pmremGenerator.dispose();
     };
   }, [xyzrgbContent, onVoxelSelect]);
 
