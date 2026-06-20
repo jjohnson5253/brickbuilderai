@@ -1460,6 +1460,57 @@ export default function GeneratedModel() {
     }, [downloadBlob, getSafeExportName, isExportingVideo]);
 
 
+  // Shared resize-prompt card. Rendered both as a desktop overlay inside the
+  // 3D viewer and as a mobile block below the preview.
+  const resizePromptCard = (
+    <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
+      <button
+        type="button"
+        aria-label="Close resize prompt"
+        onClick={() => setShowResizePrompt(false)}
+        disabled={isResizing || isSavePolling}
+        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <X size={16} />
+      </button>
+      <p className="mb-3 pr-6 text-sm text-slate-700">
+        First, would you like to resize your model?
+        {priceData && (
+          <>
+            {' '}Currently it uses{' '}
+            <span className="font-semibold text-slate-900">{priceData.total_parts} pieces</span>
+            {' '}and will cost{' '}
+            <span className="font-semibold text-slate-900">
+              ${priceData.total_price} {priceData.currency}
+            </span>.
+          </>
+        )}
+      </p>
+      <ResizeScaler
+        onResize={handleResizeModel}
+        disabled={!mpdContent}
+        isResizing={isResizing}
+        scaler={currentScaler}
+        onScalerChange={setCurrentScaler}
+        hideHeader
+      />
+      <div className="mt-3 flex justify-center">
+        <button
+          type="button"
+          onClick={() => {
+            setShowResizePrompt(false);
+            void enterVoxelEditor();
+          }}
+          disabled={isResizing || isSavePolling}
+          className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          No thanks, continue to editor
+        </button>
+      </div>
+    </div>
+  );
+
+
   return (
     <div className="min-h-screen text-slate-900" style={{ backgroundColor: "#ffffff" }}>
       <SEO
@@ -1828,54 +1879,11 @@ export default function GeneratedModel() {
           </div>
 
           {/* Resize prompt overlay — shown in the bottom third of the viewer
-              when the user clicks Edit Model, before entering the Block Editor. */}
+              (desktop only) when the user clicks Edit Model. On mobile it is
+              rendered below the preview instead (see block after this figure). */}
           {showResizePrompt && (
-            <div className="absolute inset-x-0 bottom-0 z-30 flex justify-center p-3">
-              <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
-                <button
-                  type="button"
-                  aria-label="Close resize prompt"
-                  onClick={() => setShowResizePrompt(false)}
-                  disabled={isResizing || isSavePolling}
-                  className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <X size={16} />
-                </button>
-                <p className="mb-3 pr-6 text-sm text-slate-700">
-                  First, would you like to resize your model?
-                  {priceData && (
-                    <>
-                      {' '}Currently it uses{' '}
-                      <span className="font-semibold text-slate-900">{priceData.total_parts} pieces</span>
-                      {' '}and will cost{' '}
-                      <span className="font-semibold text-slate-900">
-                        ${priceData.total_price} {priceData.currency}
-                      </span>.
-                    </>
-                  )}
-                </p>
-                <ResizeScaler
-                  onResize={handleResizeModel}
-                  disabled={!mpdContent}
-                  isResizing={isResizing}
-                  scaler={currentScaler}
-                  onScalerChange={setCurrentScaler}
-                  hideHeader
-                />
-                <div className="mt-3 flex justify-center">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowResizePrompt(false);
-                      void enterVoxelEditor();
-                    }}
-                    disabled={isResizing || isSavePolling}
-                    className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    No thanks, continue to editor
-                  </button>
-                </div>
-              </div>
+            <div className="absolute inset-x-0 bottom-0 z-30 hidden justify-center p-3 sm:flex">
+              {resizePromptCard}
             </div>
           )}
         </div>
@@ -1886,6 +1894,14 @@ export default function GeneratedModel() {
     </div>
   </section>
 )}
+
+        {/* Mobile resize prompt — appears below the preview and replaces the
+            action buttons / tip text on small screens. */}
+        {showResizePrompt && !showVoxelEditor && (
+          <div className="mt-4 flex justify-center sm:hidden">
+            {resizePromptCard}
+          </div>
+        )}
 
         {/* Sections below the 3D preview fade in once the scene is ready */}
         <div
@@ -1906,7 +1922,7 @@ export default function GeneratedModel() {
         )}
 
         {/* Centered dual buttons: Edit Model + Order My Kit */}
-        <section className="mt-4 mb-4 flex flex-col items-center gap-3 px-4">
+        <section className={`mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden sm:flex' : 'flex'}`}>
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
