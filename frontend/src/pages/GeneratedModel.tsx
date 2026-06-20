@@ -1943,11 +1943,11 @@ export default function GeneratedModel() {
                 className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold border-2 transition-all duration-150 ${
                   showVoxelEditor
                     ? 'border-[#f44336] bg-[#f44336] text-white shadow-lg shadow-[#f44336]/25 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2'
-                    : `bg-white text-black border-gray-300 ${
-                        xyzrgbLoading
-                          ? 'cursor-not-allowed opacity-70'
-                          : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
-                      } ${!xyzrgbLoading && !hasClickedEditModel ? 'attention-pulse' : ''}`
+                    : xyzrgbLoading
+                      ? 'bg-white text-black border-gray-300 cursor-not-allowed opacity-70'
+                      : !hasClickedEditModel
+                        ? 'bg-[#f44336] text-white border-[#f44336] shadow-lg shadow-[#f44336]/25 cursor-pointer hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
+                        : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
                 }`}
             >
                 {xyzrgbLoading ? (
@@ -2021,7 +2021,9 @@ export default function GeneratedModel() {
             className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold transition-all duration-150 border-2 ${
               !currentGenerationId || communityToggleLoading || isSavePolling
                 ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
-                : `bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] ${!isCommunity && hasExitedVoxelEditor && !showVoxelEditor ? 'attention-pulse' : ''}`
+                : (!isCommunity && hasExitedVoxelEditor && !showVoxelEditor)
+                  ? 'bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
+                  : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
             }`}
           >
             {communityToggleLoading ? (
