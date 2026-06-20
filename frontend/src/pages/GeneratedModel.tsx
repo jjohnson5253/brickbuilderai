@@ -14,6 +14,7 @@ const DEMO_MODEL_IDS = new Set(
 // Mirrors the backend /updateUsername validation: 3-30 chars,
 // letters, numbers, underscores, hyphens, or periods.
 const USERNAME_PATTERN = /^[A-Za-z0-9_.-]{3,30}$/;
+type PendingExitAction = () => void | Promise<void>;
 import { GetPriceApiService, GetPriceResponse } from "../services/getPriceApi";
 import { ResizeScaler } from "../components/ResizeScaler";
 import { ResizeModelApiService } from "../services/resizeModelApi";
@@ -267,7 +268,7 @@ export default function GeneratedModel() {
   const [showUnsavedChangesModal, setShowUnsavedChangesModal] = React.useState(false);
   // Action to perform after the user resolves the unsaved-changes modal
   // (Save or Discard). Defaults to simply exiting the editor.
-  const pendingExitActionRef = React.useRef<(() => void) | null>(null);
+  const pendingExitActionRef = React.useRef<PendingExitAction | null>(null);
   const voxelSaveRef = React.useRef<(() => Promise<void>) | null>(null);
   const [xyzrgbContent, setXyzrgbContent] = React.useState<string | null>(null);
   const [xyzrgbUrl, setXyzrgbUrl] = React.useState<string | null>(null);
@@ -323,6 +324,8 @@ export default function GeneratedModel() {
   const [hasClickedEditModel, setHasClickedEditModel] = React.useState<boolean>(false);
   const [hasExitedVoxelEditor, setHasExitedVoxelEditor] = React.useState<boolean>(false);
   const [previewPngDataUrl, setPreviewPngDataUrl] = React.useState<string | null>(null);
+  const previewUploadWaitersRef = React.useRef<Map<string, Array<{ resolve: () => void; reject: (error: unknown) => void }>>>(new Map());
+  const activeSavePreviewUploadRef = React.useRef<Promise<void> | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = React.useState(false);
   const [isExportingVideo, setIsExportingVideo] = React.useState(false);
   const exportCaptureApiRef = React.useRef<ExportCaptureApi | null>(null);
@@ -751,6 +754,51 @@ export default function GeneratedModel() {
     setPreviewPngDataUrl(dataUrl);
   }, []);
 
+  const rejectPreviewUploadWaiters = React.useCallback((generationId: string, error: unknown) => {
+    const waiters = previewUploadWaitersRef.current.get(generationId);
+    if (!waiters) return;
+    previewUploadWaitersRef.current.delete(generationId);
+    waiters.forEach(({ reject }) => reject(error));
+  }, []);
+
+  const uploadPreviewImage = React.useCallback(async (
+    generationId: string,
+    imageDataUrl: string,
+    token: string,
+  ) => {
+    if (previewUploadedForRef.current.has(generationId)) return;
+
+    previewUploadedForRef.current.add(generationId);
+    try {
+      await UpdateImagePreviewApiService.updateImagePreview(
+        generationId,
+        imageDataUrl,
+        token,
+      );
+      const waiters = previewUploadWaitersRef.current.get(generationId);
+      if (waiters) {
+        previewUploadWaitersRef.current.delete(generationId);
+        waiters.forEach(({ resolve }) => resolve());
+      }
+      setNeedsPreviewUpload(false);
+    } catch (err) {
+      previewUploadedForRef.current.delete(generationId);
+      rejectPreviewUploadWaiters(generationId, err);
+      throw err;
+    }
+  }, [rejectPreviewUploadWaiters]);
+
+  const waitForPreviewUpload = React.useCallback((generationId: string) => new Promise<void>((resolve, reject) => {
+    if (previewUploadedForRef.current.has(generationId)) {
+      resolve();
+      return;
+    }
+
+    const waiters = previewUploadWaitersRef.current.get(generationId) ?? [];
+    waiters.push({ resolve, reject });
+    previewUploadWaitersRef.current.set(generationId, waiters);
+  }), []);
+
   // Upload the captured preview image once every required piece of async state
   // is ready. This effect re-runs whenever any dependency changes, so it
   // correctly handles the race where the 3D viewer fires onPreviewCaptured
@@ -764,23 +812,11 @@ export default function GeneratedModel() {
     if (!accessToken) return;
     if (previewUploadedForRef.current.has(currentGenerationId)) return;
 
-    // Mark as uploaded immediately so concurrent renders don't double-fire.
-    previewUploadedForRef.current.add(currentGenerationId);
-
-    UpdateImagePreviewApiService.updateImagePreview(
-      currentGenerationId,
-      previewPngDataUrl,
-      accessToken,
-    )
-      .then(() => {
-        setNeedsPreviewUpload(false);
-      })
+    uploadPreviewImage(currentGenerationId, previewPngDataUrl, accessToken)
       .catch((err) => {
-        // Allow retrying on next mount if the upload fails.
-        previewUploadedForRef.current.delete(currentGenerationId);
         console.warn('Failed to upload preview image:', err);
       });
-  }, [previewPngDataUrl, currentGenerationId, needsPreviewUpload, isGenerationOwner, accessToken]);
+  }, [previewPngDataUrl, currentGenerationId, needsPreviewUpload, isGenerationOwner, accessToken, uploadPreviewImage]);
 
   React.useEffect(() => {
     if (!exportMenuOpen) return;
@@ -800,12 +836,23 @@ export default function GeneratedModel() {
     // When posting (currently not in community), open the naming modal first.
     // The actual toggle happens after the user submits a name.
     if (!isCommunity) {
+      setCommunityToggleLoading(true);
       setCommunityNameError(null);
       setCommunityToggleError(null);
-      setCommunityNameInput("");
-      setIsEditingUsername(false);
-      setUsernameError(null);
-      setShowCommunityNameModal(true);
+      try {
+        await activeSavePreviewUploadRef.current;
+        setCommunityNameInput("");
+        setIsEditingUsername(false);
+        setUsernameError(null);
+        setShowCommunityNameModal(true);
+      } catch (error) {
+        console.error('Failed to upload preview before posting to community:', error);
+        setCommunityToggleError(
+          error instanceof Error ? error.message : 'Failed to upload preview image'
+        );
+      } finally {
+        setCommunityToggleLoading(false);
+      }
       return;
     }
 
@@ -1256,7 +1303,7 @@ export default function GeneratedModel() {
 
   // Guard an action (e.g. in-app navigation) behind the unsaved-changes modal.
   // If the voxel editor has unsaved changes, prompt the user; otherwise run immediately.
-  const guardUnsavedChanges = (action: () => void) => {
+  const guardUnsavedChanges = (action: PendingExitAction) => {
     if (showVoxelEditor && voxelHasChanges) {
       pendingExitActionRef.current = action;
       setShowUnsavedChangesModal(true);
@@ -1578,6 +1625,12 @@ export default function GeneratedModel() {
               }
               
               if (newMpdContent) {
+                previewUploadedForRef.current.delete(response.generation_id);
+                setPreviewPngDataUrl(null);
+                setNeedsPreviewUpload(true);
+                activeSavePreviewUploadRef.current = waitForPreviewUpload(response.generation_id).finally(() => {
+                  activeSavePreviewUploadRef.current = null;
+                });
                 setMpdContent(newMpdContent);
                 localStorage.setItem('MPD_CONTENT', newMpdContent);
                 localStorage.setItem('lastMpdContent', newMpdContent);
@@ -1625,6 +1678,7 @@ export default function GeneratedModel() {
               
               // Clear screenshots to regenerate with new model
               setScreenshots(null);
+              exitVoxelEditor();
               
               // Re-trigger price fetch now that the generation is complete
               setPriceRefreshCounter(c => c + 1);
@@ -2059,13 +2113,13 @@ export default function GeneratedModel() {
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   setShowUnsavedChangesModal(false);
                   exitVoxelEditor();
                   setVoxelHasChanges(false);
                   const action = pendingExitActionRef.current;
                   pendingExitActionRef.current = null;
-                  if (action) action();
+                  if (action) await action();
                 }}
                 className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer"
               >
@@ -2081,7 +2135,7 @@ export default function GeneratedModel() {
                   setVoxelHasChanges(false);
                   const action = pendingExitActionRef.current;
                   pendingExitActionRef.current = null;
-                  if (action) action();
+                  if (action) await action();
                 }}
                 className="px-4 py-2 text-sm font-medium text-white bg-[#10B981] rounded-lg hover:bg-[#059669] transition-colors cursor-pointer"
               >

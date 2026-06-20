@@ -35,7 +35,7 @@ interface VoxelViewerProps {
   isProcessingSave?: boolean;
   onVoxelSelect?: (voxels: Voxel[] | null, indices: number[] | null) => void;
   onVoxelsChange?: (newContent: string) => void;
-  onSaveSuccess?: (response: UpdateModelResponse) => void;
+  onSaveSuccess?: (response: UpdateModelResponse) => void | Promise<void>;
   onHasChangesChange?: (hasChanges: boolean) => void;
   saveRef?: React.MutableRefObject<(() => Promise<void>) | null>;
   // Resize scaler props
@@ -920,7 +920,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         setHasChanges(false);
         advanceTutorialRef.current('save');
         if (onSaveSuccess) {
-          onSaveSuccess(response);
+          await onSaveSuccess(response);
         }
       } else {
         setSaveError('No generation ID returned from save');
