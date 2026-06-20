@@ -89,9 +89,9 @@ const buildVoxelDisplayRoom = (
   room.name = 'display-room';
 
   const floorMat = new THREE.MeshStandardMaterial({ color: 0xc8b99a, roughness: 0.85, metalness: 0.0 });
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0xf0ebe1, roughness: 0.95, metalness: 0.0 });
-  const tableMat = new THREE.MeshStandardMaterial({ color: 0x8b5e3c, roughness: 0.7, metalness: 0.05 });
-  const legMat = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.75, metalness: 0.05 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xf5f0e8, roughness: 0.95, metalness: 0.0 });
+  const tableMat = new THREE.MeshStandardMaterial({ color: 0xb98a66, roughness: 0.7, metalness: 0.05 });
+  const legMat = new THREE.MeshStandardMaterial({ color: 0xb98a66, roughness: 0.75, metalness: 0.05 });
 
   const roomW = maxDim * 6;
   const roomH = maxDim * 4;
