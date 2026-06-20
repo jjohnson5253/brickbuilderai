@@ -1540,8 +1540,8 @@ export default function GeneratedModel() {
       {/* Voxel editor */}
       <figure className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
         <div
-          className="relative w-full overflow-hidden rounded-xl bg-slate-50"
-          style={{ aspectRatio: '3 / 2', maxHeight: '50vh' }}
+          className="relative h-[700px] w-full overflow-hidden rounded-xl bg-slate-50 md:h-auto md:max-h-[50vh]"
+          style={{ aspectRatio: '3 / 2' }}
         >
           <VoxelViewer 
             xyzrgbContent={xyzrgbContent}
