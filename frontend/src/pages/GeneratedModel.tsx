@@ -45,7 +45,6 @@ import {
   Image,
   FileText,
   Video,
-  X,
 } from "lucide-react";
 
 interface HeaderProps {
@@ -1524,24 +1523,11 @@ export default function GeneratedModel() {
 {showVoxelEditor && xyzrgbContent ? (
   <section className="mt-6 md:mt-8 lg:mt-10">
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={handleEditModelClick}
-          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 border-[#f44336] bg-[#f44336] px-7 font-semibold text-white shadow-lg shadow-[#f44336]/25 transition-all duration-150 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2 sm:w-auto sm:min-w-44"
-          title="Exit block editor"
-          aria-label="Exit block editor"
-        >
-          <X size={16} />
-          Exit Block Editor
-        </button>
-        <p className="text-sm text-slate-500">Select blocks to change color or add/remove</p>
-      </div>
       {/* Voxel editor */}
       <figure className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
         <div
-          className="relative w-full overflow-hidden rounded-xl bg-slate-50"
-          style={{ aspectRatio: '3 / 2', maxHeight: '50vh' }}
+          className="relative h-[700px] w-full overflow-hidden rounded-xl bg-slate-50 md:h-auto md:max-h-[50vh]"
+          style={{ aspectRatio: '3 / 2' }}
         >
           <VoxelViewer 
             xyzrgbContent={xyzrgbContent}
@@ -1866,11 +1852,15 @@ export default function GeneratedModel() {
                 aria-label="Edit model"
                 onClick={handleEditModelClick}
                 disabled={xyzrgbLoading}
-                className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 transition-all duration-150 ${
-                  xyzrgbLoading 
-                    ? 'cursor-not-allowed opacity-70' 
-                    : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
-                } ${!xyzrgbLoading && !hasClickedEditModel ? 'attention-pulse' : ''}`}
+                className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold border-2 transition-all duration-150 ${
+                  showVoxelEditor
+                    ? 'border-[#f44336] bg-[#f44336] text-white shadow-lg shadow-[#f44336]/25 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2'
+                    : `bg-white text-black border-gray-300 ${
+                        xyzrgbLoading
+                          ? 'cursor-not-allowed opacity-70'
+                          : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
+                      } ${!xyzrgbLoading && !hasClickedEditModel ? 'attention-pulse' : ''}`
+                }`}
             >
                 {xyzrgbLoading ? (
                   <>
@@ -1929,7 +1919,7 @@ export default function GeneratedModel() {
                 Order my Kit!
               </>
             ) : (
-              'Order my Kit!'
+              'Order these bricks!'
             )}
           </button>
 
