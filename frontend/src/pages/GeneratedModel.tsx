@@ -1474,7 +1474,7 @@ export default function GeneratedModel() {
         <X size={16} />
       </button>
       <p className="mb-3 pr-6 text-sm text-slate-700">
-        First, would you like to resize your model?
+        Before editing, want to resize your model?
         {priceData && (
           <>
             {' '}Currently it uses{' '}
@@ -1493,20 +1493,20 @@ export default function GeneratedModel() {
         scaler={currentScaler}
         onScalerChange={setCurrentScaler}
         hideHeader
+        rightAction={(
+          <button
+            type="button"
+            onClick={() => {
+              setShowResizePrompt(false);
+              void enterVoxelEditor();
+            }}
+            disabled={isResizing || isSavePolling}
+            className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            No thanks, continue to editor
+          </button>
+        )}
       />
-      <div className="mt-3 flex justify-center">
-        <button
-          type="button"
-          onClick={() => {
-            setShowResizePrompt(false);
-            void enterVoxelEditor();
-          }}
-          disabled={isResizing || isSavePolling}
-          className="text-sm font-medium text-slate-500 transition-colors hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          No thanks, continue to editor
-        </button>
-      </div>
     </div>
   );
 

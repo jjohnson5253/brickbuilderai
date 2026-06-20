@@ -8,6 +8,7 @@ interface ResizeScalerProps {
   scaler?: number;
   onScalerChange?: (value: number) => void;
   hideHeader?: boolean;
+  rightAction?: React.ReactNode;
 }
 
 export function ResizeScaler({ 
@@ -16,7 +17,8 @@ export function ResizeScaler({
   isResizing = false, 
   scaler: externalScaler,
   onScalerChange,
-  hideHeader = false
+  hideHeader = false,
+  rightAction
 }: ResizeScalerProps) {
   const MIN = 10;
   const MAX = 60;
@@ -92,7 +94,7 @@ export function ResizeScaler({
           </div>
 
           {/* Resize Action Button */}
-          <div className="flex justify-center">
+          <div className="flex items-center justify-center gap-3">
             <button
               onClick={handleResize}
               disabled={disabled || isResizing}
@@ -107,6 +109,7 @@ export function ResizeScaler({
                 'Resize'
               )}
             </button>
+            {rightAction}
           </div>
         </div>
       </div>
