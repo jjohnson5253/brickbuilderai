@@ -1883,15 +1883,6 @@ export default function GeneratedModel() {
               <div className="w-full h-full bg-slate-50"></div>
             )}
           </div>
-
-          {/* Resize prompt overlay — shown in the bottom third of the viewer
-              (desktop only) when the user clicks Edit Model. On mobile it is
-              rendered below the preview instead (see block after this figure). */}
-          {showResizePrompt && (
-            <div className="absolute inset-x-0 bottom-0 z-30 hidden justify-center p-3 sm:flex">
-              {resizePromptCard}
-            </div>
-          )}
         </div>
         <figcaption className="mt-1 text-xs text-slate-500 text-center">
           {/* Click/touch and drag to rotate, scroll/pinch to zoom */}
@@ -1901,10 +1892,10 @@ export default function GeneratedModel() {
   </section>
 )}
 
-        {/* Mobile resize prompt — appears below the preview and replaces the
-            action buttons / tip text on small screens. */}
+        {/* Resize prompt — appears below the preview and replaces the
+            action buttons / tip text while it is open. */}
         {showResizePrompt && !showVoxelEditor && (
-          <div className="mt-4 flex justify-center sm:hidden">
+          <div className="mt-4 flex justify-center">
             {resizePromptCard}
           </div>
         )}
@@ -1928,7 +1919,7 @@ export default function GeneratedModel() {
         )}
 
         {/* Centered dual buttons: Edit Model + Order My Kit */}
-        <section className={`mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden sm:flex' : 'flex'}`}>
+        <section className={`mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden' : 'flex'}`}>
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
