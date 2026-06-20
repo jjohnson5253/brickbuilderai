@@ -76,7 +76,7 @@ export function ResizeScaler({
           {!hideHeader && (
             <div className="text-center">
               <h4 className="text-sm font-medium text-gray-700 mb-3">Resize Model</h4>
-              <h6 className="text-xs font-medium text-gray-700 mb-3">Increase size to increase resolution</h6>
+              {/* <h6 className="text-xs font-medium text-gray-700 mb-3">Increase size to increase resolution</h6> */}
             </div>
           )}
           {/* Scaler line with draggable thumb (native range input for accessibility) */}

@@ -2069,6 +2069,19 @@ export default function GeneratedModel() {
           </p>
         </section>
 
+        {/* Resize panel — shown above the stats badges when "Try resizing!" is pressed */}
+        {showPriceResize && priceData && !priceLoading && !isSavePolling && !isDemoModel && (
+          <section className="mt-6 max-w-xs mx-auto">
+            <ResizeScaler
+              onResize={handleResizeModel}
+              disabled={!mpdContent}
+              isResizing={isResizing}
+              scaler={currentScaler}
+              onScalerChange={setCurrentScaler}
+            />
+          </section>
+        )}
+
         {/* Stats grid with hover animation */}
         <section className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
           <div className="flex flex-col">
@@ -2110,17 +2123,6 @@ export default function GeneratedModel() {
                     Try resizing!
                   </button>
                 </p>
-                {showPriceResize && (
-                  <div className="mt-3 max-w-xs mx-auto">
-                    <ResizeScaler
-                      onResize={handleResizeModel}
-                      disabled={!mpdContent}
-                      isResizing={isResizing}
-                      scaler={currentScaler}
-                      onScalerChange={setCurrentScaler}
-                    />
-                  </div>
-                )}
               </div>
             )}
           </div>
