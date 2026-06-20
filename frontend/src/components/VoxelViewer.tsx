@@ -141,6 +141,9 @@ const buildVoxelDisplayRoom = (
 
   const tableGroup = new THREE.Group();
   tableGroup.name = 'display-table';
+  // Used by the animation loop to hide the table once the camera drops below
+  // the table's top surface, keeping the model's underside visible.
+  tableGroup.userData.hideBelowY = tableTopSurface;
 
   const tabletop = new THREE.Mesh(new THREE.BoxGeometry(roomW, tableThick, roomD), tableMat);
   tabletop.position.set(center.x, tableTopY, center.z);
@@ -1702,6 +1705,18 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
       controls.update();
+
+      // Hide the table when the camera rotates below the table's top surface so
+      // the model's underside stays visible (mirrors the LDraw 3D viewer).
+      const displayTable = scene.getObjectByName('display-table');
+      if (displayTable) {
+        const hideBelowY = typeof displayTable.userData.hideBelowY === 'number'
+          ? displayTable.userData.hideBelowY
+          : controls.target.y;
+        const isUnderModel = camera.position.y < hideBelowY - 1;
+        displayTable.visible = !isUnderModel;
+      }
+
       renderer.render(scene, camera);
     };
     animate();
