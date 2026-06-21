@@ -98,7 +98,7 @@ function Header({ onGuardedNavigate }: HeaderProps) {
       href="https://github.com/jjohnson5253/brickbuilderai"
       target="_blank"
       rel="noopener noreferrer"
-      aria-label="View BrickBuilder.AI on GitHub"
+      aria-label="View BrickBuilder on GitHub"
       className="inline-flex h-8 min-w-[4.5rem] items-center justify-center gap-1.5 rounded-full bg-slate-100 px-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 sm:h-9 sm:min-w-[5.25rem] sm:gap-2 sm:px-3 sm:text-sm"
     >
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white sm:h-6 sm:w-6">
@@ -113,15 +113,13 @@ function Header({ onGuardedNavigate }: HeaderProps) {
       <a href="/" className="flex items-center gap-3">
         <img
           src="/logo.svg"
-          alt="BRICKBUILDER.AI"
+          alt="BrickBuilder"
           className="h-7 w-auto"
           onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
         />
         <span className="text-xl font-extrabold tracking-tight">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
-          <span className="text-slate-900">.</span>
-          <span className="text-[#ff4b4b]">AI</span>
         </span>
       </a>
 

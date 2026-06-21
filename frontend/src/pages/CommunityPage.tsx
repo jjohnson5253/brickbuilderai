@@ -29,15 +29,13 @@ function CommunityHeader() {
         <ChevronLeft className="h-5 w-5 text-slate-500 group-hover:text-[#f44336] group-hover:-translate-x-0.5 transition-all" />
         <img
           src="/logo.svg"
-          alt="BRICKBUILDER.AI"
+          alt="BrickBuilder"
           className="h-7 w-auto"
           onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
         />
         <span className="text-xl font-extrabold tracking-tight">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
-          <span className="text-slate-900">.</span>
-          <span className="text-[#ff4b4b]">AI</span>
         </span>
       </a>
 
@@ -243,8 +241,8 @@ export default function CommunityPage() {
   return (
     <>
       <SEO
-        title="Community Models — BRICKBUILDER.AI"
-        description="Explore LEGO models shared by the BRICKBUILDER.AI community."
+        title="Community Models — BrickBuilder"
+        description="Explore LEGO models shared by the BrickBuilder community."
       />
       <div className="min-h-screen bg-slate-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">

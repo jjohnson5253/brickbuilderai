@@ -763,7 +763,7 @@ export default function LandingPage() {
         </div>
       )}
       <SEO
-        title="BrickBuilder.AI - Turn Images into 3D LEGO-Compatible Brick Models"
+        title="BrickBuilder - Turn Images into 3D LEGO-Compatible Brick Models"
         description="Build brick models from text prompts or images. Experimental demo — results may vary."
         url="https://brickbuilder.ai/landing"
       />
@@ -941,9 +941,9 @@ export default function LandingPage() {
 
             {!loading && (
               <>
-                <p className="mt-2 text-sm text-slate-500 landing-fade-in landing-delay-3">
+                {/* <p className="mt-2 text-sm text-slate-500 landing-fade-in landing-delay-3">
                   This app uses generative AI to create brick models. Results may vary.
-                </p>
+                </p> */}
 
                 <button
                   type="button"
@@ -1120,7 +1120,7 @@ function HowItWorks() {
             How It Works
           </h2>
           <p className="mt-3 text-base text-slate-600 max-w-2xl mx-auto">
-            Turn images and prompts into custom 3D brick models — edit freely, get instant instructions, and have the parts on your doorstep in 8 days.
+            Turn images and text into custom 3D brick models. Edit freely, get instant instructions, and have the parts on your doorstep in 8 days.
           </p>
         </div>
 
@@ -1203,7 +1203,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
       href="https://github.com/jjohnson5253/brickbuilderai"
       target="_blank"
       rel="noopener noreferrer"
-      aria-label="View BrickBuilder.AI on GitHub"
+      aria-label="View BrickBuilder on GitHub"
       className="inline-flex h-8 min-w-[4.5rem] items-center justify-center gap-1.5 rounded-full bg-slate-100 px-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 sm:h-9 sm:min-w-[5.25rem] sm:gap-2 sm:px-3 sm:text-sm"
     >
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white sm:h-6 sm:w-6">
@@ -1218,7 +1218,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
       <a href="/" className="flex min-w-0 items-center gap-2 sm:gap-3">
         <img
           src="/logo.svg"
-          alt="BRICKBUILDER.AI"
+          alt="BrickBuilder"
           className="h-6 w-auto sm:h-7"
           onError={(e) => {
             const el = e.currentTarget as HTMLImageElement;
@@ -1228,8 +1228,6 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
         <span className="truncate text-lg font-extrabold tracking-tight sm:text-xl">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
-          <span className="text-slate-900">.</span>
-          <span className="text-[#ff4b4b]">AI</span>
         </span>
       </a>
 

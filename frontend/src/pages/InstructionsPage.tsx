@@ -25,15 +25,13 @@ function Header() {
       <a href="/" className="flex items-center gap-3">
         <img
           src="/logo.svg"
-          alt="BRICKBUILDER.AI"
+          alt="BrickBuilder"
           className="h-7 w-auto"
           onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
         />
         <span className="text-xl font-extrabold tracking-tight">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
-          <span className="text-slate-900">.</span>
-          <span className="text-[#ff4b4b]">AI</span>
         </span>
       </a>
 
@@ -1216,7 +1214,7 @@ export function InstructionsPage() {
 
   return (
     <>
-    <SEO title="Building Instructions — BRICKBUILDER.AI" description="Step-by-step building instructions for your brick model." url="https://brickbuilder.ai/instructions" />
+    <SEO title="Building Instructions — BrickBuilder" description="Step-by-step building instructions for your brick model." url="https://brickbuilder.ai/instructions" />
     <div className="min-h-screen text-slate-900" style={{ backgroundColor: "#ffffff" }}>
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 sm:px-6 md:px-8 lg:px-10 pb-16 pt-6">
         <Header />

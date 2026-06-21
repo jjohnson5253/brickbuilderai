@@ -50,7 +50,7 @@ const Sidebar: React.FC<{active:TabKey; onChange:(t:TabKey)=>void; onLogout:()=>
       <div className="px-6 py-5 border-b border-slate-200 flex items-center justify-between">
         <Link to="/" className="text-2xl font-extrabold tracking-tight block">
           <span className="text-[#f44336]">BRICK</span>
-          <span className="text-slate-900">BUILDER</span><span className="text-slate-900">.</span><span className="text-[#f44336]">AI</span>
+          <span className="text-slate-900">BUILDER</span>
         </Link>
         <button
           onClick={onClose}
@@ -731,7 +731,7 @@ const UserDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#fbfbfd]">
-      <SEO title="Dashboard — BRICKBUILDER.AI" description="View your brick model generations and orders." url="https://brickbuilder.ai/dashboard" noIndex />
+      <SEO title="Dashboard — BrickBuilder" description="View your brick model generations and orders." url="https://brickbuilder.ai/dashboard" noIndex />
       <div className="flex">
         <Sidebar 
           active={tab} 
