@@ -594,7 +594,7 @@ export default function LandingPage() {
               setPreviewImageUrl(pe.image_url);
             }
           } else if (pe.stage === 'input_processed') {
-            setGenerationStatus(pe.message || 'Generation booting up... (3-45 seconds)');
+            setGenerationStatus(pe.message || 'Server booting up... (3-45 seconds)');
             if (pe.image_url) {
               setPreviewImageUrl(pe.image_url);
             }
