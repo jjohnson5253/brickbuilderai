@@ -28,6 +28,25 @@ export default function CompetitionsPage() {
             </h1>
           </div>
 
+          {/* Featured builds */}
+          <div className="flex items-end justify-center gap-4 sm:gap-8 mb-8">
+            <img
+              src="/assets/mario.png"
+              alt="LEGO Mario build"
+              className="h-28 sm:h-40 w-auto object-contain drop-shadow-md"
+            />
+            <img
+              src="/assets/pikachu.png"
+              alt="LEGO Pikachu build"
+              className="h-24 sm:h-36 w-auto object-contain drop-shadow-md"
+            />
+            <img
+              src="/assets/goomba.png"
+              alt="LEGO Goomba build"
+              className="h-24 sm:h-36 w-auto object-contain drop-shadow-md"
+            />
+          </div>
+
           {/* Giveaway */}
           <div className="rounded-2xl bg-amber-50 border border-amber-200 p-6 mb-6">
             <div className="flex items-center gap-2 mb-1">
