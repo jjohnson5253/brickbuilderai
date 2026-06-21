@@ -23,6 +23,7 @@ import { PromptEditModelApiService } from "../services/promptEditModelApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
+import { ClaimGenerationApiService } from "../services/claimGenerationApi";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { GetUserGenerationsApiService } from "../services/getUserGenerationsApi";
@@ -933,8 +934,19 @@ export default function GeneratedModel() {
       const token = session?.access_token || undefined;
       setAccessToken(token || null);
 
-      // Migrate anonymous generations from this session/IP to the now
-      // authenticated account so the user becomes the owner and can post.
+      // Claim ownership of THIS generation deterministically by id. This is
+      // reliable on mobile/production where the anonymous IP-hash can change
+      // between requests, so the IP-based bulk migration below may miss it.
+      if (token && currentGenerationId) {
+        try {
+          await ClaimGenerationApiService.claimGeneration(currentGenerationId, token);
+        } catch (e) {
+          console.warn('Failed to claim generation after login:', e);
+        }
+      }
+
+      // Migrate any remaining anonymous generations from this session/IP to the
+      // now authenticated account (best-effort; covers the user's other models).
       if (token) {
         try {
           await GetUserGenerationsApiService.getUserGenerations(token, 1, 0);
