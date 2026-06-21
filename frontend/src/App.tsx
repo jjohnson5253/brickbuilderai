@@ -9,6 +9,8 @@ import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
 import UserDashboard from "./pages/UserDashboard"; // NEW
 import CommunityPage from "./pages/CommunityPage";
+import CompetitionsPage from "./pages/CompetitionsPage";
+import { AnnouncementBanner } from "./components/AnnouncementBanner";
 // import { ProtectedRoute } from "./components/ProtectedRoute";
 
 function ExternalRedirect({ to }: { to: string }) {
@@ -22,6 +24,7 @@ export default function App() {
   return (
     <BrowserRouter>
       {/* <ProtectedRoute> */}
+        <AnnouncementBanner />
         <Routes>
           {/* Public */}
           <Route path="/" element={<LandingPage />} />
@@ -36,6 +39,7 @@ export default function App() {
           <Route path="/order" element={<OrderKit />} />
           <Route path="/success" element={<Success />} />
           <Route path="/community" element={<CommunityPage />} />
+          <Route path="/competitions" element={<CompetitionsPage />} />
 
           {/* External redirects */}
           <Route

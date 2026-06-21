@@ -31,6 +31,7 @@ from .requests.updateModel import update_model, UpdateModelRequest, UpdateModelR
 from .requests.updateLdrAndPartsList import update_ldr_and_parts_list, UpdateLdrAndPartsListRequest, UpdateLdrAndPartsListResponse
 from .requests.sendWaitlistEmail import send_waitlist_email, SendWaitlistEmailRequest, SendWaitlistEmailResponse
 from .requests.toggleIsCommunity import toggle_is_community, ToggleIsCommunityRequest, ToggleIsCommunityResponse
+from .requests.claimGeneration import claim_generation, ClaimGenerationRequest, ClaimGenerationResponse
 from .requests.updateGenerationName import update_generation_name, UpdateGenerationNameRequest, UpdateGenerationNameResponse
 from .requests.updateImagePreview import update_image_preview, UpdateImagePreviewRequest, UpdateImagePreviewResponse
 from .requests.updateUsername import update_username, UpdateUsernameRequest, UpdateUsernameResponse
@@ -345,6 +346,21 @@ async def toggle_is_community_endpoint(
     as false, so the first toggle will set it to true.
     """
     return await toggle_is_community(request, auth_info)
+
+
+@app.post("/claimGeneration", response_model=ClaimGenerationResponse)
+async def claim_generation_endpoint(
+    request: ClaimGenerationRequest,
+    auth_info: dict = Depends(get_user_with_optional_auth)
+) -> ClaimGenerationResponse:
+    """Claim ownership of an anonymous generation for the authenticated user.
+
+    Used after a logged-out visitor signs in to take ownership of a generation
+    they created while anonymous (identified by generation_id), without relying
+    on a fragile IP-hash match. Already-owned generations are a no-op; rows
+    owned by a different authenticated user return 403.
+    """
+    return await claim_generation(request, auth_info)
 
 
 @app.post("/updateGenerationName", response_model=UpdateGenerationNameResponse)
