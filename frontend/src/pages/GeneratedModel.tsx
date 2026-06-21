@@ -24,9 +24,9 @@ import { GetGenerationApiService, GetGenerationResponse } from "../services/getG
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
+import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
-import { GetUserGenerationsApiService } from "../services/getUserGenerationsApi";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -934,24 +934,16 @@ export default function GeneratedModel() {
       const token = session?.access_token || undefined;
       setAccessToken(token || null);
 
-      // Claim ownership of THIS generation deterministically by id. This is
-      // reliable on mobile/production where the anonymous IP-hash can change
-      // between requests, so the IP-based bulk migration below may miss it.
+      // Claim ownership of THIS generation deterministically by id, so the
+      // user owns it before we resume posting. This is reliable on
+      // mobile/production (no dependency on the anonymous IP hash). Any other
+      // generations this browser created while logged out are claimed centrally
+      // in AuthContext via the recorded anon-generation ids.
       if (token && currentGenerationId) {
         try {
           await ClaimGenerationApiService.claimGeneration(currentGenerationId, token);
         } catch (e) {
           console.warn('Failed to claim generation after login:', e);
-        }
-      }
-
-      // Migrate any remaining anonymous generations from this session/IP to the
-      // now authenticated account (best-effort; covers the user's other models).
-      if (token) {
-        try {
-          await GetUserGenerationsApiService.getUserGenerations(token, 1, 0);
-        } catch (e) {
-          console.warn('Failed to migrate anonymous generations after login:', e);
         }
       }
 
@@ -1139,6 +1131,8 @@ export default function GeneratedModel() {
       if (response.generation_id) {
         localStorage.setItem('lastGenerationId', response.generation_id);
         localStorage.setItem('GENERATION_ID', response.generation_id);
+        // If created while logged out, remember it so it can be claimed on login.
+        if (!currentUser) recordAnonymousGeneration(response.generation_id);
         setCurrentGenerationId(response.generation_id);
         
         const newUrl = new URL(window.location.href);
@@ -1335,6 +1329,8 @@ export default function GeneratedModel() {
       setLdrContent(completedGeneration.ldr_content);
       
       localStorage.setItem('lastGenerationId', completedGeneration.generation_id);
+      // If created while logged out, remember it so it can be claimed on login.
+      if (!currentUser) recordAnonymousGeneration(completedGeneration.generation_id);
       setCurrentGenerationId(completedGeneration.generation_id);
       
       // Get MPD content from URL or convert LDR to MPD
@@ -1714,6 +1710,8 @@ export default function GeneratedModel() {
             localStorage.setItem('lastGenerationId', response.generation_id);
             if (response.generation_id) {
               localStorage.setItem('GENERATION_ID', response.generation_id);
+              // If created while logged out, remember it so it can be claimed on login.
+              if (!currentUser) recordAnonymousGeneration(response.generation_id);
             }
             
             // Update the displayed generation ID and URL immediately

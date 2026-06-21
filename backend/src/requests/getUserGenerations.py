@@ -7,7 +7,6 @@ from fastapi import HTTPException, Request
 
 from ..utils.generation_storage import generation_storage
 from ..utils.posthog_client import track_api_call, track_error
-from ..utils.auth import get_anonymous_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -150,35 +149,12 @@ async def get_user_generations(request: GetUserGenerationsRequest, auth_info: di
             request_data={"limit": request.limit, "offset": request.offset, "processing": request.processing, "user_type": user_type}
         )
 
-        # If authenticated user, check for anonymous generations from current IP and migrate them
-        if is_authenticated and fastapi_request:
-            try:
-                ip_hash = get_anonymous_user_id(fastapi_request)
-                
-                # Check if there are any anonymous generations with this IP hash
-                anonymous_generations = await generation_storage.get_user_generations(
-                    user_id=ip_hash,
-                    user_type="anonymous",
-                    limit=1000  # Get all anonymous generations
-                )
-                
-                if anonymous_generations:
-                    logger.info(f"Found {len(anonymous_generations)} anonymous generations for IP hash, migrating to authenticated user {user_email}")
-                    
-                    # Migrate each anonymous generation to the authenticated user
-                    for gen in anonymous_generations:
-                        try:
-                            generation_storage.client.table("generations").update({
-                                "user_id": user_id,
-                                "user_type": "authenticated"
-                            }).eq("id", gen["id"]).execute()
-                        except Exception as e:
-                            logger.error(f"Failed to migrate generation {gen['id']}: {e}")
-                    
-                    logger.info(f"Successfully migrated {len(anonymous_generations)} generations to authenticated user")
-            except Exception as e:
-                logger.warning(f"Failed to check/migrate anonymous generations: {e}")
-                # Don't fail the request if migration fails
+        # NOTE: Anonymous generations are migrated to the authenticated account
+        # via the explicit /claimGeneration endpoint (claimed by generation_id
+        # that the client recorded when it created them). We intentionally do NOT
+        # migrate by anonymous IP hash here: behind a reverse proxy the client IP
+        # is shared across many users, so an IP-based sweep would vacuum other
+        # users' anonymous generations into whoever loads this endpoint first.
 
         # Get the total number of generations for this user (unfiltered)
         total_user_generations = await generation_storage.count_user_generations(

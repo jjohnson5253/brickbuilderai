@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom";
 import { TextToBricksApiService } from "../services/textToBricksApi";
 import { ImageToBricksApiService, StreamEvent, VoxelDataEvent, PipelineEvent } from "../services/imageToBricksApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
+import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import StreamingMeshViewer from "../components/StreamingMeshViewer";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { useAuth } from "../contexts/AuthContext";
@@ -262,6 +263,7 @@ export default function LandingPage() {
                 const fullResponse = await GetGenerationApiService.getGeneration(recentlyPromptedId);
                 
                 // Navigate to generated model page since this completed from loading state
+                if (!session) recordAnonymousGeneration(fullResponse.generation_id);
                 navigate(`/generated-model?id=${fullResponse.generation_id}`);
               } catch (error) {
                 console.error('Generation failed during resume:', error);
@@ -338,6 +340,7 @@ export default function LandingPage() {
             const fullResponse = await GetGenerationApiService.getGeneration(lastGenerationId);
             
             // Navigate to generated model page
+            if (!session) recordAnonymousGeneration(fullResponse.generation_id);
             navigate(`/generated-model?id=${fullResponse.generation_id}`);
           } catch (error) {
             console.error('Generation failed during resume:', error);
@@ -661,6 +664,8 @@ export default function LandingPage() {
       localStorage.setItem(STORAGE_KEYS.GENERATION_ID, generationId);
       // Save as recently prompted generation for priority checking on page load
       localStorage.setItem('recently_prompted_generation_id', generationId);
+      // If created while logged out, remember it so it can be claimed on login.
+      if (!session) recordAnonymousGeneration(generationId);
       
       // Poll for completion with status updates
       const completedGeneration = await GetGenerationApiService.pollUntilComplete(
@@ -719,6 +724,7 @@ export default function LandingPage() {
       );
       
       // Navigate to generated model page since this completed from loading state
+      if (!session) recordAnonymousGeneration(completedGeneration.generation_id);
       navigate(`/generated-model?id=${completedGeneration.generation_id}`);
       
     } catch (error) {

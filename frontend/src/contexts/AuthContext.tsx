@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useState } from 'react'
 import { User, Session, AuthError } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
 import { UpdateUsernameApiService, UsernameTakenError } from '../services/updateUsernameApi'
+import { ClaimGenerationApiService } from '../services/claimGenerationApi'
+import { getAnonymousGenerationIds, removeAnonymousGenerationId } from '../utils/anonGenerations'
 
 interface UserProfile {
   id: string
@@ -29,6 +31,30 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+
+// Claim any generations this browser created while logged out, reassigning them
+// to the now-authenticated user. Claims are by generation_id (a secret UUID the
+// client recorded at creation), so this is safe and deterministic — unlike the
+// old IP-hash bulk migration which could grab other users' anonymous rows.
+async function claimPendingAnonymousGenerations(accessToken: string) {
+  const ids = getAnonymousGenerationIds()
+  if (ids.length === 0) return
+  for (const id of ids) {
+    try {
+      await ClaimGenerationApiService.claimGeneration(id, accessToken)
+      removeAnonymousGenerationId(id)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      // 403 (owned by someone else) / 404 (deleted) are permanent — stop
+      // retrying them. Transient/network errors are kept for the next login.
+      if (message.includes('403') || message.includes('404')) {
+        removeAnonymousGenerationId(id)
+      } else {
+        console.warn('Failed to claim anonymous generation, will retry later:', id, error)
+      }
+    }
+  }
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -62,7 +88,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await fetchUserProfile(user.email)
     }
   }
-
   const deductCredits = async (amount: number) => {
     if (!user?.email || !userProfile) {
       return { error: 'No user or profile found', success: false }
@@ -139,6 +164,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (session?.user?.email) {
         fetchUserProfile(session.user.email)
       }
+      if (session?.access_token) {
+        void claimPendingAnonymousGenerations(session.access_token)
+      }
       setLoading(false)
     })
 
@@ -152,6 +180,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         fetchUserProfile(session.user.email)
       } else {
         setUserProfile(null)
+      }
+      if (session?.access_token) {
+        void claimPendingAnonymousGenerations(session.access_token)
       }
       setLoading(false)
     })
