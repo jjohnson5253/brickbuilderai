@@ -179,8 +179,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut()
-    return { error }
+    // Clear client state immediately so the UI reflects a logged-out state
+    // regardless of what the server does.
+    setSession(null)
+    setUser(null)
+    setUserProfile(null)
+
+    try {
+      // Attempt a local sign out (no global revoke). This clears the persisted
+      // session from storage. We swallow any error because a stale/expired token
+      // makes the server revoke call return 403 — which must not block logout.
+      const { error } = await supabase.auth.signOut({ scope: 'local' })
+      if (error) {
+        console.warn('signOut returned an error (clearing session anyway):', error.message)
+      }
+    } catch (err) {
+      console.warn('signOut threw (clearing session anyway):', err)
+    }
+
+    // Fallback: ensure any persisted Supabase auth tokens are removed even if
+    // the SDK call failed before it could clear storage.
+    try {
+      Object.keys(window.localStorage)
+        .filter((key) => key.startsWith('sb-') && key.endsWith('-auth-token'))
+        .forEach((key) => window.localStorage.removeItem(key))
+    } catch {
+      // localStorage may be unavailable in some environments; ignore.
+    }
+
+    return { error: null }
   }
 
   const signInWithOtp = async (email: string) => {
