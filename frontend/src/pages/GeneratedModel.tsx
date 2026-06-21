@@ -1580,7 +1580,7 @@ export default function GeneratedModel() {
             disabled={isResizing || isSavePolling}
             className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
           >
-            No, go to editor
+            Go to Editor
           </button>
         )}
       />
