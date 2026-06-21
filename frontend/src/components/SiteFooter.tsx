@@ -67,7 +67,7 @@ export function SiteFooter() {
           </a>
         </div>
         <div className="text-xs text-slate-400">
-          © 2026 BrickBuilderAI
+          © 2026 BrickBuilder
         </div>
       </div>
     </footer>

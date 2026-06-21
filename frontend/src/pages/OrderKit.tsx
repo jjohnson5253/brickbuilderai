@@ -250,22 +250,20 @@ export default function OrderKit() {
 
   return (
     <div className="min-h-screen bg-white">
-      <SEO title="Order Kit — BRICKBUILDER.AI" description="Review and order your custom brick kit." url="https://brickbuilder.ai/order" />
+      <SEO title="Order Kit — BrickBuilder" description="Review and order your custom brick kit." url="https://brickbuilder.ai/order" />
       {/* Top nav with logo */}
       <header className="w-full border-b border-slate-200 landing-fade-in landing-delay-1">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 sm:px-6 md:px-8 lg:px-10 py-4">
           <a href="/" className="flex items-center gap-3">
             <img
               src="/logo.svg"
-              alt="BRICKBUILDER.AI"
+              alt="BrickBuilder"
               className="h-7 w-auto"
               onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
             />
             <span className="text-xl font-extrabold tracking-tight">
               <span className="text-[#ff4b4b]">BRICK</span>
               <span className="text-slate-900">BUILDER</span>
-              <span className="text-slate-900">.</span>
-              <span className="text-[#ff4b4b]">AI</span>
             </span>
           </a>
         </div>

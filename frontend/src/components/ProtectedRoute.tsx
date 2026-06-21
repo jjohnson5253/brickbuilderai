@@ -89,7 +89,6 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
           <div style={{ display: "inline-flex", alignItems: "center", gap: "0px" }}>
             <span style={{ fontSize: "32px", fontWeight: "800", color: "#ef4444", letterSpacing: "-0.5px" }}>BRICK</span>
             <span style={{ fontSize: "32px", fontWeight: "800", color: "#1e293b", letterSpacing: "-0.5px" }}>BUILDER</span>
-            <span style={{ fontSize: "32px", fontWeight: "800", color: "#ef4444", letterSpacing: "-0.5px" }}>.AI</span>
           </div>
         </div>
 
@@ -173,7 +172,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
             width="315"
             height="560"
             src="https://www.youtube.com/embed/gYX0aafSzuw"
-            title="BrickBuilder.AI Demo"
+            title="BrickBuilder Demo"
             frameBorder="0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
