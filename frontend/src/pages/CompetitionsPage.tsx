@@ -28,6 +28,19 @@ export default function CompetitionsPage() {
             </h1>
           </div>
 
+          {/* Giveaway */}
+          <div className="rounded-2xl bg-amber-50 border border-amber-200 p-6 mb-6">
+            <div className="flex items-center gap-2 mb-1">
+              <Gift className="h-6 w-6 text-amber-600" />
+              <h2 className="text-xl font-extrabold text-amber-700">
+                Giveaway! 🎉
+              </h2>
+            </div>
+            <p className="text-2xl font-bold text-slate-900">
+              Win a $60 Custom LEGO Model
+            </p>
+          </div>
+
           {/* Featured builds */}
           <div className="flex items-end justify-center gap-4 sm:gap-8 mb-8">
             <img
@@ -47,19 +60,6 @@ export default function CompetitionsPage() {
             />
           </div>
 
-          {/* Giveaway */}
-          <div className="rounded-2xl bg-amber-50 border border-amber-200 p-6 mb-6">
-            <div className="flex items-center gap-2 mb-1">
-              <Gift className="h-6 w-6 text-amber-600" />
-              <h2 className="text-xl font-extrabold text-amber-700">
-                Giveaway! 🎉
-              </h2>
-            </div>
-            <p className="text-2xl font-bold text-slate-900">
-              Win a $60 Custom LEGO Model
-            </p>
-          </div>
-
           {/* Rules */}
           <div className="rounded-2xl bg-slate-50 border border-slate-200 p-6 mb-6">
             <h2 className="text-xl font-extrabold mb-4">Rules</h2>
@@ -67,26 +67,14 @@ export default function CompetitionsPage() {
               <li className="flex gap-3">
                 <span className="text-[#f44336] font-bold">•</span>
                 <span>
-                  Go to{" "}
-                  <a
-                    href="https://www.trybrickbuilder.com"
-                    className="text-[#f44336] font-semibold hover:underline"
-                  >
-                    www.trybrickbuilder.com
-                  </a>
-                </span>
-              </li>
-              <li className="flex gap-3">
-                <span className="text-[#f44336] font-bold">•</span>
-                <span>
-                  Submit your model to the{" "}
+                  Post to the{" "}
                   <Link
                     to="/community"
                     className="text-[#f44336] font-semibold hover:underline"
                   >
                     Community Page
                   </Link>{" "}
-                  by Sunday night
+                  by Sunday night June 21 11:59 PM CST
                 </span>
               </li>
               <li className="flex gap-3">
@@ -100,15 +88,15 @@ export default function CompetitionsPage() {
               </li>
               <li className="flex gap-3">
                 <span className="text-[#f44336] font-bold">•</span>
-                <span>Unlimited submissions allowed</span>
+                <span>Unlimited submissions allowed!</span>
               </li>
             </ul>
           </div>
 
           {/* Winners */}
-          <div className="rounded-2xl bg-[#0a1733] text-white p-6 flex items-center gap-3">
-            <Mail className="h-6 w-6 text-blue-200 shrink-0" />
-            <p className="text-lg font-bold">
+          <div className="rounded-2xl bg-amber-50 border border-amber-200 p-6 flex items-center gap-3">
+            <Mail className="h-6 w-6 text-amber-600 shrink-0" />
+            <p className="text-lg font-bold text-amber-700">
               Top 3 models will receive an email Monday
             </p>
           </div>
