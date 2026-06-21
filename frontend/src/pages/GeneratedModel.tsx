@@ -5,6 +5,7 @@ import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { ThreeLDRViewer } from "../components/ThreeLDRViewer";
 import type { ExportCaptureApi } from "../components/ThreeLDRViewer";
 import { VoxelViewer } from "../components/VoxelViewer";
+import LoginModal from "../components/LoginModal";
 import modelsMetadata from "../assets/demo-images/models-metadata.json";
 
 const DEMO_MODEL_IDS = new Set(
@@ -24,6 +25,7 @@ import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
+import { GetUserGenerationsApiService } from "../services/getUserGenerationsApi";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -303,6 +305,11 @@ export default function GeneratedModel() {
   const [generationOwnerId, setGenerationOwnerId] = React.useState<string | null>(null);
   const [communityToggleLoading, setCommunityToggleLoading] = React.useState<boolean>(false);
   const [communityToggleError, setCommunityToggleError] = React.useState<string | null>(null);
+  // Login modal shown when a logged-out user tries to post to community
+  const [showLoginModal, setShowLoginModal] = React.useState<boolean>(false);
+  // Set when a logged-out user clicks "Post to Community" so the posting flow
+  // can resume automatically once they finish logging in.
+  const [pendingCommunityPost, setPendingCommunityPost] = React.useState<boolean>(false);
   // Naming modal (shown when posting to community)
   const [showCommunityNameModal, setShowCommunityNameModal] = React.useState<boolean>(false);
   const [communityNameInput, setCommunityNameInput] = React.useState<string>("");
@@ -346,6 +353,10 @@ export default function GeneratedModel() {
   const canToggleCommunity = Boolean(
     currentUser?.id && generationOwnerId && currentUser.id === generationOwnerId
   );
+  // Show the community button to the owner, or to any logged-out visitor (who
+  // will be prompted to log in when they click it). Also keep it visible while
+  // a post is pending right after login so it doesn't flicker out mid-flow.
+  const canShowCommunityButton = canToggleCommunity || !currentUser || pendingCommunityPost;
   
   // Get model data from location state (passed from LandingPage) or localStorage
   const stateData = location.state as { 
@@ -886,6 +897,63 @@ export default function GeneratedModel() {
       );
     } finally {
       setCommunityToggleLoading(false);
+    }
+  };
+
+  // Re-fetch ownership/community flags for the current generation. Used after
+  // login so the "Post to Community" button reflects fresh ownership.
+  const refreshGenerationOwnership = async () => {
+    if (!currentGenerationId) return;
+    try {
+      const { data } = await supabase
+        .from('generations')
+        .select('is_community, user_id, preview_image_url')
+        .eq('id', currentGenerationId)
+        .maybeSingle();
+      const row = data as {
+        is_community?: boolean;
+        user_id?: string | null;
+        preview_image_url?: string | null;
+      } | null;
+      setIsCommunity(Boolean(row?.is_community));
+      setGenerationOwnerId(row?.user_id ?? null);
+      setNeedsPreviewUpload(!row?.preview_image_url);
+    } catch (e) {
+      console.warn('Failed to refresh generation ownership:', e);
+    }
+  };
+
+  // Called after a logged-out visitor finishes signing in via the login modal
+  // they opened from the "Post to Community" button. We refresh the session
+  // token, claim any anonymous generations created in this session (so the
+  // user owns this one), refresh ownership, then resume the posting flow.
+  const handleCommunityLoginSuccess = async () => {
+    setShowLoginModal(false);
+    const shouldResumePost = pendingCommunityPost;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || undefined;
+      setAccessToken(token || null);
+
+      // Migrate anonymous generations from this session/IP to the now
+      // authenticated account so the user becomes the owner and can post.
+      if (token) {
+        try {
+          await GetUserGenerationsApiService.getUserGenerations(token, 1, 0);
+        } catch (e) {
+          console.warn('Failed to migrate anonymous generations after login:', e);
+        }
+      }
+
+      await refreshGenerationOwnership();
+
+      if (shouldResumePost) {
+        void handleToggleCommunity();
+      }
+    } catch (e) {
+      console.warn('Failed to finalize community login flow:', e);
+    } finally {
+      setPendingCommunityPost(false);
     }
   };
 
@@ -1530,6 +1598,15 @@ export default function GeneratedModel() {
         url="https://brickbuilder.ai/generated-model"
       />
 
+      <LoginModal
+        open={showLoginModal}
+        onClose={() => {
+          setShowLoginModal(false);
+          setPendingCommunityPost(false);
+        }}
+        onSuccess={() => { void handleCommunityLoginSuccess(); }}
+      />
+
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 sm:px-6 md:px-8 lg:px-10 pb-16 pt-3">
         <Header onGuardedNavigate={(path) => guardUnsavedChanges(() => navigate(path))} />
         
@@ -2019,13 +2096,21 @@ export default function GeneratedModel() {
             )}
           </button>
 
-          {/* Post / Remove from Community button — only the owner can toggle */}
-          {canToggleCommunity && (
+          {/* Post / Remove from Community button — owners can toggle; logged-out
+              visitors see it too and are prompted to log in on click */}
+          {canShowCommunityButton && (
           <button
             type="button"
             aria-label={isCommunity ? 'Remove from community' : 'Post to community'}
             disabled={!currentGenerationId || communityToggleLoading || isSavePolling}
-            onClick={() => guardUnsavedChanges(() => { void handleToggleCommunity(); })}
+            onClick={() => {
+              if (!currentUser) {
+                setPendingCommunityPost(true);
+                setShowLoginModal(true);
+                return;
+              }
+              guardUnsavedChanges(() => { void handleToggleCommunity(); });
+            }}
             className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold transition-all duration-150 border-2 ${
               !currentGenerationId || communityToggleLoading || isSavePolling
                 ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
