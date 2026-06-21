@@ -57,7 +57,7 @@ export function SiteFooter() {
             <Github className="h-5 w-5" />
           </a>
         </div>
-        <div>
+        {/* <div>
           Need help?{" "}
           <a
             href="mailto:support@brickbuilder.ai"
@@ -65,7 +65,7 @@ export function SiteFooter() {
           >
             support@brickbuilder.ai
           </a>
-        </div>
+        </div> */}
         <div className="text-xs text-slate-400">
           © 2026 BrickBuilder
         </div>
