@@ -19,7 +19,7 @@ import { SiteFooter } from "../components/SiteFooter";
 const USE_STREAMING = true;
 
 // Toggle whether users must be logged in before starting a generation.
-const REQUIRE_LOGIN_FOR_GENERATION = false;
+const REQUIRE_LOGIN_FOR_GENERATION = true;
 
 // LocalStorage keys for persisting generated models
 const STORAGE_KEYS = {
