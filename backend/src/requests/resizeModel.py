@@ -13,7 +13,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 # Import auth functions and utilities
-from ..utils.auth import require_paid_auth, handle_auth_and_tracking, deduct_credits
+from ..utils.auth import get_user_with_optional_auth, handle_auth_and_tracking, deduct_credits
 from ..utils.posthog_client import track_api_call, track_error
 from ..utils.pack_ldraw_model import LDrawPacker
 from ..utils.generation_storage import generation_storage
@@ -239,7 +239,7 @@ async def process_resize_model_task(
 
 async def resize_model(
     request: ResizeModelRequest,
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ) -> ResizeModelResponse:
     """
     Resize an existing model by changing its detail level.
