@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Package, Box, User as UserIcon, ChevronRight,
   Clock, Calendar, Coins, Truck, ExternalLink, CheckCircle2,
@@ -22,7 +22,7 @@ const USERNAME_PATTERN = /^[A-Za-z0-9_.-]{3,30}$/;
 /* ----------------------------- Sidebar ----------------------------- */
 const Sidebar: React.FC<{active:TabKey; onChange:(t:TabKey)=>void; onLogout:()=>void; isOpen:boolean; onClose:()=>void}> = ({active, onChange, onLogout, isOpen, onClose}) => {
   const tabs: { key: TabKey; label: string; icon: any }[] = [
-    { key: "dashboard", label: "Main Dashboard", icon: TrendingUp },
+    { key: "dashboard", label: "Overview", icon: TrendingUp },
     { key: "generations", label: "My Generations", icon: Sparkles },
     { key: "orders",    label: "My Orders",      icon: Package },
     { key: "settings",  label: "Settings",       icon: SettingsIcon },
@@ -610,7 +610,11 @@ const SettingsPanel: React.FC = () => {
 
 /* ----------------------------- Page ----------------------------- */
 const UserDashboard: React.FC = () => {
-  const [tab, setTab] = useState<TabKey>("dashboard");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const isValidTab = (t: string | null): t is TabKey =>
+    t === "dashboard" || t === "generations" || t === "orders" || t === "settings";
+  const [tab, setTab] = useState<TabKey>(isValidTab(tabParam) ? tabParam : "dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { user, userProfile, loading, signOut, session } = useAuth();
   const navigate = useNavigate();
@@ -622,6 +626,20 @@ const UserDashboard: React.FC = () => {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const PAGE_LIMIT = 50;
+
+  // Keep the active tab in sync with the URL (?tab=...), e.g. when navigating
+  // here from the profile menu while already on the dashboard.
+  useEffect(() => {
+    if (isValidTab(tabParam) && tabParam !== tab) {
+      setTab(tabParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabParam]);
+
+  const handleTabChange = (t: TabKey) => {
+    setTab(t);
+    setSearchParams(t === "dashboard" ? {} : { tab: t });
+  };
 
   // Fetch generations for the logged-in user using the API
   const fetchGenerations = async (currentOffset: number, append: boolean = false) => {
@@ -735,7 +753,7 @@ const UserDashboard: React.FC = () => {
       <div className="flex">
         <Sidebar 
           active={tab} 
-          onChange={setTab} 
+          onChange={handleTabChange} 
           onLogout={handleLogout}
           isOpen={mobileMenuOpen}
           onClose={() => setMobileMenuOpen(false)}

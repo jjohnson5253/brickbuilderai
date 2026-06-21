@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  User,
-  ChevronDown,
   ChevronLeft,
   Coins,
-  LogOut,
   Users,
   Loader2,
   Sparkles,
@@ -13,6 +10,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { SEO } from "../components/SEO";
+import { ProfileMenu } from "../components/ProfileMenu";
 import {
   GetCommunityGenerationsApiService,
   CommunityGeneration,
@@ -21,8 +19,7 @@ import { SiteFooter } from "../components/SiteFooter";
 
 function CommunityHeader() {
   const navigate = useNavigate();
-  const { user, userProfile, signOut } = useAuth();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { user, userProfile } = useAuth();
 
   return (
     <header className="flex items-center justify-between w-full relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
@@ -59,41 +56,7 @@ function CommunityHeader() {
             </button>
 
             <div className="relative">
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-9 border-none cursor-pointer transition-colors"
-              >
-                <div className="w-6 h-6 bg-[#f44336] rounded-full flex items-center justify-center">
-                  <User className="h-4 w-4 text-white" />
-                </div>
-                <ChevronDown className={`h-4 w-4 text-slate-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {dropdownOpen && (
-                <>
-                  <div
-                    className="fixed inset-0"
-                    style={{ zIndex: 40 }}
-                    onClick={() => setDropdownOpen(false)}
-                  />
-                  <div
-                    className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
-                    style={{ zIndex: 51 }}
-                  >
-                    <button
-                      onClick={async () => {
-                        setDropdownOpen(false);
-                        await signOut();
-                        navigate('/');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Log out
-                    </button>
-                  </div>
-                </>
-              )}
+              <ProfileMenu />
             </div>
           </>
         ) : (

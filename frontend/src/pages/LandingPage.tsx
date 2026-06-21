@@ -1,6 +1,6 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
-import { Sparkles, Image as ImageIcon, User, Users, ChevronDown, LogOut, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard } from "lucide-react";
+import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard } from "lucide-react";
 import { SEO } from "../components/SEO";
 import FallingBricks from "../components/FallingBricks";
 import LoginModal from "../components/LoginModal";
@@ -14,6 +14,7 @@ import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { useAuth } from "../contexts/AuthContext";
 import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
+import { ProfileMenu } from "../components/ProfileMenu";
 
 // Toggle streaming generation. Set to false to use the non-streaming endpoints
 // (useful when the streaming backend, e.g. fal.ai sam3d-stream, is down).
@@ -1169,8 +1170,7 @@ function HowItWorks() {
 
 function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { user } = useAuth();
   const [githubStars, setGithubStars] = useState<number | null>(null);
 
   useEffect(() => {
@@ -1264,45 +1264,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
             </button>
 
             {/* Account dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex h-8 items-center gap-1 rounded-full border-none bg-slate-100 px-2 cursor-pointer transition-colors hover:bg-slate-200 sm:h-9 sm:gap-2 sm:px-3"
-              >
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#f44336] sm:h-6 sm:w-6">
-                  <User className="h-3.5 w-3.5 text-white sm:h-4 sm:w-4" />
-                </div>
-                <ChevronDown className={`h-3.5 w-3.5 text-slate-600 transition-transform sm:h-4 sm:w-4 ${dropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {dropdownOpen && (
-                <>
-                  {/* Backdrop to close dropdown */}
-                  <div 
-                    className="fixed inset-0" 
-                    style={{ zIndex: 40 }}
-                    onClick={() => setDropdownOpen(false)} 
-                  />
-                  {/* Dropdown menu */}
-                  <div 
-                    className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
-                    style={{ zIndex: 51 }}
-                  >
-                    <button
-                      onClick={async () => {
-                        setDropdownOpen(false);
-                        await signOut();
-                        navigate('/');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Log out
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            <ProfileMenu />
           </>
         ) : (
           // Not logged in: show login button

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { SEO } from "../components/SEO";
 import { SiteFooter } from "../components/SiteFooter";
+import { ProfileMenu } from "../components/ProfileMenu";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { ThreeLDRViewer } from "../components/ThreeLDRViewer";
 import type { ExportCaptureApi } from "../components/ThreeLDRViewer";
@@ -38,11 +39,8 @@ import {
   Star,
   Loader2,
   Pencil,
-  User,
   Users,
-  ChevronDown,
   Github,
-  LogOut,
   ArrowLeft,
   Download,
   Image,
@@ -60,8 +58,7 @@ interface HeaderProps {
 
 function Header({ onGuardedNavigate }: HeaderProps) {
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { user } = useAuth();
   const [githubStars, setGithubStars] = useState<number | null>(null);
 
   React.useEffect(() => {
@@ -148,45 +145,7 @@ function Header({ onGuardedNavigate }: HeaderProps) {
             </button>
 
             {/* Account dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-9 border-none cursor-pointer transition-colors"
-              >
-                <div className="w-6 h-6 bg-[#f44336] rounded-full flex items-center justify-center">
-                  <User className="h-4 w-4 text-white" />
-                </div>
-                <ChevronDown className={`h-4 w-4 text-slate-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {dropdownOpen && (
-                <>
-                  {/* Backdrop to close dropdown */}
-                  <div 
-                    className="fixed inset-0" 
-                    style={{ zIndex: 40 }}
-                    onClick={() => setDropdownOpen(false)} 
-                  />
-                  {/* Dropdown menu */}
-                  <div 
-                    className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
-                    style={{ zIndex: 51 }}
-                  >
-                    <button
-                      onClick={async () => {
-                        setDropdownOpen(false);
-                        await signOut();
-                        navigate('/');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Log out
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            <ProfileMenu onNavigate={onGuardedNavigate} />
           </>
         ) : (
           // Not logged in: show login/signup buttons
