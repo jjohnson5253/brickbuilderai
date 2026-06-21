@@ -9,6 +9,7 @@ import {
   Users,
   Loader2,
   Sparkles,
+  LayoutDashboard,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { SEO } from "../components/SEO";
@@ -49,6 +50,14 @@ function CommunityHeader() {
               </span>
             </div>
 
+            <button
+              className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px"
+              onClick={() => navigate('/dashboard')}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
+            </button>
+
             <div className="relative">
               <button
                 onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -71,16 +80,6 @@ function CommunityHeader() {
                     className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
                     style={{ zIndex: 51 }}
                   >
-                    <button
-                      onClick={() => {
-                        setDropdownOpen(false);
-                        navigate('/dashboard');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      Dashboard
-                    </button>
-                    <div className="border-t border-slate-100 my-1" />
                     <button
                       onClick={async () => {
                         setDropdownOpen(false);
