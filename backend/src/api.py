@@ -185,7 +185,7 @@ async def get_price_endpoint(
 @app.post("/resizeModel", response_model=ResizeModelResponse)
 async def resize_model_endpoint(
     request: ResizeModelRequest,
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ) -> ResizeModelResponse:
     """Resize an existing model by changing its voxel size"""
     return await resize_model(request, auth_info)
