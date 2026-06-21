@@ -19,7 +19,7 @@ import { SiteFooter } from "../components/SiteFooter";
 const USE_STREAMING = true;
 
 // Toggle whether users must be logged in before starting a generation.
-const REQUIRE_LOGIN_FOR_GENERATION = true;
+const REQUIRE_LOGIN_FOR_GENERATION = false;
 
 // LocalStorage keys for persisting generated models
 const STORAGE_KEYS = {
@@ -594,7 +594,7 @@ export default function LandingPage() {
               setPreviewImageUrl(pe.image_url);
             }
           } else if (pe.stage === 'input_processed') {
-            setGenerationStatus(pe.message || 'Generation booting up... (3-45 seconds)');
+            setGenerationStatus(pe.message || 'Server booting up... (3-45 seconds)');
             if (pe.image_url) {
               setPreviewImageUrl(pe.image_url);
             }

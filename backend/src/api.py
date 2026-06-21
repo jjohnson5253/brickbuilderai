@@ -109,7 +109,7 @@ async def health_check():
 @app.post("/imageToBricks")
 async def imageToBricks_endpoint(
     request: ImageToBricksRequest = ImageToBricksRequest(),
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ):
     """
     Start image to brick conversion.
@@ -124,7 +124,7 @@ async def imageToBricks_endpoint(
 @app.post("/textToBricks")
 async def textToBricks_endpoint(
     request: TextToBricksRequest,
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ):
     """
     Start text to brick conversion.

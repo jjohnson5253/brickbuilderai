@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 # Import auth functions and utilities
-from ..utils.auth import require_paid_auth, verify_and_deduct_credits, handle_auth_and_tracking, deduct_credits
+from ..utils.auth import get_user_with_optional_auth, verify_and_deduct_credits, handle_auth_and_tracking, deduct_credits
 from ..utils.posthog_client import track_api_call, track_image_conversion, track_error
 from ..utils.pack_ldraw_model import LDrawPacker
 
@@ -359,7 +359,7 @@ async def process_image_to_bricks_task(
 
 async def image_to_bricks(
     request: ImageToBricksRequest = ImageToBricksRequest(),
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ) -> ImageToBricksResponse:
     """
     Start an image to brick structure conversion (returns generation_id immediately)
@@ -492,7 +492,7 @@ async def image_to_bricks(
 
 async def image_to_bricks_stream(
     request: ImageToBricksRequest = ImageToBricksRequest(),
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ) -> StreamingResponse:
     """
     Streaming version of image_to_bricks using SAM3D.
