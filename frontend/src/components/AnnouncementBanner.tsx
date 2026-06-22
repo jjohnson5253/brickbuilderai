@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { X } from "lucide-react";
 
-const ROTATION_INTERVAL_MS = 6000;
+const ROTATION_INTERVAL_MS = 3500;
 
 export function AnnouncementBanner() {
   const [visible, setVisible] = useState(true);
@@ -19,22 +19,28 @@ export function AnnouncementBanner() {
 
   return (
     <div className="relative w-full bg-[#0a1733] text-white">
-      {index === 0 ? (
-        <div className="block w-full py-2.5 px-10 text-center text-sm font-semibold text-white">
+      <div className="grid">
+        <div
+          className={`col-start-1 row-start-1 block w-full py-2.5 px-10 text-center text-sm font-semibold text-white transition-opacity duration-700 ease-in-out ${
+            index === 0 ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+        >
           <span aria-hidden="true" className="mr-2">✦</span>
           Summer sale: 50% off all orders! (June 22 - July 22)
           <span aria-hidden="true" className="ml-2">✦</span>
         </div>
-      ) : (
         <Link
           to="/competitions"
-          className="block w-full py-2.5 px-10 text-center text-sm font-semibold text-white hover:text-blue-200 transition-colors no-underline"
+          aria-hidden={index !== 1}
+          className={`col-start-1 row-start-1 block w-full py-2.5 px-10 text-center text-sm font-semibold text-white hover:text-blue-200 transition-opacity duration-700 ease-in-out no-underline ${
+            index === 1 ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
         >
           <span aria-hidden="true" className="mr-2">✦</span>
-          Congrats to our Brickworld BrickBuilder Competition Winners!
+          Congrats to our Brickworld Competition Winners!
           <span aria-hidden="true" className="ml-2">✦</span>
         </Link>
-      )}
+      </div>
       <button
         type="button"
         onClick={() => setVisible(false)}
