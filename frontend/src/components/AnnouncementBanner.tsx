@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { X } from "lucide-react";
 
 export function AnnouncementBanner() {
@@ -9,14 +8,11 @@ export function AnnouncementBanner() {
 
   return (
     <div className="relative w-full bg-[#0a1733] text-white">
-      <Link
-        to="/competitions"
-        className="block w-full py-2.5 px-10 text-center text-sm font-semibold text-white hover:text-blue-200 transition-colors no-underline"
-      >
+      <div className="block w-full py-2.5 px-10 text-center text-sm font-semibold text-white">
         <span aria-hidden="true" className="mr-2">✦</span>
-        BrickBuilder Brickworld 2026 competition live!
+        Summer sale: 50% off all orders! (June 22 - July 22)
         <span aria-hidden="true" className="ml-2">✦</span>
-      </Link>
+      </div>
       <button
         type="button"
         onClick={() => setVisible(false)}
