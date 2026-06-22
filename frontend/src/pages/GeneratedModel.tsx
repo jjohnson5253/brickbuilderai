@@ -173,7 +173,7 @@ function Header({ onGuardedNavigate }: HeaderProps) {
 
 type StatCardProps = {
   icon: React.ReactNode;
-  title: string;
+  title: React.ReactNode;
   sub: string;
 };
 
@@ -1503,6 +1503,10 @@ export default function GeneratedModel() {
     }, [downloadBlob, getSafeExportName, isExportingVideo]);
 
 
+  // Summer sale: 50% off everything (parts + shipping). The price returned by
+  // the API already includes shipping, so we simply halve the total.
+  const saleDiscountedPrice = priceData ? priceData.total_price * 0.5 : 0;
+
   // Shared resize-prompt card. Rendered both as a desktop overlay inside the
   // 3D viewer and as a mobile block below the preview.
   const resizePromptCard = (
@@ -1524,7 +1528,8 @@ export default function GeneratedModel() {
             <span className="font-semibold text-slate-900">{priceData.total_parts} pieces</span>
             {' '}and will cost{' '}
             <span className="font-semibold text-slate-900">
-              ${priceData.total_price} {priceData.currency}
+              <span className="text-slate-400 line-through font-normal">${priceData.total_price.toFixed(2)}</span>
+              {' '}${saleDiscountedPrice.toFixed(2)} {priceData.currency}
             </span>.
           </>
         )}
@@ -2149,7 +2154,12 @@ export default function GeneratedModel() {
                   : priceError 
                     ? "Price Unavailable"
                     : priceData 
-                      ? `$${priceData.total_price} ${priceData.currency}`
+                      ? (
+                        <span className="flex items-baseline gap-2">
+                          <span className="text-slate-400 line-through">${priceData.total_price.toFixed(2)}</span>
+                          <span>${saleDiscountedPrice.toFixed(2)} {priceData.currency}</span>
+                        </span>
+                      )
                       : ""
               }
               sub={
