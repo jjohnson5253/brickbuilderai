@@ -49,6 +49,143 @@ PROMPT_ENHANCEMENT_REFERENCE_IMAGE = (
     "rendered in the same voxelized way as the objects in this reference image. All patterns on the object should be voxelized with same sized voxels. White background. No shadows. Isometric view."
 )
 
+
+async def generate_image_from_text_simple_streaming(
+    prompt: str,
+    model_option: str = "a",
+    prompt_option: str = "a",
+) -> Tuple[str, str, str]:
+    """
+    Generate an image using flux-2 streaming endpoint, but wait for final result
+    without forwarding intermediate frames. This is used in non-streaming 3D mode
+    to ensure consistent image generation using the same flux-2/stream endpoint.
+    
+    Args:
+        prompt: Text description of what to generate
+        model_option: "a" for regular, "b" for premium, "c" for sam3d
+        prompt_option: "a", "b", or "c" to select prompt enhancement version
+    
+    Returns:
+        Tuple of (original_image_url, processed_image_url, enhanced_prompt)
+    """
+    fal_key = os.getenv("FAL_KEY")
+    if not fal_key:
+        raise ValueError("FAL_KEY environment variable is required")
+
+    # Select prompt enhancement (same logic as streaming path)
+    if model_option.lower() == "b":
+        if prompt_option.lower() == "c":
+            prompt_enhancement = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_C
+        elif prompt_option.lower() == "b":
+            prompt_enhancement = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_B
+        else:
+            prompt_enhancement = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_A
+    else:
+        if prompt_option.lower() == "c":
+            prompt_enhancement = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_C
+        elif prompt_option.lower() == "b":
+            prompt_enhancement = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_B
+        else:
+            prompt_enhancement = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_A
+
+    enhanced_prompt = f"{prompt}, {prompt_enhancement}"
+    logger.info(f"Enhanced prompt for flux-2 streaming: {enhanced_prompt}")
+
+    stream_url = "https://fal.run/fal-ai/flux-2/stream"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Key {fal_key}",
+    }
+    payload = {
+        "prompt": enhanced_prompt,
+        "image_size": "square_hd",
+        "num_inference_steps": 28,
+        "output_format": "png",
+        "enable_safety_checker": True,
+        "guidance_scale": 2.5,
+        "acceleration": "regular",
+    }
+
+    original_image_url = None
+    sse_buffer = ""
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
+        async with client.stream("POST", stream_url, headers=headers, json=payload) as response:
+            if response.status_code != 200:
+                error_body = await response.aread()
+                raise Exception(f"Flux-2 stream error ({response.status_code}): {error_body.decode()}")
+
+            async for chunk in response.aiter_bytes():
+                sse_buffer += chunk.decode("utf-8", errors="replace")
+
+                while "\n\n" in sse_buffer:
+                    block, sse_buffer = sse_buffer.split("\n\n", 1)
+
+                    for line in block.split("\n"):
+                        line = line.strip()
+                        if not line.startswith("data: "):
+                            continue
+                        raw_data = line[6:]
+
+                        try:
+                            parsed = json.loads(raw_data)
+                        except json.JSONDecodeError:
+                            continue
+
+                        # Extract image URL
+                        image_url = None
+                        if "images" in parsed and parsed["images"]:
+                            image_url = parsed["images"][0].get("url")
+                        elif "output" in parsed and isinstance(parsed.get("output"), dict):
+                            output = parsed["output"]
+                            if "images" in output and output["images"]:
+                                image_url = output["images"][0].get("url")
+                        elif "image" in parsed and isinstance(parsed.get("image"), dict):
+                            image_url = parsed["image"].get("url")
+                        elif "url" in parsed and isinstance(parsed.get("url"), str):
+                            image_url = parsed["url"]
+
+                        if image_url:
+                            # Keep updating to get the final image
+                            original_image_url = image_url
+                        elif parsed.get("status") == "error" or parsed.get("type") == "error" or parsed.get("event") == "error":
+                            error_msg = parsed.get("message") or parsed.get("error") or "Flux-2 error"
+                            raise Exception(error_msg)
+
+    if not original_image_url:
+        raise Exception("Flux-2 stream completed without producing an image")
+
+    logger.info(f"Flux-2 final image: {original_image_url[:80] + '...' if len(original_image_url) > 80 else original_image_url}")
+
+    # Handle data: URIs by uploading to fal.ai storage
+    if original_image_url.startswith("data:"):
+        logger.info("Flux-2 stream returned a data: URI — uploading to fal.ai storage")
+        try:
+            header, b64_data = original_image_url.split(",", 1)
+            image_bytes = base64.b64decode(b64_data)
+            uploaded_url = fal_client.upload(image_bytes, "image/png")
+            logger.info(f"Uploaded data-URI image to fal.ai: {uploaded_url[:80]}...")
+            original_image_url = uploaded_url
+        except Exception as e:
+            logger.error(f"Failed to upload data-URI image to fal.ai: {e}")
+            raise Exception("Failed to convert streaming image data URI to a URL") from e
+
+    # Background removal
+    temp_dir = tempfile.mkdtemp()
+    try:
+        loop = asyncio.get_running_loop()
+        processed_image_url = await loop.run_in_executor(
+            None, remove_background_from_url, original_image_url, temp_dir
+        )
+    finally:
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception:
+            pass
+
+    logger.info(f"Image generation complete: original={original_image_url[:80]}..., processed={processed_image_url[:80]}...")
+    return original_image_url, processed_image_url, enhanced_prompt
+
 async def generate_image_from_text(prompt: str, model: str, status_callback: Optional[Callable[[str], None]] = None, model_option: str = "a", prompt_option: str = "a") -> Tuple[str, str, str]:
     """
     Generate an image from a text prompt using specified AI model with background removal.

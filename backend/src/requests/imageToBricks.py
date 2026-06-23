@@ -38,7 +38,8 @@ class ImageToBricksRequest(BaseModel):
     edit_image: Optional[bool] = True   # Flag to apply nano banana edit preprocessing
     model_option: Optional[str] = "a"  # Model option: "a" for trellis, "b" for trellis-2, "c" for sam3d
     prompt_option: Optional[str] = "a"  # Prompt option: "a", "b", or "c" to select prompt enhancement file
-    stream: Optional[bool] = False  # If True, use SAM3D streaming instead of Trellis
+    stream: Optional[bool] = False  # If True, return an SSE stream (image frames always stream)
+    stream_3d: Optional[bool] = True  # If True, use SAM3D streamed voxels; if False, use Trellis (non-streamed 3D)
 
     @validator('image_base64')
     def validate_base64(cls, v):
@@ -554,7 +555,7 @@ async def image_to_bricks_stream(
             prompt="no text prompt",
             detail_level=request.detail_level,
             endpoint="imageToBricks",
-            model_3d="sam3d",
+            model_3d="sam3d" if request.stream_3d else ("trellis-2" if request.model_option == "b" else "trellis"),
         )
 
         return StreamingResponse(
@@ -569,6 +570,7 @@ async def image_to_bricks_stream(
                 model_option=request.model_option,
                 prompt_option=request.prompt_option,
                 edit_image=request.edit_image,
+                stream_3d=request.stream_3d,
             ),
             media_type="text/event-stream",
             headers={
