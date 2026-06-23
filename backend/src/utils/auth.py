@@ -228,7 +228,7 @@ async def require_paid_auth(
     return {**auth_info, "is_anonymous": False}
 
 # Anonymous user tracking system
-ANONYMOUS_CALL_LIMIT = _get_int_env("ANONYMOUS_CALL_LIMIT", 3)  # Lifetime limit for anonymous users
+ANONYMOUS_CALL_LIMIT = _get_int_env("ANONYMOUS_CALL_LIMIT", 1000)  # Lifetime limit for anonymous users
 ANONYMOUS_WINDOW_CALL_LIMIT = _get_int_env("ANONYMOUS_WINDOW_CALL_LIMIT", 20)
 ANONYMOUS_WINDOW_SECONDS = _get_int_env("ANONYMOUS_WINDOW_SECONDS", 60)
 anonymous_window_calls: Dict[str, list[float]] = {}
