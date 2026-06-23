@@ -1034,7 +1034,7 @@ export default function LandingPage() {
             {loading && (
               <div className="flex w-full flex-col items-center gap-4 mb-4">
                 {/* Preview container with overlaid status + beat text */}
-                <div className="relative w-full max-w-md overflow-hidden rounded-xl shadow-lg border border-slate-200" style={{ minHeight: 340 }}>
+                <div className="relative w-full max-w-md overflow-hidden rounded-xl shadow-lg border border-slate-200" style={{ height: 340 }}>
                   {/* Content layer */}
                   {voxelData ? (
                     <div style={{ height: 340 }}>
@@ -1053,7 +1053,7 @@ export default function LandingPage() {
                       <img
                         src={previewImageUrl}
                         alt="Generation preview"
-                        className="w-full"
+                        className="w-full h-full object-contain"
                         // style={{ filter: 'blur(4px) grayscale(100%) url(#wavy-edge)', transform: 'scale(1.05)' }}
                       />
                     </>
