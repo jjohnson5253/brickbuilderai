@@ -174,15 +174,26 @@ class GenerationStorage:
 
     async def download_file_from_storage(self, storage_url: str) -> bytes:
         """
-        Download a file from Supabase storage URL
-        
+        Download a file from a storage URL.
+
+        When using the local embedded storage fallback, the URL points back at
+        this same server (``/local-storage/...``). Fetching it over HTTP would
+        deadlock the event loop (the server can't serve its own request while
+        blocked on it), so we read those files directly from disk instead.
+
         Args:
-            storage_url: Full Supabase storage URL
-            
+            storage_url: Full storage URL
+
         Returns:
             File content as bytes
         """
         try:
+            # Local storage: read straight from disk to avoid a self-HTTP call.
+            if "/local-storage/" in storage_url:
+                rel = storage_url.split("/local-storage/", 1)[1]
+                bucket, _, path = rel.partition("/")
+                return self.client.storage.from_(bucket).download(path)
+
             response = requests.get(storage_url, timeout=30)
             response.raise_for_status()
             return response.content
