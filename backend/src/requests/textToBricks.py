@@ -36,7 +36,8 @@ class TextToBricksRequest(BaseModel):
     detail_level: Optional[float] = 1.6  # Default to 1.6 for fewer bricks
     model_option: Optional[str] = "a"  # Model option: "a" for trellis, "b" for trellis-2, "c" for sam3d
     prompt_option: Optional[str] = "a"  # Prompt option: "a", "b", or "c" to select prompt enhancement file
-    stream: Optional[bool] = False  # If True, use SAM3D streaming instead of Trellis
+    stream: Optional[bool] = False  # If True, return an SSE stream (image frames always stream)
+    stream_3d: Optional[bool] = True  # If True, use SAM3D streamed voxels; if False, use Trellis (non-streamed 3D)
     _image_model: str = "nano-banana"  # Model for image generation
 
     @validator('prompt')
@@ -118,11 +119,14 @@ async def process_text_to_bricks_task(
         # Update status to processing
         await generation_storage.update_status(generation_id, "processing")
         
-        # Step 1: Generate image from text using flux-2
-        image_url, processed_image_url, prompt_enhancement = await generate_image_from_text(
-            prompt=prompt, 
-            model="flux-2",
-            status_callback=status_callback,
+        # Step 1: Generate image from text using flux-2 streaming
+        # Note: We use streaming for image generation even in non-streaming mode
+        # for consistency and better image quality. The intermediate frames aren't
+        # sent to the client in this path, but we still get the final result.
+        from ..utils.generate_image import generate_image_from_text_simple_streaming
+        
+        image_url, processed_image_url, prompt_enhancement = await generate_image_from_text_simple_streaming(
+            prompt=prompt,
             model_option=model_option,
             prompt_option=prompt_option
         )
@@ -462,7 +466,7 @@ async def text_to_bricks_stream(
             detail_level=request.detail_level,
             endpoint="textToBricks",
             image_model=request._image_model,
-            model_3d="sam3d",
+            model_3d="sam3d" if request.stream_3d else ("trellis-2" if request.model_option == "b" else "trellis"),
         )
 
         await generation_storage.update_status(generation_id, "processing")
@@ -482,6 +486,7 @@ async def text_to_bricks_stream(
                 text_prompt=request.prompt,
                 model_option=request.model_option,
                 prompt_option=request.prompt_option,
+                stream_3d=request.stream_3d,
             ),
             media_type="text/event-stream",
             headers={

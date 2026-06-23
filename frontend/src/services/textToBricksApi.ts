@@ -140,6 +140,7 @@ export class TextToBricksApiService {
     modelOption: string = 'b',
     promptOption: string = 'a',
     onEvent?: (event: StreamEvent) => void,
+    stream3d: boolean = true,
   ): Promise<TextToBricksResponse> {
     console.log('[stream] Sending streaming text-to-bricks request');
 
@@ -166,6 +167,7 @@ export class TextToBricksApiService {
         prompt_option: promptOption,
         use_red_bricks: true,
         stream: true,
+        stream_3d: stream3d,
       }),
     });
 

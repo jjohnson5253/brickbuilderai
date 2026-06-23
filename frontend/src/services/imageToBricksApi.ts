@@ -239,6 +239,7 @@ export class ImageToBricksApiService {
     modelOption: string = 'b',
     promptOption: string = 'a',
     onEvent?: (event: StreamEvent) => void,
+    stream3d: boolean = true,
   ): Promise<ImageToBricksResponse> {
     console.log('[stream] Sending streaming image-to-bricks request');
 
@@ -268,6 +269,7 @@ export class ImageToBricksApiService {
         prompt_option: promptOption,
         use_red_bricks: true,
         stream: true,
+        stream_3d: stream3d,
       }),
     });
 

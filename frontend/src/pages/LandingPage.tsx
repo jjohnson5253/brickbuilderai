@@ -16,8 +16,9 @@ import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
 import { ProfileMenu } from "../components/ProfileMenu";
 
-// Check if streaming is enabled via environment variable (defaults to false)
-const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING === 'true';
+// Check if 3D streaming (SAM3D) is enabled by default via environment variable
+// Note: Image generation always uses flux-2 streaming regardless of this setting
+const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING !== 'false';
 
 // Toggle whether users must be logged in before starting a generation.
 const REQUIRE_LOGIN_FOR_GENERATION = false;
@@ -55,9 +56,9 @@ const STYLE_PRESETS: { label: string; value: StyleOption; promptOption: string }
 ];
 
 type GenerationType = "streaming" | "non-streaming";
-const GENERATION_TYPE_PRESETS: { label: string; value: GenerationType }[] = [
-  { label: "Streaming", value: "streaming" },
-  { label: "Non-Streaming", value: "non-streaming" },
+const GENERATION_TYPE_PRESETS: { label: string; value: GenerationType; description?: string }[] = [
+  { label: "Streaming", value: "streaming", description: "SAM3D with live 3D preview" },
+  { label: "Standard", value: "non-streaming", description: "Trellis (faster, no preview)" },
 ];
 
 const NAV_LINKS = [
@@ -310,6 +311,7 @@ export default function LandingPage() {
         const processingGens = await GetUserGenerationsApiService.getUserGenerations(
           session?.access_token || undefined, // undefined for anonymous users
           1, // Only need the most recent one
+          0, // offset
           true // Only get processing generations
         );
         
@@ -627,48 +629,36 @@ export default function LandingPage() {
         }
       };
 
-      // Determine if streaming is enabled based on user's selection
-      const useStreaming = generationType === 'streaming';
-      
+      // Image generation always streams via the SSE endpoint. The 3D Mode
+      // toggle only decides how the 3D step runs: SAM3D (streamed live voxels)
+      // when streaming, or Trellis (non-streamed) when standard.
+      const stream3d = generationType === 'streaming';
+
       // Use image API if image is uploaded, otherwise use text API
       if (imgFile) {
-        console.log(`Generating from image${useStreaming ? ' (streaming)' : ''}:`, imgFile.name);
+        console.log(`Generating from image (3D ${stream3d ? 'streaming' : 'standard'}):`, imgFile.name);
         const imageBase64 = await fileToBase64(imgFile);
-        postResponse = useStreaming
-          ? await ImageToBricksApiService.generateBricksFromImageStream(
-              imageBase64,
-              getVoxelSize(size),
-              authToken,
-              modelOption,
-              promptOption,
-              handleStreamEvent,
-            )
-          : await ImageToBricksApiService.generateBricksFromImage(
-              imageBase64,
-              getVoxelSize(size),
-              authToken,
-              modelOption,
-              promptOption,
-            );
+        postResponse = await ImageToBricksApiService.generateBricksFromImageStream(
+          imageBase64,
+          getVoxelSize(size),
+          authToken,
+          modelOption,
+          promptOption,
+          handleStreamEvent,
+          stream3d,
+        );
         modelName = imgFile.name.replace(/\.[^/.]+$/, ''); // Remove file extension
       } else {
-        console.log(`Generating from text prompt${useStreaming ? ' (streaming)' : ''}:`, prompt.trim());
-        postResponse = useStreaming
-          ? await TextToBricksApiService.generateBricksFromTextStream(
-              prompt.trim(),
-              getVoxelSize(size),
-              authToken,
-              modelOption,
-              promptOption,
-              handleStreamEvent,
-            )
-          : await TextToBricksApiService.generateBricksFromText(
-              prompt.trim(),
-              getVoxelSize(size),
-              authToken,
-              modelOption,
-              promptOption,
-            );
+        console.log(`Generating from text prompt (3D ${stream3d ? 'streaming' : 'standard'}):`, prompt.trim());
+        postResponse = await TextToBricksApiService.generateBricksFromTextStream(
+          prompt.trim(),
+          getVoxelSize(size),
+          authToken,
+          modelOption,
+          promptOption,
+          handleStreamEvent,
+          stream3d,
+        );
         modelName = prompt.trim();
       }
       
@@ -960,10 +950,10 @@ export default function LandingPage() {
               </div>
             )}
 
-            {/* 3D Generation Type chips - hidden during loading */}
+            {/* Generation Mode chips - hidden during loading */}
             {!loading && !areOptionsHidden && (
               <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
-                <span className="text-sm text-slate-500">3D Generation:</span>
+                <span className="text-sm text-slate-500">3D Mode:</span>
                 {GENERATION_TYPE_PRESETS.map((gt) => {
                   const active = gt.value === generationType;
                   return (
@@ -976,6 +966,7 @@ export default function LandingPage() {
                           : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
                       } ${loading ? "cursor-not-allowed" : "cursor-pointer"}`}
                       disabled={loading}
+                      title={gt.description}
                     >
                       {gt.label}
                     </button>

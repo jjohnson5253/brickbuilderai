@@ -255,6 +255,130 @@ def parse_fal_stream_results(raw_text: str) -> dict:
     }
 
 
+async def _run_trellis_3d_branch(
+    *,
+    queue: asyncio.Queue,
+    generation_id: str,
+    detail_level: float,
+    user_info: dict,
+    auth_info: dict,
+    credits_to_deduct: int,
+    original_image_url: Optional[str],
+    processed_image_url: Optional[str],
+    image_url: str,
+    prompt_enhancement: Optional[str],
+    model_option: Optional[str],
+) -> None:
+    """
+    Non-streamed 3D path used when stream_3d is False. The flux-2 image frames
+    have already been streamed to the client by the caller; this runs Trellis
+    for the 3D step (no live voxel preview) and forwards coarse progress events.
+    """
+    from .generate_3d_model_from_image import generate_3d_model_from_image
+
+    main_loop = asyncio.get_running_loop()
+
+    def status_callback(status: str):
+        # Called from executor threads — hand the event back to the loop safely.
+        try:
+            event = _sse({
+                "type": "pipeline", "stage": "brick_conversion",
+                "message": f"Generating 3D model... ({status})",
+            })
+            main_loop.call_soon_threadsafe(queue.put_nowait, event)
+        except Exception:
+            pass
+
+    model_3d = "trellis-2" if (model_option or "a").lower() == "b" else "trellis"
+    source_image = processed_image_url or image_url
+
+    await queue.put(_sse({"type": "pipeline", "stage": "brick_conversion", "message": "Generating 3D model...", "progress": 0}))
+
+    (mesh_path, ldr_path, vox_path, xyzrgb_path, model_url,
+     _, _, problematic_xyzrgb_path, _) = await generate_3d_model_from_image(
+        image_input=source_image,
+        model=model_3d,
+        is_base64=False,
+        detail_level=detail_level,
+        apply_image_editing=False,
+        status_callback=status_callback,
+        model_option=model_option or "a",
+    )
+
+    await queue.put(_sse({"type": "pipeline", "stage": "brick_conversion", "message": "Brick conversion complete", "progress": 100}))
+
+    # Deduct credits after a successful 3D generation
+    await deduct_credits(
+        user_info=user_info,
+        auth_info=auth_info,
+        credits_to_deduct=credits_to_deduct,
+        operation_description="Trellis API call",
+    )
+
+    # Pack LDR -> MPD
+    await queue.put(_sse({"type": "pipeline", "stage": "brick_packing", "message": "Packing brick model...", "progress": 0}))
+    if not os.path.exists(ldr_path):
+        raise Exception("LDR file was not created successfully")
+    with open(ldr_path, "r") as f:
+        ldr_content = f.read()
+
+    loop = asyncio.get_running_loop()
+    packer = LDrawPacker()
+    mpd_path = await loop.run_in_executor(None, packer.pack_ldraw_model, ldr_path)
+    with open(mpd_path, "r") as f:
+        mpd_content = f.read()
+    await queue.put(_sse({"type": "pipeline", "stage": "brick_packing", "message": "Packing complete", "progress": 100}))
+
+    # Store files
+    await queue.put(_sse({"type": "pipeline", "stage": "storage", "message": "Storing files...", "progress": 0}))
+    await generation_storage.store_images(
+        generation_id=generation_id,
+        original_image_url=original_image_url,
+        processed_image_url=processed_image_url,
+    )
+    if model_url:
+        await generation_storage.store_model_file(
+            generation_id=generation_id,
+            file_content=b"",
+            file_type="glb",
+            external_url=model_url,
+            use_external_url=True,
+        )
+    await generation_storage.store_model_file(
+        generation_id=generation_id, file_content=ldr_content, file_type="ldr",
+    )
+    await generation_storage.store_parts_list_csv(
+        generation_id=generation_id, ldr_content=ldr_content,
+    )
+    await generation_storage.store_model_file(
+        generation_id=generation_id, file_content=mpd_content, file_type="mpd",
+    )
+    if vox_path and os.path.exists(vox_path):
+        with open(vox_path, "rb") as f:
+            await generation_storage.store_model_file(
+                generation_id=generation_id, file_content=f.read(), file_type="vox",
+            )
+    if xyzrgb_path and os.path.exists(xyzrgb_path):
+        with open(xyzrgb_path, "r") as f:
+            await generation_storage.store_model_file(
+                generation_id=generation_id, file_content=f.read(), file_type="xyzrgb",
+            )
+    if problematic_xyzrgb_path and os.path.exists(problematic_xyzrgb_path):
+        with open(problematic_xyzrgb_path, "r") as f:
+            await generation_storage.store_model_file(
+                generation_id=generation_id, file_content=f.read(), file_type="problematic_xyzrgb",
+            )
+    await queue.put(_sse({"type": "pipeline", "stage": "storage", "message": "Storage complete", "progress": 100}))
+
+    if prompt_enhancement:
+        await generation_storage.update_status(
+            generation_id, "processing", prompt_enhancement=prompt_enhancement,
+        )
+
+    await generation_storage.update_status(generation_id, "completed")
+    await queue.put(_sse({"type": "pipeline", "stage": "pipeline_complete", "generation_id": generation_id}))
+
+
 async def _pipeline_worker(
     queue: asyncio.Queue,
     image_url: str,
@@ -270,6 +394,7 @@ async def _pipeline_worker(
     model_option: Optional[str] = None,
     prompt_option: Optional[str] = None,
     edit_image: bool = False,
+    stream_3d: bool = True,
 ) -> None:
     """
     Background task that runs the full streaming pipeline.
@@ -366,6 +491,25 @@ async def _pipeline_worker(
         # Send the processed image URL before SAM3D streaming begins
         if processed_image_url:
             await queue.put(f"data: {json.dumps({'type': 'pipeline', 'stage': 'input_processed', 'image_url': processed_image_url})}\n\n")
+
+        # --- 3D generation: Trellis (non-streamed) when stream_3d is False ---
+        # Image frames have already streamed above; here we only choose how the
+        # 3D step runs. SAM3D streams live voxels, Trellis does not.
+        if not stream_3d:
+            await _run_trellis_3d_branch(
+                queue=queue,
+                generation_id=generation_id,
+                detail_level=detail_level,
+                user_info=user_info,
+                auth_info=auth_info,
+                credits_to_deduct=credits_to_deduct,
+                original_image_url=original_image_url,
+                processed_image_url=processed_image_url,
+                image_url=image_url,
+                prompt_enhancement=prompt_enhancement,
+                model_option=model_option,
+            )
+            return
 
         # --- Phase 1: Stream FAL data, parse voxel events inline ---
         # We parse SSE events into complete blocks and selectively
@@ -673,6 +817,7 @@ async def run_streaming_pipeline(
     model_option: Optional[str] = None,
     prompt_option: Optional[str] = None,
     edit_image: bool = False,
+    stream_3d: bool = True,
 ) -> AsyncGenerator[str, None]:
     """
     Top-level async generator for StreamingResponse.
@@ -710,6 +855,7 @@ async def run_streaming_pipeline(
             model_option=model_option,
             prompt_option=prompt_option,
             edit_image=edit_image,
+            stream_3d=stream_3d,
         )
     )
 
