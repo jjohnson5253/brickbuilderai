@@ -16,9 +16,8 @@ import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
 import { ProfileMenu } from "../components/ProfileMenu";
 
-// Toggle streaming generation. Set to false to use the non-streaming endpoints
-// (useful when the streaming backend, e.g. fal.ai sam3d-stream, is down).
-const USE_STREAMING = true;
+// Check if streaming is enabled via environment variable (defaults to false)
+const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING === 'true';
 
 // Toggle whether users must be logged in before starting a generation.
 const REQUIRE_LOGIN_FOR_GENERATION = false;
@@ -53,6 +52,12 @@ const STYLE_PRESETS: { label: string; value: StyleOption; promptOption: string }
   { label: "Videogame", value: "videogame", promptOption: "a" },
   { label: "Plush", value: "plush", promptOption: "b" },
   { label: "Block", value: "voxel", promptOption: "c" },
+];
+
+type GenerationType = "streaming" | "non-streaming";
+const GENERATION_TYPE_PRESETS: { label: string; value: GenerationType }[] = [
+  { label: "Streaming", value: "streaming" },
+  { label: "Non-Streaming", value: "non-streaming" },
 ];
 
 const NAV_LINKS = [
@@ -187,6 +192,9 @@ export default function LandingPage() {
   const [size, setSize] = useState<SizeValue>("big");
   const [modelQuality, setModelQuality] = useState<ModelQuality>("regular");
   const [styleOption, setStyleOption] = useState<StyleOption>("videogame");
+  const [generationType, setGenerationType] = useState<GenerationType>(
+    STREAMING_ENABLED_BY_DEFAULT ? "streaming" : "non-streaming"
+  );
   const [imgFile, setImgFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -387,6 +395,7 @@ export default function LandingPage() {
         size?: SizeValue;
         modelQuality?: ModelQuality;
         styleOption?: StyleOption;
+        generationType?: GenerationType;
         areOptionsHidden?: boolean;
         image?: { name: string; type: string; base64: string } | null;
       };
@@ -394,6 +403,7 @@ export default function LandingPage() {
       if (payload.size) setSize(payload.size);
       if (payload.modelQuality) setModelQuality(payload.modelQuality);
       if (payload.styleOption) setStyleOption(payload.styleOption);
+      if (payload.generationType) setGenerationType(payload.generationType);
       if (typeof payload.areOptionsHidden === 'boolean') setAreOptionsHidden(payload.areOptionsHidden);
       if (payload.image && payload.image.base64) {
         try {
@@ -513,6 +523,7 @@ export default function LandingPage() {
         size,
         modelQuality,
         styleOption,
+        generationType,
         areOptionsHidden,
         image: imageData,
       };
@@ -616,11 +627,14 @@ export default function LandingPage() {
         }
       };
 
+      // Determine if streaming is enabled based on user's selection
+      const useStreaming = generationType === 'streaming';
+      
       // Use image API if image is uploaded, otherwise use text API
       if (imgFile) {
-        console.log(`Generating from image${USE_STREAMING ? ' (streaming)' : ''}:`, imgFile.name);
+        console.log(`Generating from image${useStreaming ? ' (streaming)' : ''}:`, imgFile.name);
         const imageBase64 = await fileToBase64(imgFile);
-        postResponse = USE_STREAMING
+        postResponse = useStreaming
           ? await ImageToBricksApiService.generateBricksFromImageStream(
               imageBase64,
               getVoxelSize(size),
@@ -638,8 +652,8 @@ export default function LandingPage() {
             );
         modelName = imgFile.name.replace(/\.[^/.]+$/, ''); // Remove file extension
       } else {
-        console.log(`Generating from text prompt${USE_STREAMING ? ' (streaming)' : ''}:`, prompt.trim());
-        postResponse = USE_STREAMING
+        console.log(`Generating from text prompt${useStreaming ? ' (streaming)' : ''}:`, prompt.trim());
+        postResponse = useStreaming
           ? await TextToBricksApiService.generateBricksFromTextStream(
               prompt.trim(),
               getVoxelSize(size),
@@ -940,6 +954,30 @@ export default function LandingPage() {
                       disabled={loading}
                     >
                       {st.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 3D Generation Type chips - hidden during loading */}
+            {!loading && !areOptionsHidden && (
+              <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
+                <span className="text-sm text-slate-500">3D Generation:</span>
+                {GENERATION_TYPE_PRESETS.map((gt) => {
+                  const active = gt.value === generationType;
+                  return (
+                    <button
+                      key={gt.value}
+                      onClick={() => !loading && setGenerationType(gt.value)}
+                      className={`rounded-full px-4 py-1 text-sm transition-all duration-150 ${
+                        active
+                          ? "bg-[#f44336] text-white border border-transparent"
+                          : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
+                      } ${loading ? "cursor-not-allowed" : "cursor-pointer"}`}
+                      disabled={loading}
+                    >
+                      {gt.label}
                     </button>
                   );
                 })}

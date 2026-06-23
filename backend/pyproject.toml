@@ -32,6 +32,8 @@ dependencies = [
     "resend>=2.4.0",
     "email-validator>=2.0.0",
     "rembg>=2.0.50",
+    "pgserver>=0.1.4",
+    "psycopg[binary]>=3.1",
 ]
 
 [project.scripts]

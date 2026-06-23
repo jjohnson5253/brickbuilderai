@@ -6,7 +6,7 @@ os.environ["DISPLAY"] = ":99"
 os.environ["OPEN3D_HEADLESS"] = "1" 
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -65,6 +65,12 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://localhost:5173",  # Vite dev server
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",  # Vite dev server (fallback port)
+        "http://127.0.0.1:5174",
+        "http://localhost:4173",  # Vite preview
+        "http://127.0.0.1:4173",
         "https://brickai.frlabs.dev",  # Production Vercel domain
         "https://brickai-backend-production.up.railway.app",  # Railway production domain
         "https://brickai-backend-staging.up.railway.app",  # Railway staging domain
@@ -108,6 +114,28 @@ async def health_check():
     """Health check endpoint"""
     track_api_call(endpoint="/", user_id="anonymous")
     return {"message": "brickai API is running"}
+
+
+@app.get("/local-storage/{bucket}/{file_path:path}")
+async def serve_local_storage(bucket: str, file_path: str):
+    """Serve files stored by the local embedded storage fallback.
+
+    Only relevant when Supabase is not configured (LOCAL_DB_ENABLED). Returns
+    404 when local storage is not in use or the file does not exist.
+    """
+    from .utils import local_db
+
+    root = local_db.STORAGE_ROOT
+    if root is None:
+        raise HTTPException(status_code=404, detail="Local storage not enabled")
+
+    safe = os.path.normpath(file_path).lstrip("/")
+    target = (root / bucket / safe).resolve()
+    bucket_root = (root / bucket).resolve()
+    if not str(target).startswith(str(bucket_root)) or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(target)
 
 @app.post("/imageToBricks")
 async def imageToBricks_endpoint(

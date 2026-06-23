@@ -41,6 +41,8 @@ DEVELOPER_API_KEY = os.getenv("DEVELOPER_API_KEY")
 # Supabase-backed authentication.
 SUPABASE_ENABLED = bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and SUPABASE_JWT_SECRET)
 supabase_client: Optional[Client] = None
+# When True, storage is backed by a local embedded Postgres instead of Supabase.
+LOCAL_DB_ENABLED = False
 
 if SUPABASE_ENABLED:
     try:
@@ -51,10 +53,24 @@ if SUPABASE_ENABLED:
         supabase_client = None
         SUPABASE_ENABLED = False
 else:
-    logger.info(
-        "Supabase is not configured (SUPABASE_URL or keys missing). "
-        "Running in anonymous mode without Supabase authentication."
-    )
+    # No Supabase configured: fall back to a local embedded Postgres + file
+    # store so the app is fully functional without any external services.
+    try:
+        from .local_db import init_local_supabase
+
+        supabase_client = init_local_supabase()
+        LOCAL_DB_ENABLED = True
+        logger.info(
+            "Supabase is not configured. Using a local embedded Postgres + file "
+            "store for storage (anonymous mode, no authentication)."
+        )
+    except Exception as e:
+        logger.warning(
+            "Supabase is not configured and the local storage fallback failed to "
+            "start (%s). Running without persistent storage.",
+            e,
+        )
+        supabase_client = None
 
 class AuthError(Exception):
     """Custom exception for authentication errors"""
