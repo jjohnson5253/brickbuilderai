@@ -48,33 +48,11 @@ Upload a photo or type a prompt, and BrickBuilder turns it into a real brick bui
 ### Frontend
 
 ```bash
-cd frontend
-# create a .env file and populate it
-npm install
-npm run dev
-```
-
-### Backend
-
-```bash
-cd backend
-# create a .env file and populate it
-uv sync
-uv run local_run.py
+python install.py
+python run.py
 ```
 
 The API runs on `http://localhost:8002`. Generate a model from an image:
-
-```bash
-image_base64=$(base64 -i test-files/png/pikachu.png) &&
-curl -X POST http://localhost:8002/imageToBricks \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: <your DEVELOPER_API_KEY>" \
-  -d "{\"image_base64\": \"$image_base64\", \"detail_level\": 32}" \
-  -o pikachu_response.json
-```
-
-The response contains `.ldr` and `.mpd` content you can open in any LEGO CAD viewer. See [`backend/README.md`](backend/README.md) for the full endpoint reference.
 
 ## Deployment
 
