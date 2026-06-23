@@ -1,11 +1,13 @@
 <h1 align="center">BrickBuilder</h1>
 
 <p align="center">
-  <b>Turn any image or text prompt into a buildable LEGO®-compatible brick model.</b><br/>
+  <b>Use AI to design LEGO models.</b><br/> Turn any image or text prompt into a buildable LEGO®-compatible brick model.</b><br/>
   Get a 3D preview, step-by-step building instructions, downloadable LDR/MPD files, and a parts list you can order.
 </p>
 
-<img align="center" width="768" height="520" alt="github-readme-video (1)" src="https://github.com/user-attachments/assets/63added8-2404-45ce-a87c-df40c801ddf4" />
+<p align="center">
+  <img width="768" height="520" alt="github-readme-video (1)" src="https://github.com/user-attachments/assets/63added8-2404-45ce-a87c-df40c801ddf4" />
+</p>
 
 ## What it does
 
@@ -49,4 +51,4 @@ Voxelization with SAM3D works better than Trellis but you must host this docker 
 
 ## License
 
-Apache 2.0. LEGO® is a trademark of the LEGO Group, which does not sponsor or endorse this project.
+MIT. LEGO® is a trademark of the LEGO Group, which does not sponsor or endorse this project.
