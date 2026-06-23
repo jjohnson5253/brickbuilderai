@@ -22,7 +22,8 @@
 Upload a photo or type a prompt, and BrickBuilder turns it into a real brick build:
 
 1. **Image or text in** — start from any picture, or describe what you want.
-2. **3D reconstruction** — a SAM-3D model voxelizes the subject into a solid shape.
+2. **3D reconstruction** — a Trellis or SAM-3D model converts the subject into a solid shape.
+3. **Voxelization** - 3D model is voxelized if using Trellis, or gotten directly from SAM3D stream
 3. **Brick optimization** — an optimizer packs the voxels into real LEGO-compatible parts.
 4. **Build it** — explore the model in 3D, follow the instructions, download the LDR/MPD, or order the parts.
 
@@ -40,7 +41,7 @@ Upload a photo or type a prompt, and BrickBuilder turns it into a real brick bui
 | Folder | What it is | Stack |
 | --- | --- | --- |
 | `frontend/` | Web app: upload, 3D viewer, instructions, checkout | React, Vite, TypeScript, Three.js, Tailwind, Supabase, Stripe |
-| `backend/` | API that converts images/text into brick models | Python, FastAPI, Gurobi, Open3D, Trimesh, fal.ai |
+| `backend/` | API that converts images/text into brick models | fal.ai Python, FastAPI, Open3D, Trimesh |
 | `serverless/` | Image-to-3D voxel generation worker | SAM-3D, Docker, RunPod |
 
 ## Running locally
