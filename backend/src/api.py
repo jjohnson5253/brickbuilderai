@@ -93,11 +93,12 @@ if not FAL_KEY:
 os.environ["FAL_KEY"] = FAL_KEY
 
 # Validate authentication configuration at startup
-from .utils.auth import supabase_client
-if not supabase_client:
-    logger.error("CRITICAL: Authentication system not properly configured")
-    logger.error("Server startup blocked due to missing Supabase configuration")
-    raise ValueError("Authentication system not configured. Server cannot start securely.")
+from .utils.auth import supabase_client, SUPABASE_ENABLED
+if not SUPABASE_ENABLED:
+    logger.warning(
+        "Supabase is not configured. Running in anonymous mode without "
+        "authentication. Set SUPABASE_URL and keys to enable it."
+    )
 else:
     pass  # Authentication system validated
 

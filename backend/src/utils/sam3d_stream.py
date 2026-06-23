@@ -23,10 +23,20 @@ logger = logging.getLogger(__name__)
 
 FAL_API_BASE_URL = "https://fal.run"
 RUNPOD_API_BASE = os.environ.get("RUNPOD_API_BASE", "https://api.runpod.ai/v2")
-RUNPOD_API_KEY = os.environ["RUNPOD_API_KEY"]
-RUNPOD_ENDPOINT_ID = os.environ["RUNPOD_ENDPOINT_ID"]
+# RunPod is optional. It is only enabled when both the API key and endpoint id
+# are present. When disabled, SAM-3D streaming raises a clear error at call time
+# instead of preventing the app from importing/booting.
+RUNPOD_API_KEY = os.environ.get("RUNPOD_API_KEY")
+RUNPOD_ENDPOINT_ID = os.environ.get("RUNPOD_ENDPOINT_ID")
+RUNPOD_ENABLED = bool(RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID)
 RUNPOD_POLL_INTERVAL_S = float(os.environ.get("RUNPOD_POLL_INTERVAL_S", "0.5"))
 RUNPOD_TIMEOUT_S = float(os.environ.get("RUNPOD_TIMEOUT_S", "600"))
+
+if not RUNPOD_ENABLED:
+    logger.info(
+        "RunPod is not configured (RUNPOD_API_KEY or RUNPOD_ENDPOINT_ID missing). "
+        "SAM-3D streaming will be unavailable."
+    )
 
 async def stream_sam3d_raw(
     image_url: str,
@@ -40,6 +50,11 @@ async def stream_sam3d_raw(
     Submit a SAM-3D job to RunPod Serverless and yield SSE byte chunks
     (`data: {...}\\n\\n`) in the same format the old fal endpoint produced.
     """
+    if not RUNPOD_ENABLED:
+        raise RuntimeError(
+            "RunPod is not configured. Set RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID "
+            "to enable SAM-3D streaming."
+        )
     base = f"{RUNPOD_API_BASE}/{RUNPOD_ENDPOINT_ID}"
     headers = {"Authorization": f"Bearer {RUNPOD_API_KEY}"}
 
