@@ -615,6 +615,19 @@ export default function LandingPage() {
             if (pe.image_url) {
               setPreviewImageUrl(pe.image_url);
             }
+          } else if (pe.stage === 'brick_conversion') {
+            // Trellis (non-streamed) 3D step. Backend message looks like
+            // "Generating 3D model... (queued)". Normalize to a clean status
+            // keyword so the badge can show the right timing hint.
+            const match = pe.message?.match(/\(([^)]+)\)/);
+            const rawStatus = match?.[1]?.toLowerCase();
+            if (rawStatus === 'queued') {
+              setGenerationStatus('queued');
+            } else if (rawStatus === 'processing' || rawStatus === 'started' || rawStatus === 'in_progress') {
+              setGenerationStatus('processing');
+            } else {
+              setGenerationStatus('processing');
+            }
           } else if (pe.message) {
             setGenerationStatus(pe.message);
           } else {
@@ -1066,7 +1079,11 @@ export default function LandingPage() {
                   {/* Status badge — overlayed on top center */}
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1" style={{ zIndex: 10 }}>
                     <div className="text-xs text-slate-600 font-mono bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
-                      Status: {generationStatus || 'Starting'}
+                      Status: {generationStatus === 'queued'
+                        ? 'Queued'
+                        : (generationStatus === 'processing' || generationStatus === 'started')
+                          ? 'Generating 3D model'
+                          : (generationStatus || 'Starting')}
                     </div>
                     {generationStatus === 'queued' && (
                       <div className="text-xs text-slate-500 bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
@@ -1075,7 +1092,7 @@ export default function LandingPage() {
                     )}
                     {(generationStatus === 'processing' || generationStatus === 'started') && (
                       <div className="text-xs text-slate-500 bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
-                        This will take about 30 seconds
+                        This will take about 30-60 seconds
                       </div>
                     )}
                   </div>
