@@ -1,23 +1,11 @@
-
-
-<p align="center">
-  <img src="https://brickbuilder.ai/brickbuilder-logo.PNG" alt="BrickBuilder.AI" width="320" />
-</p>
-
-<img width="960" height="720" alt="github-readme-video (1)" src="https://github.com/user-attachments/assets/63added8-2404-45ce-a87c-df40c801ddf4" />
+<h1 align="center">BrickBuilder</h1>
 
 <p align="center">
   <b>Turn any image or text prompt into a buildable LEGO®-compatible brick model.</b><br/>
   Get a 3D preview, step-by-step building instructions, downloadable LDR/MPD files, and a parts list you can order.
 </p>
 
-<p align="center">
-  <a href="https://brickbuilder.ai">🌐 brickbuilder.ai</a>
-</p>
-
-<p align="center">
-  <img src="https://brickbuilder.ai/twitter-preview.png" alt="BrickBuilder.AI preview" width="720" />
-</p>
+<img align="center" width="768" height="520" alt="github-readme-video (1)" src="https://github.com/user-attachments/assets/63added8-2404-45ce-a87c-df40c801ddf4" />
 
 ## What it does
 
@@ -48,20 +36,11 @@ Upload a photo or type a prompt, and BrickBuilder turns it into a real brick bui
 
 ## Running locally
 
-### Frontend
-
 ```bash
 python install.py
 python run.py
 ```
-
-The API runs on `http://localhost:8002`. Generate a model from an image:
-
-## Deployment
-
-- **Frontend** → Vercel
-- **Backend** → Railway
-- **Serverless worker** → RunPod (Docker image)
+Voxelization with SAM3D works better than Trellis but you must host this docker image on runpod and provide RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID backend/.env
 
 ## Attributes
 - Voxelization: https://github.com/eisenwave/obj2voxel
