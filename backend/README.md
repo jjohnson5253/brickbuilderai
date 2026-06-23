@@ -1,4 +1,4 @@
-# image2brick Backend
+# BrickBuilder Backend
 
 ## Running locally
  - Create .env file and populate

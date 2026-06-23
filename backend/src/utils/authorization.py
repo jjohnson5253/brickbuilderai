@@ -34,3 +34,22 @@ async def get_owned_generation_or_403(generation_id: str, auth_info: dict) -> di
         )
 
     return row
+
+
+async def get_generation_or_404(generation_id: str, auth_info: dict) -> dict:
+    """Fetch a generation without enforcing ownership.
+
+    Allows reading any generation regardless of owner. Both authenticated
+    and anonymous callers are permitted, as long as they have a stable
+    user_id (anonymous callers are identified by their anonymous id). Used
+    by endpoints that derive a new generation (owned by the current user)
+    from an existing one.
+    """
+    if not auth_info.get("user_id"):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    row = await _get_generation_storage().get_generation(generation_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+    return row

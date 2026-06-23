@@ -1,10 +1,12 @@
 import React, { useState } from "react";
 import { SEO } from "../components/SEO";
 import { SiteFooter } from "../components/SiteFooter";
+import { ProfileMenu } from "../components/ProfileMenu";
 import { useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { ThreeLDRViewer } from "../components/ThreeLDRViewer";
 import type { ExportCaptureApi } from "../components/ThreeLDRViewer";
 import { VoxelViewer } from "../components/VoxelViewer";
+import LoginModal from "../components/LoginModal";
 import modelsMetadata from "../assets/demo-images/models-metadata.json";
 
 const DEMO_MODEL_IDS = new Set(
@@ -14,6 +16,7 @@ const DEMO_MODEL_IDS = new Set(
 // Mirrors the backend /updateUsername validation: 3-30 chars,
 // letters, numbers, underscores, hyphens, or periods.
 const USERNAME_PATTERN = /^[A-Za-z0-9_.-]{3,30}$/;
+type PendingExitAction = () => void | Promise<void>;
 import { GetPriceApiService, GetPriceResponse } from "../services/getPriceApi";
 import { ResizeScaler } from "../components/ResizeScaler";
 import { ResizeModelApiService } from "../services/resizeModelApi";
@@ -21,6 +24,8 @@ import { PromptEditModelApiService } from "../services/promptEditModelApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
+import { ClaimGenerationApiService } from "../services/claimGenerationApi";
+import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
@@ -34,22 +39,26 @@ import {
   Star,
   Loader2,
   Pencil,
-  User,
   Users,
-  ChevronDown,
   Github,
-  LogOut,
   ArrowLeft,
   Download,
   Image,
   FileText,
   Video,
+  BookOpen,
+  ShoppingCart,
+  X,
+  LayoutDashboard,
 } from "lucide-react";
 
-function Header() {
+interface HeaderProps {
+  onGuardedNavigate: (path: string) => void;
+}
+
+function Header({ onGuardedNavigate }: HeaderProps) {
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { user } = useAuth();
   const [githubStars, setGithubStars] = useState<number | null>(null);
 
   React.useEffect(() => {
@@ -88,7 +97,7 @@ function Header() {
       href="https://github.com/jjohnson5253/brickbuilderai"
       target="_blank"
       rel="noopener noreferrer"
-      aria-label="View BrickBuilder.AI on GitHub"
+      aria-label="View BrickBuilder on GitHub"
       className="inline-flex h-8 min-w-[4.5rem] items-center justify-center gap-1.5 rounded-full bg-slate-100 px-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 sm:h-9 sm:min-w-[5.25rem] sm:gap-2 sm:px-3 sm:text-sm"
     >
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white sm:h-6 sm:w-6">
@@ -103,15 +112,13 @@ function Header() {
       <a href="/" className="flex items-center gap-3">
         <img
           src="/logo.svg"
-          alt="BRICKBUILDER.AI"
+          alt="BrickBuilder"
           className="h-7 w-auto"
           onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
         />
         <span className="text-xl font-extrabold tracking-tight">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
-          <span className="text-slate-900">.</span>
-          <span className="text-[#ff4b4b]">AI</span>
         </span>
       </a>
 
@@ -119,7 +126,7 @@ function Header() {
       <div className="flex items-center gap-3">
         <button
           className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px"
-          onClick={() => navigate("/community")}
+          onClick={() => onGuardedNavigate("/community")}
         >
           <Users className="h-4 w-4" />
           Community
@@ -128,56 +135,17 @@ function Header() {
         {user ? (
           // Logged in: show account dropdown
           <>
-            {/* Account dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-9 border-none cursor-pointer transition-colors"
-              >
-                <div className="w-6 h-6 bg-[#f44336] rounded-full flex items-center justify-center">
-                  <User className="h-4 w-4 text-white" />
-                </div>
-                <ChevronDown className={`h-4 w-4 text-slate-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
+            {/* Dashboard button */}
+            <button
+              className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px"
+              onClick={() => onGuardedNavigate('/dashboard')}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
+            </button>
 
-              {dropdownOpen && (
-                <>
-                  {/* Backdrop to close dropdown */}
-                  <div 
-                    className="fixed inset-0" 
-                    style={{ zIndex: 40 }}
-                    onClick={() => setDropdownOpen(false)} 
-                  />
-                  {/* Dropdown menu */}
-                  <div 
-                    className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
-                    style={{ zIndex: 51 }}
-                  >
-                    <button
-                      onClick={() => {
-                        setDropdownOpen(false);
-                        navigate('/dashboard');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      Dashboard
-                    </button>
-                    <div className="border-t border-slate-100 my-1" />
-                    <button
-                      onClick={async () => {
-                        setDropdownOpen(false);
-                        await signOut();
-                        navigate('/');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Log out
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Account dropdown */}
+            <ProfileMenu onNavigate={onGuardedNavigate} />
           </>
         ) : (
           // Not logged in: show login/signup buttons
@@ -205,7 +173,7 @@ function Header() {
 
 type StatCardProps = {
   icon: React.ReactNode;
-  title: string;
+  title: React.ReactNode;
   sub: string;
 };
 
@@ -250,6 +218,8 @@ export default function GeneratedModel() {
   const [isResizing, setIsResizing] = React.useState(false);
   const [showResizeScaler, setShowResizeScaler] = React.useState(false);
   const [showPriceResize, setShowPriceResize] = React.useState(false);
+  // Resize prompt shown over the 3D viewer when entering the Block Editor.
+  const [showResizePrompt, setShowResizePrompt] = React.useState(false);
   const [isPromptEditing, setIsPromptEditing] = React.useState(false);
   const [editPrompt, setEditPrompt] = React.useState("");
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
@@ -262,8 +232,11 @@ export default function GeneratedModel() {
   const [showUnsavedChangesModal, setShowUnsavedChangesModal] = React.useState(false);
   // Action to perform after the user resolves the unsaved-changes modal
   // (Save or Discard). Defaults to simply exiting the editor.
-  const pendingExitActionRef = React.useRef<(() => void) | null>(null);
+  const pendingExitActionRef = React.useRef<PendingExitAction | null>(null);
   const voxelSaveRef = React.useRef<(() => Promise<void>) | null>(null);
+  // Captures a PNG preview straight from the voxel editor scene after a save,
+  // so the user can stay in the editor (no need to exit to the 3D viewer).
+  const voxelCapturePreviewRef = React.useRef<(() => string | null) | null>(null);
   const [xyzrgbContent, setXyzrgbContent] = React.useState<string | null>(null);
   const [xyzrgbUrl, setXyzrgbUrl] = React.useState<string | null>(null);
   const [problematicXyzrgbContent, setProblematicXyzrgbContent] = React.useState<string | null>(null);
@@ -290,6 +263,11 @@ export default function GeneratedModel() {
   const [generationOwnerId, setGenerationOwnerId] = React.useState<string | null>(null);
   const [communityToggleLoading, setCommunityToggleLoading] = React.useState<boolean>(false);
   const [communityToggleError, setCommunityToggleError] = React.useState<string | null>(null);
+  // Login modal shown when a logged-out user tries to post to community
+  const [showLoginModal, setShowLoginModal] = React.useState<boolean>(false);
+  // Set when a logged-out user clicks "Post to Community" so the posting flow
+  // can resume automatically once they finish logging in.
+  const [pendingCommunityPost, setPendingCommunityPost] = React.useState<boolean>(false);
   // Naming modal (shown when posting to community)
   const [showCommunityNameModal, setShowCommunityNameModal] = React.useState<boolean>(false);
   const [communityNameInput, setCommunityNameInput] = React.useState<string>("");
@@ -316,7 +294,10 @@ export default function GeneratedModel() {
   // pulsing after the user has discovered the feature (even if they later exit
   // edit mode).
   const [hasClickedEditModel, setHasClickedEditModel] = React.useState<boolean>(false);
+  const [hasExitedVoxelEditor, setHasExitedVoxelEditor] = React.useState<boolean>(false);
   const [previewPngDataUrl, setPreviewPngDataUrl] = React.useState<string | null>(null);
+  const previewUploadWaitersRef = React.useRef<Map<string, Array<{ resolve: () => void; reject: (error: unknown) => void }>>>(new Map());
+  const activeSavePreviewUploadRef = React.useRef<Promise<void> | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = React.useState(false);
   const [isExportingVideo, setIsExportingVideo] = React.useState(false);
   const exportCaptureApiRef = React.useRef<ExportCaptureApi | null>(null);
@@ -330,6 +311,10 @@ export default function GeneratedModel() {
   const canToggleCommunity = Boolean(
     currentUser?.id && generationOwnerId && currentUser.id === generationOwnerId
   );
+  // Show the community button to the owner, or to any logged-out visitor (who
+  // will be prompted to log in when they click it). Also keep it visible while
+  // a post is pending right after login so it doesn't flicker out mid-flow.
+  const canShowCommunityButton = canToggleCommunity || !currentUser || pendingCommunityPost;
   
   // Get model data from location state (passed from LandingPage) or localStorage
   const stateData = location.state as { 
@@ -745,6 +730,51 @@ export default function GeneratedModel() {
     setPreviewPngDataUrl(dataUrl);
   }, []);
 
+  const rejectPreviewUploadWaiters = React.useCallback((generationId: string, error: unknown) => {
+    const waiters = previewUploadWaitersRef.current.get(generationId);
+    if (!waiters) return;
+    previewUploadWaitersRef.current.delete(generationId);
+    waiters.forEach(({ reject }) => reject(error));
+  }, []);
+
+  const uploadPreviewImage = React.useCallback(async (
+    generationId: string,
+    imageDataUrl: string,
+    token: string,
+  ) => {
+    if (previewUploadedForRef.current.has(generationId)) return;
+
+    previewUploadedForRef.current.add(generationId);
+    try {
+      await UpdateImagePreviewApiService.updateImagePreview(
+        generationId,
+        imageDataUrl,
+        token,
+      );
+      const waiters = previewUploadWaitersRef.current.get(generationId);
+      if (waiters) {
+        previewUploadWaitersRef.current.delete(generationId);
+        waiters.forEach(({ resolve }) => resolve());
+      }
+      setNeedsPreviewUpload(false);
+    } catch (err) {
+      previewUploadedForRef.current.delete(generationId);
+      rejectPreviewUploadWaiters(generationId, err);
+      throw err;
+    }
+  }, [rejectPreviewUploadWaiters]);
+
+  const waitForPreviewUpload = React.useCallback((generationId: string) => new Promise<void>((resolve, reject) => {
+    if (previewUploadedForRef.current.has(generationId)) {
+      resolve();
+      return;
+    }
+
+    const waiters = previewUploadWaitersRef.current.get(generationId) ?? [];
+    waiters.push({ resolve, reject });
+    previewUploadWaitersRef.current.set(generationId, waiters);
+  }), []);
+
   // Upload the captured preview image once every required piece of async state
   // is ready. This effect re-runs whenever any dependency changes, so it
   // correctly handles the race where the 3D viewer fires onPreviewCaptured
@@ -758,23 +788,11 @@ export default function GeneratedModel() {
     if (!accessToken) return;
     if (previewUploadedForRef.current.has(currentGenerationId)) return;
 
-    // Mark as uploaded immediately so concurrent renders don't double-fire.
-    previewUploadedForRef.current.add(currentGenerationId);
-
-    UpdateImagePreviewApiService.updateImagePreview(
-      currentGenerationId,
-      previewPngDataUrl,
-      accessToken,
-    )
-      .then(() => {
-        setNeedsPreviewUpload(false);
-      })
+    uploadPreviewImage(currentGenerationId, previewPngDataUrl, accessToken)
       .catch((err) => {
-        // Allow retrying on next mount if the upload fails.
-        previewUploadedForRef.current.delete(currentGenerationId);
         console.warn('Failed to upload preview image:', err);
       });
-  }, [previewPngDataUrl, currentGenerationId, needsPreviewUpload, isGenerationOwner, accessToken]);
+  }, [previewPngDataUrl, currentGenerationId, needsPreviewUpload, isGenerationOwner, accessToken, uploadPreviewImage]);
 
   React.useEffect(() => {
     if (!exportMenuOpen) return;
@@ -794,12 +812,23 @@ export default function GeneratedModel() {
     // When posting (currently not in community), open the naming modal first.
     // The actual toggle happens after the user submits a name.
     if (!isCommunity) {
+      setCommunityToggleLoading(true);
       setCommunityNameError(null);
       setCommunityToggleError(null);
-      setCommunityNameInput("");
-      setIsEditingUsername(false);
-      setUsernameError(null);
-      setShowCommunityNameModal(true);
+      try {
+        await activeSavePreviewUploadRef.current;
+        setCommunityNameInput("");
+        setIsEditingUsername(false);
+        setUsernameError(null);
+        setShowCommunityNameModal(true);
+      } catch (error) {
+        console.error('Failed to upload preview before posting to community:', error);
+        setCommunityToggleError(
+          error instanceof Error ? error.message : 'Failed to upload preview image'
+        );
+      } finally {
+        setCommunityToggleLoading(false);
+      }
       return;
     }
 
@@ -826,6 +855,66 @@ export default function GeneratedModel() {
       );
     } finally {
       setCommunityToggleLoading(false);
+    }
+  };
+
+  // Re-fetch ownership/community flags for the current generation. Used after
+  // login so the "Post to Community" button reflects fresh ownership.
+  const refreshGenerationOwnership = async () => {
+    if (!currentGenerationId) return;
+    try {
+      const { data } = await supabase
+        .from('generations')
+        .select('is_community, user_id, preview_image_url')
+        .eq('id', currentGenerationId)
+        .maybeSingle();
+      const row = data as {
+        is_community?: boolean;
+        user_id?: string | null;
+        preview_image_url?: string | null;
+      } | null;
+      setIsCommunity(Boolean(row?.is_community));
+      setGenerationOwnerId(row?.user_id ?? null);
+      setNeedsPreviewUpload(!row?.preview_image_url);
+    } catch (e) {
+      console.warn('Failed to refresh generation ownership:', e);
+    }
+  };
+
+  // Called after a logged-out visitor finishes signing in via the login modal
+  // they opened from the "Post to Community" button. We refresh the session
+  // token, claim any anonymous generations created in this session (so the
+  // user owns this one), refresh ownership, then resume the posting flow.
+  const handleCommunityLoginSuccess = async () => {
+    setShowLoginModal(false);
+    const shouldResumePost = pendingCommunityPost;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token || undefined;
+      setAccessToken(token || null);
+
+      // Claim ownership of THIS generation deterministically by id, so the
+      // user owns it before we resume posting. This is reliable on
+      // mobile/production (no dependency on the anonymous IP hash). Any other
+      // generations this browser created while logged out are claimed centrally
+      // in AuthContext via the recorded anon-generation ids.
+      if (token && currentGenerationId) {
+        try {
+          await ClaimGenerationApiService.claimGeneration(currentGenerationId, token);
+        } catch (e) {
+          console.warn('Failed to claim generation after login:', e);
+        }
+      }
+
+      await refreshGenerationOwnership();
+
+      if (shouldResumePost) {
+        void handleToggleCommunity();
+      }
+    } catch (e) {
+      console.warn('Failed to finalize community login flow:', e);
+    } finally {
+      setPendingCommunityPost(false);
     }
   };
 
@@ -1001,6 +1090,8 @@ export default function GeneratedModel() {
       if (response.generation_id) {
         localStorage.setItem('lastGenerationId', response.generation_id);
         localStorage.setItem('GENERATION_ID', response.generation_id);
+        // If created while logged out, remember it so it can be claimed on login.
+        if (!currentUser) recordAnonymousGeneration(response.generation_id);
         setCurrentGenerationId(response.generation_id);
         
         const newUrl = new URL(window.location.href);
@@ -1117,6 +1208,11 @@ export default function GeneratedModel() {
         // Clear screenshots and re-trigger price fetch
         setScreenshots(null);
         setPriceRefreshCounter(c => c + 1);
+
+        // The model is now this size — update the baseline so the Resize
+        // button is disabled until the slider is moved again.
+        setDetailLevel(detailLevel);
+        setCurrentScaler(detailLevel);
         
         console.log(`Resize completed. New generation ID: ${response.generation_id}`);
       } catch (error) {
@@ -1192,6 +1288,8 @@ export default function GeneratedModel() {
       setLdrContent(completedGeneration.ldr_content);
       
       localStorage.setItem('lastGenerationId', completedGeneration.generation_id);
+      // If created while logged out, remember it so it can be claimed on login.
+      if (!currentUser) recordAnonymousGeneration(completedGeneration.generation_id);
       setCurrentGenerationId(completedGeneration.generation_id);
       
       // Get MPD content from URL or convert LDR to MPD
@@ -1250,7 +1348,7 @@ export default function GeneratedModel() {
 
   // Guard an action (e.g. in-app navigation) behind the unsaved-changes modal.
   // If the voxel editor has unsaved changes, prompt the user; otherwise run immediately.
-  const guardUnsavedChanges = (action: () => void) => {
+  const guardUnsavedChanges = (action: PendingExitAction) => {
     if (showVoxelEditor && voxelHasChanges) {
       pendingExitActionRef.current = action;
       setShowUnsavedChangesModal(true);
@@ -1259,28 +1357,16 @@ export default function GeneratedModel() {
     action();
   };
 
-  const handleEditModelClick = async () => {
-    // Stop the attention pulse permanently once the user has discovered the
-    // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
-    setHasClickedEditModel(true);
+  const exitVoxelEditor = React.useCallback(() => {
+    setShowVoxelEditor(false);
+    setShowResizeScaler(false);
+    setXyzrgbError(null);
+    setHasExitedVoxelEditor(true);
+  }, []);
 
-    // If already in edit mode, check for unsaved changes before exiting
-    if (showVoxelEditor) {
-      if (voxelHasChanges) {
-        pendingExitActionRef.current = () => {
-          setShowVoxelEditor(false);
-          setShowResizeScaler(false);
-          setXyzrgbError(null);
-        };
-        setShowUnsavedChangesModal(true);
-        return;
-      }
-      setShowVoxelEditor(false);
-      setShowResizeScaler(false);
-      setXyzrgbError(null);
-      return;
-    }
-
+  // Fetch the voxel data and switch into the Block Editor. Extracted so it can
+  // be invoked either directly or after the user dismisses the resize prompt.
+  const enterVoxelEditor = async () => {
     // Enter edit mode - fetch xyzrgb content
     if (!xyzrgbUrl) {
       setXyzrgbError('No voxel data available for this model');
@@ -1322,6 +1408,34 @@ export default function GeneratedModel() {
     } finally {
       setXyzrgbLoading(false);
     }
+  };
+
+  const handleEditModelClick = async () => {
+    // Stop the attention pulse permanently once the user has discovered the
+    // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
+    setHasClickedEditModel(true);
+
+    // If already in edit mode, check for unsaved changes before exiting
+    if (showVoxelEditor) {
+      if (voxelHasChanges) {
+        pendingExitActionRef.current = () => {
+          exitVoxelEditor();
+        };
+        setShowUnsavedChangesModal(true);
+        return;
+      }
+      exitVoxelEditor();
+      return;
+    }
+
+    // Before entering the editor, offer the user a chance to resize first.
+    // Skip the prompt for demo models (which can't be resized).
+    if (!isDemoModel && xyzrgbUrl) {
+      setShowResizePrompt(true);
+      return;
+    }
+
+    await enterVoxelEditor();
   };
 
   const angles = [
@@ -1389,6 +1503,63 @@ export default function GeneratedModel() {
     }, [downloadBlob, getSafeExportName, isExportingVideo]);
 
 
+  // Summer sale: 50% off everything (parts + shipping). The price returned by
+  // the API already includes shipping, so we simply halve the total.
+  const saleDiscountedPrice = priceData ? priceData.total_price * 0.5 : 0;
+
+  // Shared resize-prompt card. Rendered both as a desktop overlay inside the
+  // 3D viewer and as a mobile block below the preview.
+  const resizePromptCard = (
+    <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
+      <button
+        type="button"
+        aria-label="Close resize prompt"
+        onClick={() => setShowResizePrompt(false)}
+        disabled={isResizing || isSavePolling}
+        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <X size={16} />
+      </button>
+      <p className="mb-3 px-6 text-center text-sm text-slate-700">
+        Before editing, want to resize your model?
+        {priceData && (
+          <>
+            {' '}Currently it uses{' '}
+            <span className="font-semibold text-slate-900">{priceData.total_parts} pieces</span>
+            {' '}and will cost{' '}
+            <span className="font-semibold text-slate-900">
+              <span className="text-slate-400 line-through font-normal">${priceData.total_price.toFixed(2)}</span>
+              {' '}${saleDiscountedPrice.toFixed(2)} {priceData.currency}
+            </span>.
+          </>
+        )}
+      </p>
+      <ResizeScaler
+        onResize={handleResizeModel}
+        disabled={!mpdContent}
+        isResizing={isResizing}
+        scaler={currentScaler}
+        onScalerChange={setCurrentScaler}
+        baselineScaler={detailLevel ?? undefined}
+        hideHeader
+        rightAction={(
+          <button
+            type="button"
+            onClick={() => {
+              setShowResizePrompt(false);
+              void enterVoxelEditor();
+            }}
+            disabled={isResizing || isSavePolling}
+            className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Go to Editor
+          </button>
+        )}
+      />
+    </div>
+  );
+
+
   return (
     <div className="min-h-screen text-slate-900" style={{ backgroundColor: "#ffffff" }}>
       <SEO
@@ -1397,8 +1568,17 @@ export default function GeneratedModel() {
         url="https://brickbuilder.ai/generated-model"
       />
 
+      <LoginModal
+        open={showLoginModal}
+        onClose={() => {
+          setShowLoginModal(false);
+          setPendingCommunityPost(false);
+        }}
+        onSuccess={() => { void handleCommunityLoginSuccess(); }}
+      />
+
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 sm:px-6 md:px-8 lg:px-10 pb-16 pt-3">
-        <Header />
+        <Header onGuardedNavigate={(path) => guardUnsavedChanges(() => navigate(path))} />
         
         {/* Generate Another Button */}
         <button
@@ -1451,11 +1631,11 @@ export default function GeneratedModel() {
         {!showVoxelEditor && (
           <section className="relative mt-2 mb-2 md:mb-3 landing-fade-in landing-delay-2">
             <h2 className="text-lg sm:text-xl lg:text-2xl font-semibold text-center break-words px-4">
-              Successfully Generated Model
+              Successfully Generated Model 🎉
             </h2>
             {currentGenerationId && (
               <p className="text-xs text-slate-400 text-center mt-1">
-                id: {currentGenerationId}
+                {/* id: {currentGenerationId} */}
               </p>
             )}
             {/* <p className="text-sm text-slate-500 text-center italic mt-3 px-4">
@@ -1468,13 +1648,13 @@ export default function GeneratedModel() {
 {showVoxelEditor && xyzrgbContent ? (
   <section className="mt-6 md:mt-8 lg:mt-10">
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-[#f44336]">Edit Mode</h2>
-        <p className="text-sm text-slate-500">Select blocks to change color or add/remove</p>
-      </div>
       {/* Voxel editor */}
-      <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm" style={{ height: '700px' }}>
-        <VoxelViewer 
+      <figure className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+        <div
+          className="relative h-[700px] w-full overflow-hidden rounded-xl bg-slate-50 md:h-auto md:max-h-[50vh]"
+          style={{ aspectRatio: '3 / 2' }}
+        >
+          <VoxelViewer 
             xyzrgbContent={xyzrgbContent}
             problematicXyzrgbContent={problematicXyzrgbContent || undefined}
             generationId={currentGenerationId || undefined}
@@ -1483,6 +1663,7 @@ export default function GeneratedModel() {
             isProcessingSave={isSavePolling}
             onHasChangesChange={setVoxelHasChanges}
             saveRef={voxelSaveRef}
+            capturePreviewRef={voxelCapturePreviewRef}
             showResizeScaler={!isDemoModel && showResizeScaler && !!mpdContent}
             onResize={handleResizeModel}
             isResizing={isResizing}
@@ -1493,6 +1674,8 @@ export default function GeneratedModel() {
             localStorage.setItem('lastGenerationId', response.generation_id);
             if (response.generation_id) {
               localStorage.setItem('GENERATION_ID', response.generation_id);
+              // If created while logged out, remember it so it can be claimed on login.
+              if (!currentUser) recordAnonymousGeneration(response.generation_id);
             }
             
             // Update the displayed generation ID and URL immediately
@@ -1560,6 +1743,16 @@ export default function GeneratedModel() {
               }
               
               if (newMpdContent) {
+                previewUploadedForRef.current.delete(response.generation_id);
+                setNeedsPreviewUpload(true);
+                activeSavePreviewUploadRef.current = waitForPreviewUpload(response.generation_id).finally(() => {
+                  activeSavePreviewUploadRef.current = null;
+                });
+                // Grab a fresh preview straight from the voxel editor scene so
+                // the user can stay in the editor — no need to exit to the 3D
+                // viewer just to capture one. The upload effect picks this up.
+                const voxelPreview = voxelCapturePreviewRef.current?.() ?? null;
+                setPreviewPngDataUrl(voxelPreview);
                 setMpdContent(newMpdContent);
                 localStorage.setItem('MPD_CONTENT', newMpdContent);
                 localStorage.setItem('lastMpdContent', newMpdContent);
@@ -1607,7 +1800,7 @@ export default function GeneratedModel() {
               
               // Clear screenshots to regenerate with new model
               setScreenshots(null);
-              
+
               // Re-trigger price fetch now that the generation is complete
               setPriceRefreshCounter(c => c + 1);
               
@@ -1628,8 +1821,9 @@ export default function GeneratedModel() {
               }
             }
           }}
-        />
-      </div>
+          />
+        </div>
+      </figure>
     </div>
   </section>
 ) : (
@@ -1734,7 +1928,7 @@ export default function GeneratedModel() {
               </div>
             ) : mpdContent ? (
               <ThreeLDRViewer
-                key={mpdContent.length}
+                key={`${currentGenerationId ?? 'model'}-${mpdContent.length}`}
                 modelContent={mpdContent}
                 modelName={modelName}
                 onPreviewCaptured={handlePreviewCaptured}
@@ -1749,12 +1943,20 @@ export default function GeneratedModel() {
           </div>
         </div>
         <figcaption className="mt-1 text-xs text-slate-500 text-center">
-          Click/touch and drag to rotate, scroll/pinch to zoom
+          {/* Click/touch and drag to rotate, scroll/pinch to zoom */}
         </figcaption>
       </figure>
     </div>
   </section>
 )}
+
+        {/* Resize prompt — appears below the preview and replaces the
+            action buttons / tip text while it is open. */}
+        {showResizePrompt && !showVoxelEditor && (
+          <div className="mt-4 flex justify-center">
+            {resizePromptCard}
+          </div>
+        )}
 
         {/* Sections below the 3D preview fade in once the scene is ready */}
         <div
@@ -1775,11 +1977,11 @@ export default function GeneratedModel() {
         )}
 
         {/* Centered dual buttons: Edit Model + Order My Kit */}
-        <section className="mt-4 mb-4 flex flex-col items-center gap-3 px-4">
+        <section className={`mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden' : 'flex'}`}>
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
-              Not what you were expecting? Try coloring and shaping using the Block Editor!
+              Not what you were expecting? Press "Edit" to color and shape your model!
             </p>
           )}
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
@@ -1789,11 +1991,15 @@ export default function GeneratedModel() {
                 aria-label="Edit model"
                 onClick={handleEditModelClick}
                 disabled={xyzrgbLoading}
-                className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 transition-all duration-150 ${
-                  xyzrgbLoading 
-                    ? 'cursor-not-allowed opacity-70' 
-                    : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
-                } ${!xyzrgbLoading && !hasClickedEditModel ? 'attention-pulse' : ''}`}
+                className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold border-2 transition-all duration-150 ${
+                  showVoxelEditor
+                    ? 'border-[#f44336] bg-[#f44336] text-white shadow-lg shadow-[#f44336]/25 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2'
+                    : xyzrgbLoading
+                      ? 'bg-white text-black border-gray-300 cursor-not-allowed opacity-70'
+                      : !hasClickedEditModel
+                        ? 'bg-[#f44336] text-white border-[#f44336] shadow-lg shadow-[#f44336]/25 cursor-pointer hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
+                        : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
+                }`}
             >
                 {xyzrgbLoading ? (
                   <>
@@ -1802,8 +2008,8 @@ export default function GeneratedModel() {
                   </>
                 ) : (
                   <>
-                    {/* <Pencil size={16} /> */}
-                    {showVoxelEditor ? 'Exit Block Editor' : 'Edit Model'}
+                    <Pencil size={16} />
+                    {showVoxelEditor ? 'Exit Block Editor' : 'Edit'}
                   </>
                 )}
             </button>
@@ -1822,11 +2028,14 @@ export default function GeneratedModel() {
                     Processing...
                   </>
                 ) : (
-                  'View Instructions'
+                  <>
+                    <BookOpen size={16} />
+                    View Instructions
+                  </>
                 )}
             </button>
 
-            {/* Order My Kit button — red with hover lighten */}
+            {/* Order My Kit button — white with grey border, turns red on hover */}
             <button
             type="button"
             aria-label="Order my kit"
@@ -1840,34 +2049,45 @@ export default function GeneratedModel() {
                 priceData: priceData
               }
             }))}
-            className={`inline-flex items-center justify-center h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 text-white font-semibold transition-all duration-150 shadow-lg ${
+            className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 transition-all duration-150 ${
               priceLoading || isSavePolling
-                ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-[#f44336] cursor-pointer shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:scale-[1.03]'
+                ? 'cursor-not-allowed opacity-70' 
+                : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
             }`}
           >
             {priceLoading || isSavePolling ? (
               <>
-                <div className="w-4 h-4 border-2 border-gray-300 border-t-black rounded-full animate-spin mr-2"></div>
+                <div className="w-4 h-4 border-2 border-gray-300 border-t-black rounded-full animate-spin"></div>
                 Order my Kit!
               </>
             ) : (
-              'Order my Kit!'
+              <>
+                <ShoppingCart size={16} />
+                Order These Bricks!
+              </>
             )}
           </button>
 
-          {/* Post / Remove from Community button — only the owner can toggle */}
-          {canToggleCommunity && (
+          {/* Post / Remove from Community button — owners can toggle; logged-out
+              visitors see it too and are prompted to log in on click */}
+          {canShowCommunityButton && (
           <button
             type="button"
             aria-label={isCommunity ? 'Remove from community' : 'Post to community'}
             disabled={!currentGenerationId || communityToggleLoading || isSavePolling}
-            onClick={handleToggleCommunity}
+            onClick={() => {
+              if (!currentUser) {
+                setPendingCommunityPost(true);
+                setShowLoginModal(true);
+                return;
+              }
+              guardUnsavedChanges(() => { void handleToggleCommunity(); });
+            }}
             className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold transition-all duration-150 border-2 ${
               !currentGenerationId || communityToggleLoading || isSavePolling
                 ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
-                : isCommunity
-                  ? 'bg-white text-[#f44336] border-[#f44336] cursor-pointer hover:bg-[#f44336] hover:text-white hover:scale-[1.03] hover:shadow-lg'
+                : (!isCommunity && hasExitedVoxelEditor && !showVoxelEditor)
+                  ? 'bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
                   : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
             }`}
           >
@@ -1906,6 +2126,19 @@ export default function GeneratedModel() {
           </p>
         </section>
 
+        {/* Resize panel — shown above the stats badges when "Try resizing!" is pressed */}
+        {showPriceResize && priceData && !priceLoading && !isSavePolling && !isDemoModel && (
+          <section className="mt-6 max-w-xs mx-auto">
+            <ResizeScaler
+              onResize={handleResizeModel}
+              disabled={!mpdContent}
+              isResizing={isResizing}
+              scaler={currentScaler}
+              onScalerChange={setCurrentScaler}
+            />
+          </section>
+        )}
+
         {/* Stats grid with hover animation */}
         <section className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
           <div className="flex flex-col">
@@ -1921,7 +2154,12 @@ export default function GeneratedModel() {
                   : priceError 
                     ? "Price Unavailable"
                     : priceData 
-                      ? `$${priceData.total_price} ${priceData.currency}`
+                      ? (
+                        <span className="flex items-baseline gap-2">
+                          <span className="text-slate-400 line-through">${priceData.total_price.toFixed(2)}</span>
+                          <span>${saleDiscountedPrice.toFixed(2)} {priceData.currency}</span>
+                        </span>
+                      )
                       : ""
               }
               sub={
@@ -1947,17 +2185,6 @@ export default function GeneratedModel() {
                     Try resizing!
                   </button>
                 </p>
-                {showPriceResize && (
-                  <div className="mt-3 max-w-xs mx-auto">
-                    <ResizeScaler
-                      onResize={handleResizeModel}
-                      disabled={!mpdContent}
-                      isResizing={isResizing}
-                      scaler={currentScaler}
-                      onScalerChange={setCurrentScaler}
-                    />
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -2017,8 +2244,8 @@ export default function GeneratedModel() {
       {/* Unsaved changes confirmation modal */}
       {showUnsavedChangesModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+          className="fixed inset-0 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)', zIndex: 3000 }}
           onClick={() => {
             pendingExitActionRef.current = null;
             setShowUnsavedChangesModal(false);
@@ -2043,15 +2270,13 @@ export default function GeneratedModel() {
                 Cancel
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   setShowUnsavedChangesModal(false);
-                  setShowVoxelEditor(false);
-                  setShowResizeScaler(false);
-                  setXyzrgbError(null);
+                  exitVoxelEditor();
                   setVoxelHasChanges(false);
                   const action = pendingExitActionRef.current;
                   pendingExitActionRef.current = null;
-                  if (action) action();
+                  if (action) await action();
                 }}
                 className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors cursor-pointer"
               >
@@ -2063,13 +2288,11 @@ export default function GeneratedModel() {
                   if (voxelSaveRef.current) {
                     await voxelSaveRef.current();
                   }
-                  setShowVoxelEditor(false);
-                  setShowResizeScaler(false);
-                  setXyzrgbError(null);
+                  exitVoxelEditor();
                   setVoxelHasChanges(false);
                   const action = pendingExitActionRef.current;
                   pendingExitActionRef.current = null;
-                  if (action) action();
+                  if (action) await action();
                 }}
                 className="px-4 py-2 text-sm font-medium text-white bg-[#10B981] rounded-lg hover:bg-[#059669] transition-colors cursor-pointer"
               >

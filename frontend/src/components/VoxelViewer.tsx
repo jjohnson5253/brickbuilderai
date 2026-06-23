@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Link } from 'react-router-dom';
 import { MousePointer2, Move, Save, Pipette, Brush, Plus, Trash2, Undo2, Redo2, BoxSelect, ChevronDown, Box, Minus, ChevronLeft, ChevronRight, HelpCircle, X, AlertTriangle } from 'lucide-react';
 import { UpdateModelApiService, UpdateModelResponse } from '../services/updateModelApi';
@@ -35,9 +36,12 @@ interface VoxelViewerProps {
   isProcessingSave?: boolean;
   onVoxelSelect?: (voxels: Voxel[] | null, indices: number[] | null) => void;
   onVoxelsChange?: (newContent: string) => void;
-  onSaveSuccess?: (response: UpdateModelResponse) => void;
+  onSaveSuccess?: (response: UpdateModelResponse) => void | Promise<void>;
   onHasChangesChange?: (hasChanges: boolean) => void;
   saveRef?: React.MutableRefObject<(() => Promise<void>) | null>;
+  // Exposes a function that renders the current voxel scene to a clean PNG
+  // data URL, so the parent can capture a preview without leaving the editor.
+  capturePreviewRef?: React.MutableRefObject<(() => string | null) | null>;
   // Resize scaler props
   showResizeScaler?: boolean;
   onResize?: (detailLevel: number) => Promise<void>;
@@ -75,6 +79,101 @@ const LEGO_HEIGHT = 1.2;  // Height ratio (9.6mm / 8mm)
 const STUD_DIAMETER = 0.6; // Stud diameter ratio (4.8mm / 8mm)
 const STUD_HEIGHT = 0.22;  // Stud height ratio (1.8mm / 8mm)
 const STUD_SEGMENTS = 16;  // Number of segments for the cylinder
+const LDRAW_PLASTIC_MATERIAL: THREE.MeshStandardMaterialParameters = {
+  roughness: 0.3,
+  metalness: 0,
+};
+
+const disposeInstancedMesh = (mesh: THREE.InstancedMesh) => {
+  mesh.geometry.dispose();
+  const material = mesh.material;
+  if (Array.isArray(material)) {
+    material.forEach((mat) => mat.dispose());
+  } else {
+    material.dispose();
+  }
+  mesh.dispose();
+};
+
+const setVoxelColorFromRgb = (color: THREE.Color, r: number, g: number, b: number) => {
+  color.setRGB(r / 255, g / 255, b / 255);
+  return color.convertSRGBToLinear();
+};
+
+const buildVoxelDisplayRoom = (
+  scene: THREE.Scene,
+  bbox: THREE.Box3,
+  center: THREE.Vector3,
+  maxDim: number,
+) => {
+  const existing = scene.getObjectByName('display-room');
+  if (existing) scene.remove(existing);
+
+  const room = new THREE.Group();
+  room.name = 'display-room';
+
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0xc8b99a, roughness: 0.85, metalness: 0.0 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0xf0ebe1, roughness: 0.95, metalness: 0.0 });
+  const tableMat = new THREE.MeshStandardMaterial({ color: 0x8b5e3c, roughness: 0.7, metalness: 0.05 });
+  const legMat = new THREE.MeshStandardMaterial({ color: 0x6b4226, roughness: 0.75, metalness: 0.05 });
+
+  const roomW = maxDim * 6;
+  const roomH = maxDim * 4;
+  const roomD = maxDim * 6;
+  const tableThick = maxDim * 0.05;
+  const tableTopSurface = bbox.min.y;
+  const tableTopY = tableTopSurface - tableThick / 2;
+  const floorY = tableTopY - tableThick / 2 - maxDim * 0.6;
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(roomW, roomD), floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.set(center.x, floorY, center.z);
+  floor.receiveShadow = true;
+  room.add(floor);
+
+  const backWall = new THREE.Mesh(new THREE.PlaneGeometry(roomW, roomH), wallMat);
+  backWall.position.set(center.x, floorY + roomH / 2, center.z - roomD / 2);
+  backWall.receiveShadow = true;
+  room.add(backWall);
+
+  const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(roomD, roomH), wallMat);
+  leftWall.rotation.y = Math.PI / 2;
+  leftWall.position.set(center.x - roomW / 2, floorY + roomH / 2, center.z);
+  leftWall.receiveShadow = true;
+  room.add(leftWall);
+
+  const tableGroup = new THREE.Group();
+  tableGroup.name = 'display-table';
+  // Used by the animation loop to hide the table once the camera drops below
+  // the table's top surface, keeping the model's underside visible.
+  tableGroup.userData.hideBelowY = tableTopSurface;
+
+  const tabletop = new THREE.Mesh(new THREE.BoxGeometry(roomW, tableThick, roomD), tableMat);
+  tabletop.position.set(center.x, tableTopY, center.z);
+  tabletop.castShadow = true;
+  tabletop.receiveShadow = true;
+  tableGroup.add(tabletop);
+
+  const legH = tableTopY - tableThick / 2 - floorY;
+  const legR = maxDim * 0.025;
+  const legGeo = new THREE.CylinderGeometry(legR, legR, legH, 8);
+  const legPositions = [
+    [center.x - roomW / 2 + legR * 3, floorY + legH / 2, center.z - roomD / 2 + legR * 3],
+    [center.x + roomW / 2 - legR * 3, floorY + legH / 2, center.z - roomD / 2 + legR * 3],
+    [center.x - roomW / 2 + legR * 3, floorY + legH / 2, center.z + roomD / 2 - legR * 3],
+    [center.x + roomW / 2 - legR * 3, floorY + legH / 2, center.z + roomD / 2 - legR * 3],
+  ];
+
+  for (const [x, y, z] of legPositions) {
+    const leg = new THREE.Mesh(legGeo, legMat);
+    leg.position.set(x, y, z);
+    leg.castShadow = true;
+    tableGroup.add(leg);
+  }
+
+  room.add(tableGroup);
+  scene.add(room);
+};
 
 // Create a LEGO brick geometry with a stud on top
 // The brick height is along Z axis, stud points +Z (so after group rotation it points up)
@@ -185,7 +284,7 @@ function mergeBufferGeometries(geometries: THREE.BufferGeometry[]): THREE.Buffer
   return merged;
 }
 
-export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className = '', generationId, accessToken, referenceImageUrl, isProcessingSave, onVoxelSelect, onVoxelsChange, onSaveSuccess, onHasChangesChange, saveRef, showResizeScaler, onResize, isResizing, resizeScaler, onResizeScalerChange }: VoxelViewerProps) {
+export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className = '', generationId, accessToken, referenceImageUrl, isProcessingSave, onVoxelSelect, onVoxelsChange, onSaveSuccess, onHasChangesChange, saveRef, capturePreviewRef, showResizeScaler, onResize, isResizing, resizeScaler, onResizeScalerChange }: VoxelViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -232,14 +331,20 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // Expose save function to parent via ref
+  // Expose save + preview-capture functions to parent via refs
   useEffect(() => {
     if (saveRef) {
       saveRef.current = handleSave;
     }
+    if (capturePreviewRef) {
+      capturePreviewRef.current = capturePreview;
+    }
     return () => {
       if (saveRef) {
         saveRef.current = null;
+      }
+      if (capturePreviewRef) {
+        capturePreviewRef.current = null;
       }
     };
   });
@@ -618,7 +723,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     // Remove old instanced mesh
     if (instancedMeshRef.current) {
       voxelGroup.remove(instancedMeshRef.current);
-      instancedMeshRef.current.dispose();
+      disposeInstancedMesh(instancedMeshRef.current);
       instancedMeshRef.current = null;
     }
 
@@ -634,8 +739,10 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
 
     const voxelSize = 1;
     const geometry = createLegoBrickGeometry(voxelSize);
-    const material = new THREE.MeshBasicMaterial();
+    const material = new THREE.MeshStandardMaterial(LDRAW_PLASTIC_MATERIAL);
     const instancedMesh = new THREE.InstancedMesh(geometry, material, voxels.length);
+    instancedMesh.castShadow = true;
+    instancedMesh.receiveShadow = true;
 
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();
@@ -654,7 +761,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       dummy.position.set(voxel.x, voxel.y, voxel.z * LEGO_HEIGHT);
       dummy.updateMatrix();
       instancedMesh.setMatrixAt(i, dummy.matrix);
-      instancedMesh.setColorAt(i, color.setRGB(voxel.r / 255, voxel.g / 255, voxel.b / 255));
+      instancedMesh.setColorAt(i, setVoxelColorFromRgb(color, voxel.r, voxel.g, voxel.b));
 
       const edgeColorHex = getEdgeColor(voxel.r, voxel.g, voxel.b);
       const ec = new THREE.Color(edgeColorHex);
@@ -675,7 +782,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     const mergedEdgeGeo = new THREE.BufferGeometry();
     mergedEdgeGeo.setAttribute('position', new THREE.BufferAttribute(allEdgePositions, 3));
     mergedEdgeGeo.setAttribute('color', new THREE.BufferAttribute(allEdgeColors, 3));
-    const mergedEdgeMat = new THREE.LineBasicMaterial({ vertexColors: true, opacity: 0.8, transparent: true });
+    const mergedEdgeMat = new THREE.LineBasicMaterial({ vertexColors: true, opacity: 0.2, transparent: true });
     const mergedEdges = new THREE.LineSegments(mergedEdgeGeo, mergedEdgeMat);
 
     voxelGroup.add(instancedMesh);
@@ -694,7 +801,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     const instancedMesh = instancedMeshRef.current;
     if (!instancedMesh) return;
 
-    const color = new THREE.Color(r / 255, g / 255, b / 255);
+    const color = setVoxelColorFromRgb(new THREE.Color(), r, g, b);
     instancedMesh.setColorAt(voxelIndex, color);
     if (instancedMesh.instanceColor) instancedMesh.instanceColor.needsUpdate = true;
 
@@ -895,6 +1002,37 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     }
   };
 
+  // Render the current voxel scene to a clean PNG data URL. Selection and
+  // problematic highlights are hidden so they don't appear in the preview.
+  const capturePreview = (): string | null => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !scene || !camera) return null;
+
+    const hidden: THREE.Object3D[] = [];
+    const hide = (obj: THREE.Object3D | null | undefined) => {
+      if (obj && obj.visible) {
+        obj.visible = false;
+        hidden.push(obj);
+      }
+    };
+    highlightMeshesRef.current.forEach(hide);
+    problematicHighlightsRef.current.forEach(hide);
+
+    try {
+      renderer.render(scene, camera);
+      return renderer.domElement.toDataURL('image/png');
+    } catch (err) {
+      console.warn('Failed to capture voxel preview:', err);
+      return null;
+    } finally {
+      hidden.forEach((obj) => {
+        obj.visible = true;
+      });
+    }
+  };
+
   // Save changes to backend
   const handleSave = async () => {
     if (!generationId) {
@@ -920,7 +1058,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         setHasChanges(false);
         advanceTutorialRef.current('save');
         if (onSaveSuccess) {
-          onSaveSuccess(response);
+          await onSaveSuccess(response);
         }
       } else {
         setSaveError('No generation ID returned from save');
@@ -968,21 +1106,27 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
 
     // Create scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xdeebed);
+    scene.background = new THREE.Color(0xf5f0e8);
     sceneRef.current = scene;
 
     // Create camera
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
     cameraRef.current = camera;
 
-    // Create renderer with accurate color output
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Create renderer with accurate color output. preserveDrawingBuffer lets
+    // us read the canvas via toDataURL() for preview capture after a save.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.toneMapping = THREE.NoToneMapping;
-    renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.85;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
+
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmremGenerator.fromScene(new RoomEnvironment()).texture;
 
     // Create controls
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -1001,21 +1145,25 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     };
     controlsRef.current = controls;
 
-    // Add lighting - balanced for accurate color reproduction
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
-    scene.add(ambientLight);
+    const keyLight = new THREE.DirectionalLight(0xfff5e6, 0.8);
+    keyLight.position.set(200, 400, 200);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.width = 1024;
+    keyLight.shadow.mapSize.height = 1024;
+    keyLight.shadow.camera.near = 1;
+    keyLight.shadow.camera.far = 2000;
+    keyLight.shadow.camera.left = -500;
+    keyLight.shadow.camera.right = 500;
+    keyLight.shadow.camera.top = 500;
+    keyLight.shadow.camera.bottom = -500;
+    scene.add(keyLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(10, 20, 10);
-    scene.add(directionalLight);
+    const fillLight = new THREE.DirectionalLight(0xe8f0ff, 0.3);
+    fillLight.position.set(-150, 200, -100);
+    scene.add(fillLight);
 
-    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.6);
-    directionalLight2.position.set(-10, -10, -10);
-    scene.add(directionalLight2);
-
-    const directionalLight3 = new THREE.DirectionalLight(0xffffff, 0.6);
-    directionalLight3.position.set(0, -20, 10);
-    scene.add(directionalLight3);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.15);
+    scene.add(ambient);
 
     // Parse voxels
     const voxels = parseXyzrgb(xyzrgbContent);
@@ -1040,6 +1188,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
+      buildVoxelDisplayRoom(scene, box, center, maxDim);
       
       camera.position.set(
         center.x + maxDim * 1.5,
@@ -1597,6 +1746,18 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
       controls.update();
+
+      // Hide the table when the camera rotates below the table's top surface so
+      // the model's underside stays visible (mirrors the LDraw 3D viewer).
+      const displayTable = scene.getObjectByName('display-table');
+      if (displayTable) {
+        const hideBelowY = typeof displayTable.userData.hideBelowY === 'number'
+          ? displayTable.userData.hideBelowY
+          : controls.target.y;
+        const isUnderModel = camera.position.y < hideBelowY - 1;
+        displayTable.visible = !isUnderModel;
+      }
+
       renderer.render(scene, camera);
     };
     animate();
@@ -1623,7 +1784,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       
       // Clean up instanced mesh
       if (instancedMeshRef.current) {
-        instancedMeshRef.current.dispose();
+        disposeInstancedMesh(instancedMeshRef.current);
         instancedMeshRef.current = null;
       }
       
@@ -1649,6 +1810,8 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       if (controlsRef.current) {
         controlsRef.current.dispose();
       }
+
+      pmremGenerator.dispose();
     };
   }, [xyzrgbContent, onVoxelSelect]);
 
@@ -2813,7 +2976,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       >
         <span style={{
           fontSize: '12px',
-          color: '#6B7280',
+          color: '#D1D5DB',
           fontWeight: 500,
           textAlign: 'center',
           userSelect: 'none'
@@ -3216,7 +3379,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         
         <span style={{
           fontSize: '12px',
-          color: '#6B7280',
+          color: '#D1D5DB',
           fontWeight: 500,
           textAlign: 'center',
           userSelect: 'none'

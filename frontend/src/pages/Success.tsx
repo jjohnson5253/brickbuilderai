@@ -35,14 +35,14 @@ export default function Success() {
 
   return (
     <div className="min-h-screen bg-[#fbfbfd]">
-      <SEO title="Order Confirmed — BRICKBUILDER.AI" description="Your brick kit order has been placed successfully." url="https://brickbuilder.ai/success" noIndex />
+      <SEO title="Order Confirmed — BrickBuilder" description="Your brick kit order has been placed successfully." url="https://brickbuilder.ai/success" noIndex />
       {/* Header with logo */}
       <header className="border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto max-w-6xl px-4 sm:px-6 py-4">
           <Link to="/" className="flex items-center gap-3">
             <img
               src="/logo.svg"
-              alt="BRICKBUILDER.AI"
+              alt="BrickBuilder"
               className="h-7 w-auto"
               onError={(e) => {
                 const el = e.currentTarget as HTMLImageElement;
@@ -52,8 +52,6 @@ export default function Success() {
             <span className="text-xl font-extrabold tracking-tight">
               <span className="text-[#f44336]">BRICK</span>
               <span className="text-slate-900">BUILDER</span>
-              <span className="text-slate-900">.</span>
-              <span className="text-[#f44336]">AI</span>
             </span>
           </Link>
         </div>

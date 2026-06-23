@@ -1,17 +1,16 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  User,
-  ChevronDown,
   ChevronLeft,
   Coins,
-  LogOut,
   Users,
   Loader2,
   Sparkles,
+  LayoutDashboard,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { SEO } from "../components/SEO";
+import { ProfileMenu } from "../components/ProfileMenu";
 import {
   GetCommunityGenerationsApiService,
   CommunityGeneration,
@@ -20,8 +19,7 @@ import { SiteFooter } from "../components/SiteFooter";
 
 function CommunityHeader() {
   const navigate = useNavigate();
-  const { user, userProfile, signOut } = useAuth();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { user, userProfile } = useAuth();
 
   return (
     <header className="flex items-center justify-between w-full relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
@@ -29,15 +27,13 @@ function CommunityHeader() {
         <ChevronLeft className="h-5 w-5 text-slate-500 group-hover:text-[#f44336] group-hover:-translate-x-0.5 transition-all" />
         <img
           src="/logo.svg"
-          alt="BRICKBUILDER.AI"
+          alt="BrickBuilder"
           className="h-7 w-auto"
           onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
         />
         <span className="text-xl font-extrabold tracking-tight">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
-          <span className="text-slate-900">.</span>
-          <span className="text-[#ff4b4b]">AI</span>
         </span>
       </a>
 
@@ -51,52 +47,16 @@ function CommunityHeader() {
               </span>
             </div>
 
-            <div className="relative">
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-9 border-none cursor-pointer transition-colors"
-              >
-                <div className="w-6 h-6 bg-[#f44336] rounded-full flex items-center justify-center">
-                  <User className="h-4 w-4 text-white" />
-                </div>
-                <ChevronDown className={`h-4 w-4 text-slate-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
+            <button
+              className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px"
+              onClick={() => navigate('/dashboard')}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
+            </button>
 
-              {dropdownOpen && (
-                <>
-                  <div
-                    className="fixed inset-0"
-                    style={{ zIndex: 40 }}
-                    onClick={() => setDropdownOpen(false)}
-                  />
-                  <div
-                    className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
-                    style={{ zIndex: 51 }}
-                  >
-                    <button
-                      onClick={() => {
-                        setDropdownOpen(false);
-                        navigate('/dashboard');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      Dashboard
-                    </button>
-                    <div className="border-t border-slate-100 my-1" />
-                    <button
-                      onClick={async () => {
-                        setDropdownOpen(false);
-                        await signOut();
-                        navigate('/');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Log out
-                    </button>
-                  </div>
-                </>
-              )}
+            <div className="relative">
+              <ProfileMenu />
             </div>
           </>
         ) : (
@@ -243,8 +203,8 @@ export default function CommunityPage() {
   return (
     <>
       <SEO
-        title="Community Models — BRICKBUILDER.AI"
-        description="Explore LEGO models shared by the BRICKBUILDER.AI community."
+        title="Community Models — BrickBuilder"
+        description="Explore LEGO models shared by the BrickBuilder community."
       />
       <div className="min-h-screen bg-slate-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">

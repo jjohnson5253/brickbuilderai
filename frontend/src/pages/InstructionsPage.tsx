@@ -9,31 +9,29 @@ import { parseLDrawColors, getColorNameWithFallback, type LDrawColor } from '../
 import { LdrToMpdApiService } from '../services/ldrToMpdApi';
 import { GetGenerationApiService } from '../services/getGenerationApi';
 import { useAuth } from '../contexts/AuthContext';
-import { Loader2, Upload, User, ChevronDown, Coins, LogOut, X, Palette, ArrowLeft } from 'lucide-react';
+import { Loader2, Upload, Coins, X, Palette, ArrowLeft, LayoutDashboard } from 'lucide-react';
 import jsPDF from 'jspdf';
 import posthog from 'posthog-js';
 import { SEO } from '../components/SEO';
 import { SiteFooter } from '../components/SiteFooter';
+import { ProfileMenu } from '../components/ProfileMenu';
 
 function Header() {
   const navigate = useNavigate();
-  const { user, userProfile, signOut } = useAuth();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { user, userProfile } = useAuth();
 
   return (
     <header className="flex items-center justify-between w-full relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
       <a href="/" className="flex items-center gap-3">
         <img
           src="/logo.svg"
-          alt="BRICKBUILDER.AI"
+          alt="BrickBuilder"
           className="h-7 w-auto"
           onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
         />
         <span className="text-xl font-extrabold tracking-tight">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
-          <span className="text-slate-900">.</span>
-          <span className="text-[#ff4b4b]">AI</span>
         </span>
       </a>
 
@@ -50,56 +48,17 @@ function Header() {
               </span>
             </div>
 
-            {/* Account dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 rounded-full px-3 h-9 border-none cursor-pointer transition-colors"
-              >
-                <div className="w-6 h-6 bg-[#f44336] rounded-full flex items-center justify-center">
-                  <User className="h-4 w-4 text-white" />
-                </div>
-                <ChevronDown className={`h-4 w-4 text-slate-600 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
+            {/* Dashboard button */}
+            <button
+              className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px"
+              onClick={() => navigate('/dashboard')}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
+            </button>
 
-              {dropdownOpen && (
-                <>
-                  {/* Backdrop to close dropdown */}
-                  <div 
-                    className="fixed inset-0" 
-                    style={{ zIndex: 40 }}
-                    onClick={() => setDropdownOpen(false)} 
-                  />
-                  {/* Dropdown menu */}
-                  <div 
-                    className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
-                    style={{ zIndex: 51 }}
-                  >
-                    <button
-                      onClick={() => {
-                        setDropdownOpen(false);
-                        navigate('/dashboard');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      Dashboard
-                    </button>
-                    <div className="border-t border-slate-100 my-1" />
-                    <button
-                      onClick={async () => {
-                        setDropdownOpen(false);
-                        await signOut();
-                        navigate('/');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Log out
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Account dropdown */}
+            <ProfileMenu />
           </>
         ) : (
           // Not logged in: show login/signup buttons
@@ -126,7 +85,7 @@ function Header() {
 }
 
 // API Configuration for partToMpd (used in PDF generation)
-const API_MODE = import.meta.env.VITE_API_MODE || 'railway';
+const API_MODE = import.meta.env.VITE_API_MODE || 'local';
 const LOCAL_API_URL = import.meta.env.VITE_LOCAL_API_URL || 'http://127.0.0.1:8002';
 const RAILWAY_API_URL = import.meta.env.VITE_RAILWAY_API_URL || 'https://brickai-backend-production.up.railway.app';
 const RAILWAY_API_URL_STAGING = import.meta.env.VITE_RAILWAY_API_URL_STAGING || 'https://brickai-backend-staging.up.railway.app';
@@ -1216,7 +1175,7 @@ export function InstructionsPage() {
 
   return (
     <>
-    <SEO title="Building Instructions — BRICKBUILDER.AI" description="Step-by-step building instructions for your brick model." url="https://brickbuilder.ai/instructions" />
+    <SEO title="Building Instructions — BrickBuilder" description="Step-by-step building instructions for your brick model." url="https://brickbuilder.ai/instructions" />
     <div className="min-h-screen text-slate-900" style={{ backgroundColor: "#ffffff" }}>
       <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 sm:px-6 md:px-8 lg:px-10 pb-16 pt-6">
         <Header />

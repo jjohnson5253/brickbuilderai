@@ -13,11 +13,11 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 # Import auth functions and utilities
-from ..utils.auth import require_paid_auth, handle_auth_and_tracking, deduct_credits
+from ..utils.auth import get_user_with_optional_auth, handle_auth_and_tracking, deduct_credits
 from ..utils.posthog_client import track_api_call, track_error
 from ..utils.pack_ldraw_model import LDrawPacker
 from ..utils.generation_storage import generation_storage
-from ..utils.authorization import get_owned_generation_or_403
+from ..utils.authorization import get_generation_or_404
 from ..utils.conversions.glb2brick import glb2brick, glb2xyzrgb
 from ..utils.sam3d_stream import decode_sam3d_voxels_to_xyzrgb
 from ..utils.conversions.voxel_utils import downsample_xyzrgb
@@ -239,7 +239,7 @@ async def process_resize_model_task(
 
 async def resize_model(
     request: ResizeModelRequest,
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ) -> ResizeModelResponse:
     """
     Resize an existing model by changing its detail level.
@@ -283,7 +283,7 @@ async def resize_model(
 
         # Step 1: Fetch the original generation record
         logger.info(f"Fetching generation record: {request.generation_id}")
-        generation = await get_owned_generation_or_403(request.generation_id, auth_info)
+        generation = await get_generation_or_404(request.generation_id, auth_info)
 
         # Check if we have SAM3D voxel data or a GLB file
         sam3d_voxel_data_url = generation.get('sam3d_voxel_data_url')

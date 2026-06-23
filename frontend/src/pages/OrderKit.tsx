@@ -121,18 +121,24 @@ export default function OrderKit() {
   const BOM = getPartsList();
   
   // Use actual price data if available, otherwise return null (error state)
-  const getActualPricing = (): { partSubtotalCents: number; shippingCents: number; totalCents: number } | null => {
+  const getActualPricing = (): { partSubtotalCents: number; shippingCents: number; totalCents: number; fullPartSubtotalCents: number; fullShippingCents: number; fullTotalCents: number } | null => {
     if (state?.priceData && state.priceData.total_weight !== undefined && state.priceData.total_weight !== null) {
-      // total_price is now a number from the new getPrice endpoint
-      const priceInCents = Math.round(state.priceData.total_price * 100);
       // Shipping formula: (weight * $18) + $4.00
       // conservative estimate found from https://www.webrick.com/shipping-fee
       const weightKg = state.priceData.total_weight;
-      const shippingCents = Math.round((weightKg * 18 * 100) + 400);
+      const fullShippingCents = Math.round((weightKg * 18 * 100) + 400);
+      // total_price already includes shipping, so back it out to get the parts
+      // subtotal. Summer sale: 50% off everything (parts + shipping, 6/22-7/22).
+      const fullPartsCents = Math.max(Math.round(state.priceData.total_price * 100) - fullShippingCents, 0);
+      const partSubtotalCents = Math.round(fullPartsCents * 0.5);
+      const shippingCents = Math.round(fullShippingCents * 0.5);
       return {
-        partSubtotalCents: priceInCents,
+        partSubtotalCents,
         shippingCents,
-        totalCents: priceInCents + shippingCents
+        totalCents: partSubtotalCents + shippingCents,
+        fullPartSubtotalCents: fullPartsCents,
+        fullShippingCents,
+        fullTotalCents: fullPartsCents + fullShippingCents
       };
     }
     
@@ -145,6 +151,9 @@ export default function OrderKit() {
   const partSubtotalCents = pricing?.partSubtotalCents ?? 0;
   const shippingCents = pricing?.shippingCents ?? 0;
   const totalCents = pricing?.totalCents ?? 0;
+  const fullPartSubtotalCents = pricing?.fullPartSubtotalCents ?? 0;
+  const fullShippingCents = pricing?.fullShippingCents ?? 0;
+  const fullTotalCents = pricing?.fullTotalCents ?? 0;
 
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -250,22 +259,20 @@ export default function OrderKit() {
 
   return (
     <div className="min-h-screen bg-white">
-      <SEO title="Order Kit — BRICKBUILDER.AI" description="Review and order your custom brick kit." url="https://brickbuilder.ai/order" />
+      <SEO title="Order Kit — BrickBuilder" description="Review and order your custom brick kit." url="https://brickbuilder.ai/order" />
       {/* Top nav with logo */}
       <header className="w-full border-b border-slate-200 landing-fade-in landing-delay-1">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 sm:px-6 md:px-8 lg:px-10 py-4">
           <a href="/" className="flex items-center gap-3">
             <img
               src="/logo.svg"
-              alt="BRICKBUILDER.AI"
+              alt="BrickBuilder"
               className="h-7 w-auto"
               onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
             />
             <span className="text-xl font-extrabold tracking-tight">
               <span className="text-[#ff4b4b]">BRICK</span>
               <span className="text-slate-900">BUILDER</span>
-              <span className="text-slate-900">.</span>
-              <span className="text-[#ff4b4b]">AI</span>
             </span>
           </a>
         </div>
@@ -401,18 +408,29 @@ export default function OrderKit() {
                 <div className="space-y-2 text-sm">
                     <div className="flex items-center justify-between">
                         <span>Parts Subtotal</span>
-                        <span>{formatUSD(partSubtotalCents)}</span>
+                        <span className="flex items-baseline gap-2">
+                          <span className="text-slate-400 line-through">{formatUSD(fullPartSubtotalCents)}</span>
+                          <span>{formatUSD(partSubtotalCents)}</span>
+                        </span>
                     </div>
                     <div className="flex items-center justify-between">
                         <span>Shipping</span>
-                        <span className={pricingError ? "text-red-500 font-medium" : ""}>
-                          {pricingError ? "Error calculating shipping" : formatUSD(shippingCents)}
+                        <span className={pricingError ? "text-red-500 font-medium" : "flex items-baseline gap-2"}>
+                          {pricingError ? "Error calculating shipping" : (
+                            <>
+                              <span className="text-slate-400 line-through">{formatUSD(fullShippingCents)}</span>
+                              <span>{formatUSD(shippingCents)}</span>
+                            </>
+                          )}
                         </span>
                     </div>
                     <div className="h-px bg-slate-200 my-2" />
                     <div className="flex items-center justify-between text-base font-bold">
                         <span>Total</span>
-                        <span>{formatUSD(totalCents)}</span>
+                        <span className="flex items-baseline gap-2">
+                          <span className="text-slate-400 line-through font-normal">{formatUSD(fullTotalCents)}</span>
+                          <span>{formatUSD(totalCents)}</span>
+                        </span>
                     </div>
                 </div>
                 {/* Checkout button */}

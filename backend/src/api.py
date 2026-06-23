@@ -6,7 +6,7 @@ os.environ["DISPLAY"] = ":99"
 os.environ["OPEN3D_HEADLESS"] = "1" 
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -31,6 +31,7 @@ from .requests.updateModel import update_model, UpdateModelRequest, UpdateModelR
 from .requests.updateLdrAndPartsList import update_ldr_and_parts_list, UpdateLdrAndPartsListRequest, UpdateLdrAndPartsListResponse
 from .requests.sendWaitlistEmail import send_waitlist_email, SendWaitlistEmailRequest, SendWaitlistEmailResponse
 from .requests.toggleIsCommunity import toggle_is_community, ToggleIsCommunityRequest, ToggleIsCommunityResponse
+from .requests.claimGeneration import claim_generation, ClaimGenerationRequest, ClaimGenerationResponse
 from .requests.updateGenerationName import update_generation_name, UpdateGenerationNameRequest, UpdateGenerationNameResponse
 from .requests.updateImagePreview import update_image_preview, UpdateImagePreviewRequest, UpdateImagePreviewResponse
 from .requests.updateUsername import update_username, UpdateUsernameRequest, UpdateUsernameResponse
@@ -64,6 +65,12 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://localhost:5173",  # Vite dev server
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",  # Vite dev server (fallback port)
+        "http://127.0.0.1:5174",
+        "http://localhost:4173",  # Vite preview
+        "http://127.0.0.1:4173",
         "https://brickai.frlabs.dev",  # Production Vercel domain
         "https://brickai-backend-production.up.railway.app",  # Railway production domain
         "https://brickai-backend-staging.up.railway.app",  # Railway staging domain
@@ -76,7 +83,8 @@ app.add_middleware(
         "https://brickai-new-ui.vercel.app",  # New UI domain
         "https://brickbuilder.ai",
         "https://brickai-frontend.vercel.app",  # New UI domain
-        "https://brickbuilderai-staging.vercel.app"
+        "https://brickbuilderai-staging.vercel.app",
+        "https://trybrickbuilder.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -91,11 +99,12 @@ if not FAL_KEY:
 os.environ["FAL_KEY"] = FAL_KEY
 
 # Validate authentication configuration at startup
-from .utils.auth import supabase_client
-if not supabase_client:
-    logger.error("CRITICAL: Authentication system not properly configured")
-    logger.error("Server startup blocked due to missing Supabase configuration")
-    raise ValueError("Authentication system not configured. Server cannot start securely.")
+from .utils.auth import supabase_client, SUPABASE_ENABLED
+if not SUPABASE_ENABLED:
+    logger.warning(
+        "Supabase is not configured. Running in anonymous mode without "
+        "authentication. Set SUPABASE_URL and keys to enable it."
+    )
 else:
     pass  # Authentication system validated
 
@@ -106,10 +115,32 @@ async def health_check():
     track_api_call(endpoint="/", user_id="anonymous")
     return {"message": "brickai API is running"}
 
+
+@app.get("/local-storage/{bucket}/{file_path:path}")
+async def serve_local_storage(bucket: str, file_path: str):
+    """Serve files stored by the local embedded storage fallback.
+
+    Only relevant when Supabase is not configured (LOCAL_DB_ENABLED). Returns
+    404 when local storage is not in use or the file does not exist.
+    """
+    from .utils import local_db
+
+    root = local_db.STORAGE_ROOT
+    if root is None:
+        raise HTTPException(status_code=404, detail="Local storage not enabled")
+
+    safe = os.path.normpath(file_path).lstrip("/")
+    target = (root / bucket / safe).resolve()
+    bucket_root = (root / bucket).resolve()
+    if not str(target).startswith(str(bucket_root)) or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(target)
+
 @app.post("/imageToBricks")
 async def imageToBricks_endpoint(
     request: ImageToBricksRequest = ImageToBricksRequest(),
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ):
     """
     Start image to brick conversion.
@@ -124,7 +155,7 @@ async def imageToBricks_endpoint(
 @app.post("/textToBricks")
 async def textToBricks_endpoint(
     request: TextToBricksRequest,
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ):
     """
     Start text to brick conversion.
@@ -184,7 +215,7 @@ async def get_price_endpoint(
 @app.post("/resizeModel", response_model=ResizeModelResponse)
 async def resize_model_endpoint(
     request: ResizeModelRequest,
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth)
 ) -> ResizeModelResponse:
     """Resize an existing model by changing its voxel size"""
     return await resize_model(request, auth_info)
@@ -344,6 +375,21 @@ async def toggle_is_community_endpoint(
     as false, so the first toggle will set it to true.
     """
     return await toggle_is_community(request, auth_info)
+
+
+@app.post("/claimGeneration", response_model=ClaimGenerationResponse)
+async def claim_generation_endpoint(
+    request: ClaimGenerationRequest,
+    auth_info: dict = Depends(get_user_with_optional_auth)
+) -> ClaimGenerationResponse:
+    """Claim ownership of an anonymous generation for the authenticated user.
+
+    Used after a logged-out visitor signs in to take ownership of a generation
+    they created while anonymous (identified by generation_id), without relying
+    on a fragile IP-hash match. Already-owned generations are a no-op; rows
+    owned by a different authenticated user return 403.
+    """
+    return await claim_generation(request, auth_info)
 
 
 @app.post("/updateGenerationName", response_model=UpdateGenerationNameResponse)

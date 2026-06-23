@@ -1,6 +1,6 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
-import { Sparkles, Image as ImageIcon, User, Users, ChevronDown, LogOut, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github } from "lucide-react";
+import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard } from "lucide-react";
 import { SEO } from "../components/SEO";
 import FallingBricks from "../components/FallingBricks";
 import LoginModal from "../components/LoginModal";
@@ -8,18 +8,20 @@ import { useNavigate } from "react-router-dom";
 import { TextToBricksApiService } from "../services/textToBricksApi";
 import { ImageToBricksApiService, StreamEvent, VoxelDataEvent, PipelineEvent } from "../services/imageToBricksApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
+import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import StreamingMeshViewer from "../components/StreamingMeshViewer";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { useAuth } from "../contexts/AuthContext";
 import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
+import { ProfileMenu } from "../components/ProfileMenu";
 
-// Toggle streaming generation. Set to false to use the non-streaming endpoints
-// (useful when the streaming backend, e.g. fal.ai sam3d-stream, is down).
-const USE_STREAMING = true;
+// Check if 3D streaming (SAM3D) is enabled by default via environment variable
+// Note: Image generation always uses flux-2 streaming regardless of this setting
+const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING !== 'false';
 
 // Toggle whether users must be logged in before starting a generation.
-const REQUIRE_LOGIN_FOR_GENERATION = true;
+const REQUIRE_LOGIN_FOR_GENERATION = false;
 
 // LocalStorage keys for persisting generated models
 const STORAGE_KEYS = {
@@ -51,6 +53,12 @@ const STYLE_PRESETS: { label: string; value: StyleOption; promptOption: string }
   { label: "Videogame", value: "videogame", promptOption: "a" },
   { label: "Plush", value: "plush", promptOption: "b" },
   { label: "Block", value: "voxel", promptOption: "c" },
+];
+
+type GenerationType = "streaming" | "non-streaming";
+const GENERATION_TYPE_PRESETS: { label: string; value: GenerationType; description?: string }[] = [
+  { label: "Streaming", value: "streaming", description: "SAM3D with live 3D preview" },
+  { label: "Standard", value: "non-streaming", description: "Trellis (faster, no preview)" },
 ];
 
 const NAV_LINKS = [
@@ -185,6 +193,9 @@ export default function LandingPage() {
   const [size, setSize] = useState<SizeValue>("big");
   const [modelQuality, setModelQuality] = useState<ModelQuality>("regular");
   const [styleOption, setStyleOption] = useState<StyleOption>("videogame");
+  const [generationType, setGenerationType] = useState<GenerationType>(
+    STREAMING_ENABLED_BY_DEFAULT ? "streaming" : "non-streaming"
+  );
   const [imgFile, setImgFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -262,6 +273,7 @@ export default function LandingPage() {
                 const fullResponse = await GetGenerationApiService.getGeneration(recentlyPromptedId);
                 
                 // Navigate to generated model page since this completed from loading state
+                if (!session) recordAnonymousGeneration(fullResponse.generation_id);
                 navigate(`/generated-model?id=${fullResponse.generation_id}`);
               } catch (error) {
                 console.error('Generation failed during resume:', error);
@@ -299,6 +311,7 @@ export default function LandingPage() {
         const processingGens = await GetUserGenerationsApiService.getUserGenerations(
           session?.access_token || undefined, // undefined for anonymous users
           1, // Only need the most recent one
+          0, // offset
           true // Only get processing generations
         );
         
@@ -338,6 +351,7 @@ export default function LandingPage() {
             const fullResponse = await GetGenerationApiService.getGeneration(lastGenerationId);
             
             // Navigate to generated model page
+            if (!session) recordAnonymousGeneration(fullResponse.generation_id);
             navigate(`/generated-model?id=${fullResponse.generation_id}`);
           } catch (error) {
             console.error('Generation failed during resume:', error);
@@ -383,6 +397,7 @@ export default function LandingPage() {
         size?: SizeValue;
         modelQuality?: ModelQuality;
         styleOption?: StyleOption;
+        generationType?: GenerationType;
         areOptionsHidden?: boolean;
         image?: { name: string; type: string; base64: string } | null;
       };
@@ -390,6 +405,7 @@ export default function LandingPage() {
       if (payload.size) setSize(payload.size);
       if (payload.modelQuality) setModelQuality(payload.modelQuality);
       if (payload.styleOption) setStyleOption(payload.styleOption);
+      if (payload.generationType) setGenerationType(payload.generationType);
       if (typeof payload.areOptionsHidden === 'boolean') setAreOptionsHidden(payload.areOptionsHidden);
       if (payload.image && payload.image.base64) {
         try {
@@ -509,6 +525,7 @@ export default function LandingPage() {
         size,
         modelQuality,
         styleOption,
+        generationType,
         areOptionsHidden,
         image: imageData,
       };
@@ -594,9 +611,22 @@ export default function LandingPage() {
               setPreviewImageUrl(pe.image_url);
             }
           } else if (pe.stage === 'input_processed') {
-            setGenerationStatus(pe.message || 'Generation booting up... (3-45 seconds)');
+            setGenerationStatus(pe.message || 'Server booting up... (3-45 seconds)');
             if (pe.image_url) {
               setPreviewImageUrl(pe.image_url);
+            }
+          } else if (pe.stage === 'brick_conversion') {
+            // Trellis (non-streamed) 3D step. Backend message looks like
+            // "Generating 3D model... (queued)". Normalize to a clean status
+            // keyword so the badge can show the right timing hint.
+            const match = pe.message?.match(/\(([^)]+)\)/);
+            const rawStatus = match?.[1]?.toLowerCase();
+            if (rawStatus === 'queued') {
+              setGenerationStatus('queued');
+            } else if (rawStatus === 'processing' || rawStatus === 'started' || rawStatus === 'in_progress') {
+              setGenerationStatus('processing');
+            } else {
+              setGenerationStatus('processing');
             }
           } else if (pe.message) {
             setGenerationStatus(pe.message);
@@ -612,45 +642,36 @@ export default function LandingPage() {
         }
       };
 
+      // Image generation always streams via the SSE endpoint. The 3D Mode
+      // toggle only decides how the 3D step runs: SAM3D (streamed live voxels)
+      // when streaming, or Trellis (non-streamed) when standard.
+      const stream3d = generationType === 'streaming';
+
       // Use image API if image is uploaded, otherwise use text API
       if (imgFile) {
-        console.log(`Generating from image${USE_STREAMING ? ' (streaming)' : ''}:`, imgFile.name);
+        console.log(`Generating from image (3D ${stream3d ? 'streaming' : 'standard'}):`, imgFile.name);
         const imageBase64 = await fileToBase64(imgFile);
-        postResponse = USE_STREAMING
-          ? await ImageToBricksApiService.generateBricksFromImageStream(
-              imageBase64,
-              getVoxelSize(size),
-              authToken,
-              modelOption,
-              promptOption,
-              handleStreamEvent,
-            )
-          : await ImageToBricksApiService.generateBricksFromImage(
-              imageBase64,
-              getVoxelSize(size),
-              authToken,
-              modelOption,
-              promptOption,
-            );
+        postResponse = await ImageToBricksApiService.generateBricksFromImageStream(
+          imageBase64,
+          getVoxelSize(size),
+          authToken,
+          modelOption,
+          promptOption,
+          handleStreamEvent,
+          stream3d,
+        );
         modelName = imgFile.name.replace(/\.[^/.]+$/, ''); // Remove file extension
       } else {
-        console.log(`Generating from text prompt${USE_STREAMING ? ' (streaming)' : ''}:`, prompt.trim());
-        postResponse = USE_STREAMING
-          ? await TextToBricksApiService.generateBricksFromTextStream(
-              prompt.trim(),
-              getVoxelSize(size),
-              authToken,
-              modelOption,
-              promptOption,
-              handleStreamEvent,
-            )
-          : await TextToBricksApiService.generateBricksFromText(
-              prompt.trim(),
-              getVoxelSize(size),
-              authToken,
-              modelOption,
-              promptOption,
-            );
+        console.log(`Generating from text prompt (3D ${stream3d ? 'streaming' : 'standard'}):`, prompt.trim());
+        postResponse = await TextToBricksApiService.generateBricksFromTextStream(
+          prompt.trim(),
+          getVoxelSize(size),
+          authToken,
+          modelOption,
+          promptOption,
+          handleStreamEvent,
+          stream3d,
+        );
         modelName = prompt.trim();
       }
       
@@ -661,6 +682,8 @@ export default function LandingPage() {
       localStorage.setItem(STORAGE_KEYS.GENERATION_ID, generationId);
       // Save as recently prompted generation for priority checking on page load
       localStorage.setItem('recently_prompted_generation_id', generationId);
+      // If created while logged out, remember it so it can be claimed on login.
+      if (!session) recordAnonymousGeneration(generationId);
       
       // Poll for completion with status updates
       const completedGeneration = await GetGenerationApiService.pollUntilComplete(
@@ -719,6 +742,7 @@ export default function LandingPage() {
       );
       
       // Navigate to generated model page since this completed from loading state
+      if (!session) recordAnonymousGeneration(completedGeneration.generation_id);
       navigate(`/generated-model?id=${completedGeneration.generation_id}`);
       
     } catch (error) {
@@ -763,7 +787,7 @@ export default function LandingPage() {
         </div>
       )}
       <SEO
-        title="BrickBuilder.AI - Turn Images into 3D LEGO-Compatible Brick Models"
+        title="BrickBuilder - Turn Images into 3D LEGO-Compatible Brick Models"
         description="Build brick models from text prompts or images. Experimental demo — results may vary."
         url="https://brickbuilder.ai/landing"
       />
@@ -939,11 +963,36 @@ export default function LandingPage() {
               </div>
             )}
 
+            {/* Generation Mode chips - hidden during loading */}
+            {!loading && !areOptionsHidden && (
+              <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
+                <span className="text-sm text-slate-500">3D Mode:</span>
+                {GENERATION_TYPE_PRESETS.map((gt) => {
+                  const active = gt.value === generationType;
+                  return (
+                    <button
+                      key={gt.value}
+                      onClick={() => !loading && setGenerationType(gt.value)}
+                      className={`rounded-full px-4 py-1 text-sm transition-all duration-150 ${
+                        active
+                          ? "bg-[#f44336] text-white border border-transparent"
+                          : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
+                      } ${loading ? "cursor-not-allowed" : "cursor-pointer"}`}
+                      disabled={loading}
+                      title={gt.description}
+                    >
+                      {gt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             {!loading && (
               <>
-                <p className="mt-2 text-sm text-slate-500 landing-fade-in landing-delay-3">
+                {/* <p className="mt-2 text-sm text-slate-500 landing-fade-in landing-delay-3">
                   This app uses generative AI to create brick models. Results may vary.
-                </p>
+                </p> */}
 
                 <button
                   type="button"
@@ -998,7 +1047,7 @@ export default function LandingPage() {
             {loading && (
               <div className="flex w-full flex-col items-center gap-4 mb-4">
                 {/* Preview container with overlaid status + beat text */}
-                <div className="relative w-full max-w-md overflow-hidden rounded-xl shadow-lg border border-slate-200" style={{ minHeight: 340 }}>
+                <div className="relative w-full max-w-md overflow-hidden rounded-xl shadow-lg border border-slate-200" style={{ height: 340 }}>
                   {/* Content layer */}
                   {voxelData ? (
                     <div style={{ height: 340 }}>
@@ -1017,7 +1066,7 @@ export default function LandingPage() {
                       <img
                         src={previewImageUrl}
                         alt="Generation preview"
-                        className="w-full"
+                        className="w-full h-full object-contain"
                         // style={{ filter: 'blur(4px) grayscale(100%) url(#wavy-edge)', transform: 'scale(1.05)' }}
                       />
                     </>
@@ -1030,7 +1079,11 @@ export default function LandingPage() {
                   {/* Status badge — overlayed on top center */}
                   <div className="absolute top-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1" style={{ zIndex: 10 }}>
                     <div className="text-xs text-slate-600 font-mono bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
-                      Status: {generationStatus || 'Starting'}
+                      Status: {generationStatus === 'queued'
+                        ? 'Queued'
+                        : (generationStatus === 'processing' || generationStatus === 'started')
+                          ? 'Generating 3D model'
+                          : (generationStatus || 'Starting')}
                     </div>
                     {generationStatus === 'queued' && (
                       <div className="text-xs text-slate-500 bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
@@ -1039,7 +1092,7 @@ export default function LandingPage() {
                     )}
                     {(generationStatus === 'processing' || generationStatus === 'started') && (
                       <div className="text-xs text-slate-500 bg-white/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm whitespace-nowrap">
-                        This will take about 30 seconds
+                        This will take about 30-60 seconds
                       </div>
                     )}
                   </div>
@@ -1120,7 +1173,7 @@ function HowItWorks() {
             How It Works
           </h2>
           <p className="mt-3 text-base text-slate-600 max-w-2xl mx-auto">
-            Turn images and prompts into custom 3D brick models — edit freely, get instant instructions, and have the parts on your doorstep in 8 days.
+            Turn images and text into custom 3D brick models. Edit freely, get instant instructions, and have the parts on your doorstep in 8 days.
           </p>
         </div>
 
@@ -1163,8 +1216,7 @@ function HowItWorks() {
 
 function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const { user } = useAuth();
   const [githubStars, setGithubStars] = useState<number | null>(null);
 
   useEffect(() => {
@@ -1203,7 +1255,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
       href="https://github.com/jjohnson5253/brickbuilderai"
       target="_blank"
       rel="noopener noreferrer"
-      aria-label="View BrickBuilder.AI on GitHub"
+      aria-label="View BrickBuilder on GitHub"
       className="inline-flex h-8 min-w-[4.5rem] items-center justify-center gap-1.5 rounded-full bg-slate-100 px-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 sm:h-9 sm:min-w-[5.25rem] sm:gap-2 sm:px-3 sm:text-sm"
     >
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-950 text-white sm:h-6 sm:w-6">
@@ -1218,7 +1270,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
       <a href="/" className="flex min-w-0 items-center gap-2 sm:gap-3">
         <img
           src="/logo.svg"
-          alt="BRICKBUILDER.AI"
+          alt="BrickBuilder"
           className="h-6 w-auto sm:h-7"
           onError={(e) => {
             const el = e.currentTarget as HTMLImageElement;
@@ -1228,8 +1280,6 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
         <span className="truncate text-lg font-extrabold tracking-tight sm:text-xl">
           <span className="text-[#ff4b4b]">BRICK</span>
           <span className="text-slate-900">BUILDER</span>
-          <span className="text-slate-900">.</span>
-          <span className="text-[#ff4b4b]">AI</span>
         </span>
       </a>
 
@@ -1250,56 +1300,17 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
           <>
             {githubStarLink}
 
-            {/* Account dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex h-8 items-center gap-1 rounded-full border-none bg-slate-100 px-2 cursor-pointer transition-colors hover:bg-slate-200 sm:h-9 sm:gap-2 sm:px-3"
-              >
-                <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[#f44336] sm:h-6 sm:w-6">
-                  <User className="h-3.5 w-3.5 text-white sm:h-4 sm:w-4" />
-                </div>
-                <ChevronDown className={`h-3.5 w-3.5 text-slate-600 transition-transform sm:h-4 sm:w-4 ${dropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
+            {/* Dashboard button */}
+            <button
+              className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-2 h-8 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px sm:px-3 sm:h-9"
+              onClick={() => navigate('/dashboard')}
+            >
+              <LayoutDashboard className="h-4 w-4" />
+              Dashboard
+            </button>
 
-              {dropdownOpen && (
-                <>
-                  {/* Backdrop to close dropdown */}
-                  <div 
-                    className="fixed inset-0" 
-                    style={{ zIndex: 40 }}
-                    onClick={() => setDropdownOpen(false)} 
-                  />
-                  {/* Dropdown menu */}
-                  <div 
-                    className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
-                    style={{ zIndex: 51 }}
-                  >
-                    <button
-                      onClick={() => {
-                        setDropdownOpen(false);
-                        navigate('/dashboard');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      Dashboard
-                    </button>
-                    <div className="border-t border-slate-100 my-1" />
-                    <button
-                      onClick={async () => {
-                        setDropdownOpen(false);
-                        await signOut();
-                        navigate('/');
-                      }}
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-                    >
-                      <LogOut className="h-4 w-4" />
-                      Log out
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Account dropdown */}
+            <ProfileMenu />
           </>
         ) : (
           // Not logged in: show login button

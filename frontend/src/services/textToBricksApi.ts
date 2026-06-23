@@ -36,7 +36,7 @@ export interface StatusResponse {
 }
 
 // API Configuration
-const API_MODE = import.meta.env.VITE_API_MODE || 'railway';
+const API_MODE = import.meta.env.VITE_API_MODE || 'local';
 const LOCAL_API_URL = import.meta.env.VITE_LOCAL_API_URL || 'http://127.0.0.1:8002';
 const RAILWAY_API_URL = import.meta.env.VITE_RAILWAY_API_URL || 'https://brickai-backend-production.up.railway.app';
 const RAILWAY_API_URL_STAGING = import.meta.env.VITE_RAILWAY_API_URL_STAGING || 'https://brickai-backend-staging.up.railway.app';
@@ -140,6 +140,7 @@ export class TextToBricksApiService {
     modelOption: string = 'b',
     promptOption: string = 'a',
     onEvent?: (event: StreamEvent) => void,
+    stream3d: boolean = true,
   ): Promise<TextToBricksResponse> {
     console.log('[stream] Sending streaming text-to-bricks request');
 
@@ -166,6 +167,7 @@ export class TextToBricksApiService {
         prompt_option: promptOption,
         use_red_bricks: true,
         stream: true,
+        stream_3d: stream3d,
       }),
     });
 

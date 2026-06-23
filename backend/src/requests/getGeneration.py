@@ -44,6 +44,14 @@ async def get_generation(request: GetGenerationRequest) -> GetGenerationResponse
         - ldr_content, mpd_url: Available when status is "completed"
         - error_message: Available when status is "failed"
     """
+    # Generation storage requires Supabase. When it is not configured there is
+    # nothing to retrieve, so report the generation as not found rather than 500.
+    if generation_storage is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Generation {request.generation_id} not found",
+        )
+
     try:
 
         # Get the generation record

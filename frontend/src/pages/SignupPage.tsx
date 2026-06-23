@@ -81,17 +81,17 @@ function SignupPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#fff", position: "relative", overflow: "hidden" }}>
-      <SEO title="Sign up — BRICKBUILDER.AI" description="Create your BRICKBUILDER.AI account." url="https://brickbuilder.ai/signup" />
+      <SEO title="Sign up — BrickBuilder" description="Create your BrickBuilder account." url="https://brickbuilder.ai/signup" />
       <FallingBricks density={18} opacity={0.25} zIndex={0} />
 
       <div style={{ position: "relative", zIndex: 1, maxWidth: 440, width: "100%", margin: "56px auto", padding: "0 16px" }}>
         {/* Header */}
         <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <Link to="/" className="flex items-center gap-3">
-            <img src="/logo.svg" alt="BRICKBUILDER.AI" className="h-6 w-auto"
+            <img src="/logo.svg" alt="BrickBuilder" className="h-6 w-auto"
                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
             <span className="text-lg font-extrabold tracking-tight">
-              <span className="text-[#ff4b4b]">BRICK</span><span className="text-slate-900">BUILDER</span><span className="text-slate-900">.</span><span className="text-[#ff4b4b]">AI</span>
+              <span className="text-[#ff4b4b]">BRICK</span><span className="text-slate-900">BUILDER</span>
             </span>
           </Link>
           <Link to="/login" state={{ from: redirectTo }} className="text-sm text-slate-700 hover:text-black">Log In</Link>

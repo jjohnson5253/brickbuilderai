@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from fastapi import HTTPException, Depends
 
 from ..utils.generation_storage import generation_storage
-from ..utils.authorization import get_owned_generation_or_403
+from ..utils.authorization import get_generation_or_404
 from ..utils.posthog_client import track_api_call, track_error
 from ..utils.conversions.glb2brick import glb2brick
 from ..utils.auth import get_user_with_optional_auth, handle_auth_and_tracking
@@ -237,7 +237,7 @@ async def update_model(request: UpdateModelRequest, auth_info: dict) -> UpdateMo
             user_id = auth_info.get("user_id", user_email)
             user_type = "authenticated"
 
-        generation = await get_owned_generation_or_403(request.generation_id, auth_info)
+        generation = await get_generation_or_404(request.generation_id, auth_info)
 
         # Create a new generation record with status="ldr_processing"
         new_generation_id = await generation_storage.create_generation(
