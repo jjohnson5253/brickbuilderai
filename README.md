@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>Use AI to design LEGO® models.</b><br/> Turn any image or text prompt into a buildable LEGO®-compatible brick model.</b><br/>
-  Get a 3D preview, step-by-step building instructions, downloadable LDR/MPD files, and a parts list you can order.
+  <!-- Get a 3D preview, step-by-step building instructions, downloadable LDR/MPD files, and a parts list you can order. -->
 </p>
 
 <p align="center">
