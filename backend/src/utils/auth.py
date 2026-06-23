@@ -36,24 +36,25 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 DEVELOPER_API_KEY = os.getenv("DEVELOPER_API_KEY")
 
-if not all([SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_JWT_SECRET, DEVELOPER_API_KEY]):
-    missing_vars = []
-    if not SUPABASE_URL: missing_vars.append("SUPABASE_URL")
-    if not SUPABASE_SERVICE_ROLE_KEY: missing_vars.append("SUPABASE_SERVICE_ROLE_KEY")
-    if not SUPABASE_JWT_SECRET: missing_vars.append("SUPABASE_JWT_SECRET")
-    if not DEVELOPER_API_KEY: missing_vars.append("DEVELOPER_API_KEY")
-    
-    logger.error(f"CRITICAL: Missing required environment variables: {', '.join(missing_vars)}")
-    logger.error("SECURITY: Server will reject all requests until authentication is properly configured")
-    supabase_client: Optional[Client] = None
-else:
-    # Supabase configuration loaded
+# Supabase is optional. It is only enabled when the URL and its required keys
+# are present. When disabled, the API runs in anonymous mode without
+# Supabase-backed authentication.
+SUPABASE_ENABLED = bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and SUPABASE_JWT_SECRET)
+supabase_client: Optional[Client] = None
+
+if SUPABASE_ENABLED:
     try:
-        supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
         # Supabase client initialized
     except Exception as e:
         logger.error(f"CRITICAL: Failed to initialize Supabase client: {e}")
-        supabase_client: Optional[Client] = None
+        supabase_client = None
+        SUPABASE_ENABLED = False
+else:
+    logger.info(
+        "Supabase is not configured (SUPABASE_URL or keys missing). "
+        "Running in anonymous mode without Supabase authentication."
+    )
 
 class AuthError(Exception):
     """Custom exception for authentication errors"""
@@ -93,16 +94,8 @@ async def verify_authentication(
     """
     Verify user authentication via Supabase JWT token or developer API key
     """
-    # If no authentication is configured, REJECT all requests - this is a security requirement
-    if not supabase_client:
-        logger.error("SECURITY: No Supabase configuration found. Authentication is required.")
-        raise HTTPException(
-            status_code=500,
-            detail="Server configuration error: Authentication system not properly configured"
-        )
-    
-    # Check for developer API key first
-    if x_api_key and x_api_key == DEVELOPER_API_KEY:
+    # Check for developer API key first (works regardless of Supabase)
+    if x_api_key and DEVELOPER_API_KEY and x_api_key == DEVELOPER_API_KEY:
         logger.info("Request authenticated with developer API key")
         return {
             "authenticated": True, 
@@ -110,6 +103,18 @@ async def verify_authentication(
             "auth_method": "api_key",
             "is_developer": True
         }
+
+    # If Supabase is not configured, run in anonymous mode and allow the request
+    if not SUPABASE_ENABLED or not supabase_client:
+        return {
+            "authenticated": True,
+            "user_email": None,
+            "user_id": None,
+            "auth_method": "anonymous",
+            "is_anonymous": True,
+            "is_developer": False,
+        }
+
     # Check for Supabase JWT token
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
