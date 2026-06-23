@@ -901,5 +901,9 @@ class GenerationStorage:
             return ""
 
 
-# Global instance for easy import
-generation_storage = GenerationStorage()
+# Global instance for easy import. Supabase is optional: when it is not
+# configured the storage layer is unavailable and this is left as None so the
+# app can still boot in anonymous mode.
+generation_storage: Optional["GenerationStorage"] = (
+    GenerationStorage() if supabase_client else None
+)
