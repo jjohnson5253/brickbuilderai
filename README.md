@@ -1,8 +1,10 @@
+
+
 <p align="center">
   <img src="https://brickbuilder.ai/brickbuilder-logo.PNG" alt="BrickBuilder.AI" width="320" />
 </p>
 
-<h1 align="center">BrickBuilder.AI</h1>
+<img width="960" height="720" alt="github-readme-video (1)" src="https://github.com/user-attachments/assets/63added8-2404-45ce-a87c-df40c801ddf4" />
 
 <p align="center">
   <b>Turn any image or text prompt into a buildable LEGO®-compatible brick model.</b><br/>
