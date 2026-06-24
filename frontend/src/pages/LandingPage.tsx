@@ -1269,8 +1269,11 @@ function HowItWorks() {
 
 function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isSupabaseConfigured } = useAuth();
   const [githubStars, setGithubStars] = useState<number | null>(null);
+
+  // Show profile menu if user is logged in OR if Supabase is not configured
+  const showProfileMenu = user || !isSupabaseConfigured;
 
   useEffect(() => {
     let cancelled = false;
@@ -1348,8 +1351,8 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
 
       {/* Login / Sign Up OR Account Menu */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {user ? (
-          // Logged in: show GitHub stars and account dropdown
+        {showProfileMenu ? (
+          // Logged in or no Supabase: show GitHub stars and account dropdown
           <>
             {githubStarLink}
 

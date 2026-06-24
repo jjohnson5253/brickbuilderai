@@ -18,7 +18,10 @@ import { ProfileMenu } from '../components/ProfileMenu';
 
 function Header() {
   const navigate = useNavigate();
-  const { user, userProfile } = useAuth();
+  const { user, userProfile, isSupabaseConfigured } = useAuth();
+
+  // Show profile menu if user is logged in OR if Supabase is not configured
+  const showProfileMenu = user || !isSupabaseConfigured;
 
   return (
     <header className="flex items-center justify-between w-full relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
@@ -37,16 +40,18 @@ function Header() {
 
       {/* Login / Sign Up OR Account Menu */}
       <div className="flex items-center gap-3">
-        {user ? (
-          // Logged in: show credits and account dropdown
+        {showProfileMenu ? (
+          // Logged in or no Supabase: show dashboard and account dropdown
           <>
-            {/* Credits badge */}
-            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
-              <Coins className="h-4 w-4 text-amber-600" />
-              <span className="text-sm font-semibold text-amber-700">
-                {userProfile?.credits ?? 0}
-              </span>
-            </div>
+            {/* Credits badge - only show when user is logged in with Supabase */}
+            {user && isSupabaseConfigured && (
+              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
+                <Coins className="h-4 w-4 text-amber-600" />
+                <span className="text-sm font-semibold text-amber-700">
+                  {userProfile?.credits ?? 0}
+                </span>
+              </div>
+            )}
 
             {/* Dashboard button */}
             <button
