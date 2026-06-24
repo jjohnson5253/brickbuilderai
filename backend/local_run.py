@@ -16,13 +16,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 # Build obj2voxel C++ executable if not already built
 obj2voxel_exe = Path("src/utils/cpp/obj2vox/build/obj2voxel")
+if sys.platform == "win32":
+    obj2voxel_exe = obj2voxel_exe.with_suffix(".exe")
 if not obj2voxel_exe.exists():
     print("Building obj2voxel executable...")
     build_dir = Path("src/utils/cpp/obj2vox/build")
     build_dir.mkdir(parents=True, exist_ok=True)
     
     subprocess.run(["cmake", ".."], cwd=str(build_dir), check=True)
-    subprocess.run(["make"], cwd=str(build_dir), check=True)
+    subprocess.run(["cmake", "--build", ".", "--config", "Release"], cwd=str(build_dir), check=True)
     print("obj2voxel build complete")
 
 if __name__ == "__main__":
