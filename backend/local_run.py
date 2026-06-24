@@ -47,11 +47,11 @@ if __name__ == "__main__":
     log("Starting BrickBuilderAI backend...")
     log("Loading dependencies (Open3D, ML libraries, API routes)... this can take ~20s on first start")
 
-    with heartbeat("Loading dependencies"):
+    with heartbeat("Loading dependencies. Please wait."):
         import uvicorn
 
     log("Importing application (src.api)...")
-    with heartbeat("Importing application"):
+    with heartbeat("Importing application. Please wait."):
         from src.api import app
 
     log(f"Application loaded in {time.perf_counter() - _start:.1f}s")
