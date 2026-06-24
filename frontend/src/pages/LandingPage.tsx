@@ -862,6 +862,7 @@ export default function LandingPage() {
                     <ImageIcon className="h-4 w-4" />
                     Upload Image
                   </button>
+                  {false && (
                   <button
                     type="button"
                     onClick={() => setShowGlbUpload(prev => !prev)}
@@ -873,6 +874,7 @@ export default function LandingPage() {
                     <Box className="h-4 w-4" />
                     Upload glb
                   </button>
+                  )}
                 </div>
                 <input
                   ref={fileInputRef}
