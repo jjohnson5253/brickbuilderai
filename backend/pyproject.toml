@@ -34,6 +34,7 @@ dependencies = [
     "rembg>=2.0.50",
     "pgserver>=0.1.4",
     "psycopg[binary]>=3.1",
+    "rtree>=1.4.1",
 ]
 
 [project.scripts]
