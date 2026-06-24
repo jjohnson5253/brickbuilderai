@@ -6,13 +6,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { GlbToBricksApiService } from '../services/glbToBricksApi';
 import { GetGenerationApiService } from '../services/getGenerationApi';
 
-type VoxelizerOption = 'trimesh' | 'obj2voxel';
-
-const VOXELIZER_PRESETS: { label: string; value: VoxelizerOption; description: string }[] = [
-  { label: 'Trimesh', value: 'trimesh', description: 'Python voxelizer with texture color sampling' },
-  { label: 'obj2voxel', value: 'obj2voxel', description: 'Legacy C++ voxelizer' },
-];
-
 /** Interactive GLB viewer built on raw three.js (OrbitControls + animation loop). */
 function GlbViewer({ objectUrl }: { objectUrl: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -151,7 +144,7 @@ function GlbViewer({ objectUrl }: { objectUrl: string }) {
   );
 }
 
-/** Settings card: upload a GLB, preview it, pick the voxelizer, and convert. */
+/** Settings card: upload a GLB, preview it, and convert. */
 export function GlbUploadCard({ autoOpen = false }: { autoOpen?: boolean } = {}) {
   const { session } = useAuth();
   const navigate = useNavigate();
@@ -159,7 +152,6 @@ export function GlbUploadCard({ autoOpen = false }: { autoOpen?: boolean } = {})
 
   const [file, setFile] = useState<File | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
-  const [voxelizer, setVoxelizer] = useState<VoxelizerOption>('trimesh');
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -198,7 +190,7 @@ export function GlbUploadCard({ autoOpen = false }: { autoOpen?: boolean } = {})
     try {
       const { generation_id } = await GlbToBricksApiService.uploadGlb(
         file,
-        voxelizer,
+        'trimesh',
         40,
         session?.access_token,
       );
@@ -223,7 +215,7 @@ export function GlbUploadCard({ autoOpen = false }: { autoOpen?: boolean } = {})
         Upload GLB
       </h2>
       <p className="text-sm text-slate-500 mb-5">
-        Upload a 3D model (.glb), preview it, choose a voxelizer, and convert it into a brick model.
+        Upload a 3D model (.glb), preview it, and convert it into a brick model.
       </p>
 
       <input
@@ -257,30 +249,6 @@ export function GlbUploadCard({ autoOpen = false }: { autoOpen?: boolean } = {})
             >
               Change file
             </button>
-          </div>
-
-          {/* Voxelizer selection */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-sm text-slate-500">Voxelizer:</span>
-            {VOXELIZER_PRESETS.map((vx) => {
-              const active = vx.value === voxelizer;
-              return (
-                <button
-                  key={vx.value}
-                  type="button"
-                  onClick={() => !submitting && setVoxelizer(vx.value)}
-                  disabled={submitting}
-                  title={vx.description}
-                  className={`rounded-full px-4 py-1 text-sm transition-all duration-150 ${
-                    active
-                      ? 'bg-[#f44336] text-white border border-transparent'
-                      : 'bg-white text-slate-700 border border-slate-300 hover:opacity-70'
-                  } ${submitting ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-                >
-                  {vx.label}
-                </button>
-              );
-            })}
           </div>
 
           <div className="flex flex-col items-center gap-3">
