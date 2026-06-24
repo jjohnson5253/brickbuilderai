@@ -141,6 +141,7 @@ export class TextToBricksApiService {
     promptOption: string = 'a',
     onEvent?: (event: StreamEvent) => void,
     stream3d: boolean = true,
+    voxelizer: string = 'trimesh',
   ): Promise<TextToBricksResponse> {
     console.log('[stream] Sending streaming text-to-bricks request');
 
@@ -168,6 +169,7 @@ export class TextToBricksApiService {
         use_red_bricks: true,
         stream: true,
         stream_3d: stream3d,
+        voxelizer: voxelizer,
       }),
     });
 

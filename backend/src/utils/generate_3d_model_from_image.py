@@ -26,6 +26,7 @@ async def generate_3d_model_from_image(
     apply_image_editing: bool = False,
     status_callback: Optional[Callable[[str], None]] = None,
     model_option: str = "a",
+    voxelizer: str = "trimesh",
 ) -> Tuple[str, str, str, str, str, Optional[str], Optional[str], Optional[str], Optional[str]]:
     """
     Generate a 3D model from an image using specified AI model and convert to LDR format.
@@ -38,6 +39,7 @@ async def generate_3d_model_from_image(
         apply_image_editing: Whether to apply nano banana image editing preprocessing
         status_callback: Optional callback function(status) for queue updates
         model_option: "a" or "b" to select prompt enhancement version (defaults to "a")
+        voxelizer: Which voxelizer to use, "trimesh" (default) or "obj2voxel"
     
     Returns:
         Tuple containing:
@@ -103,7 +105,8 @@ async def generate_3d_model_from_image(
     info = glb2brick(
         mesh_path,
         world_size=25.0,
-        voxel_size=detail_level
+        voxel_size=detail_level,
+        voxelizer=voxelizer
     )
     
     # Get the paths from the info dict
