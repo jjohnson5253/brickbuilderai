@@ -878,19 +878,6 @@ export default function LandingPage() {
                     <ImageIcon className="h-4 w-4" />
                     Upload Image
                   </button>
-                  {false && (
-                  <button
-                    type="button"
-                    onClick={() => setShowGlbUpload(prev => !prev)}
-                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors ${showGlbUpload ? 'border-[#f44336] bg-red-50 text-[#f44336]' : 'border-gray-200 bg-white hover:bg-slate-100 text-slate-600'}`}
-                    aria-label="Upload glb"
-                    title="Upload glb"
-                    disabled={loading}
-                  >
-                    <Box className="h-4 w-4" />
-                    Upload glb
-                  </button>
-                  )}
                 </div>
                 <input
                   ref={fileInputRef}
@@ -1065,6 +1052,27 @@ export default function LandingPage() {
               </div>
             )}
 
+            {/* Upload GLB toggle - lives in settings */}
+            {!loading && !areOptionsHidden && (
+              <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
+                <span className="text-sm text-slate-500">Upload GLB:</span>
+                <button
+                  type="button"
+                  onClick={() => setShowGlbUpload(prev => !prev)}
+                  className={`flex items-center gap-1.5 rounded-full px-4 py-1 text-sm transition-all duration-150 ${
+                    showGlbUpload
+                      ? "bg-[#f44336] text-white border border-transparent"
+                      : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
+                  } cursor-pointer`}
+                  aria-label="Upload glb"
+                  title="Upload a 3D model (.glb) and convert it into bricks"
+                >
+                  <Box className="h-4 w-4" />
+                  {showGlbUpload ? "Hide GLB Upload" : "Upload GLB"}
+                </button>
+              </div>
+            )}
+
             {!loading && (
               <>
                 {/* <p className="mt-2 text-sm text-slate-500 landing-fade-in landing-delay-3">
@@ -1081,7 +1089,7 @@ export default function LandingPage() {
                 </button>
                 
                 {/* Last completed generation */}
-                {lastGeneration && !isCardHidden && (
+                {/* {lastGeneration && !isCardHidden && (
                   <div className="mt-4 w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-sm relative">
                     <button
                       onClick={() => setIsCardHidden(true)}
@@ -1114,7 +1122,7 @@ export default function LandingPage() {
                       </div>
                     </div>
                   </div>
-                )}
+                )} */}
               </>
             )}
           </div>
