@@ -66,6 +66,29 @@ def _material_image(visual) -> object:
     return None
 
 
+def _coerce_rgb(colors: np.ndarray, count: int) -> np.ndarray:
+    """Normalize an arbitrary color array to shape (count, 3).
+
+    Handles grayscale textures/vertex-colors (which come back 1-D) and arrays
+    with fewer than 3 channels, so downstream `[:, :3]` indexing is always safe.
+    """
+    colors = np.asarray(colors)
+    if colors.ndim == 1:
+        if colors.shape[0] == count and count != 3:
+            # Per-point grayscale value -> replicate across RGB.
+            colors = np.repeat(colors.reshape(-1, 1), 3, axis=1)
+        elif colors.shape[0] >= 3:
+            # A single flat color -> broadcast to every point.
+            colors = np.tile(colors[:3], (count, 1))
+        else:
+            fill = int(colors.reshape(-1)[0]) if colors.size else 180
+            colors = np.full((count, 3), fill)
+    if colors.ndim >= 2 and colors.shape[-1] < 3:
+        reps = 3 - colors.shape[-1]
+        colors = np.concatenate([colors, np.repeat(colors[..., -1:], reps, axis=-1)], axis=-1)
+    return colors[..., :3]
+
+
 def _sample_voxel_colors(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarray:
     """Return an (N, 3) uint8 color for each voxel center.
 
@@ -76,9 +99,17 @@ def _sample_voxel_colors(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarra
     Fallback path: nearest-vertex color (used for vertex-colored meshes or when
     no texture/UVs are available).
     """
+    n = len(points)
     visual = mesh.visual
     uv = getattr(visual, "uv", None)
     image = _material_image(visual)
+    if image is not None:
+        # Normalize palette/grayscale textures to RGB so sampling returns
+        # consistent (N, 3+) arrays.
+        try:
+            image = image.convert("RGB")
+        except Exception:
+            pass
 
     if uv is not None and image is not None:
         # Preferred: closest surface point + barycentric UV -> direct PNG pixel.
@@ -90,7 +121,8 @@ def _sample_voxel_colors(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarra
             bary = trimesh.triangles.points_to_barycentric(triangles, closest)
             face_uv = uv[mesh.faces[face_idx]]            # (N, 3, 2)
             sample_uv = (bary[:, :, None] * face_uv).sum(axis=1)  # (N, 2)
-            colors = trimesh.visual.color.uv_to_color(sample_uv, image)[:, :3]
+            colors = np.asarray(trimesh.visual.color.uv_to_color(sample_uv, image))
+            colors = _coerce_rgb(colors, n)
             print("  🎨 Color source: per-voxel texture UV sampling")
             return np.clip(colors.astype(int), 0, 255)
         except Exception as exc:  # e.g. rtree not installed
@@ -103,10 +135,23 @@ def _sample_voxel_colors(mesh: trimesh.Trimesh, points: np.ndarray) -> np.ndarra
         try:
             visual_colors = visual.to_color()
         except Exception:
-            pass
-    vertex_colors = np.asarray(visual_colors.vertex_colors)[:, :3]
+            visual_colors = None
+
+    vertex_colors = None
+    if visual_colors is not None:
+        try:
+            vertex_colors = np.asarray(visual_colors.vertex_colors)
+        except Exception:
+            vertex_colors = None
+
     tree = cKDTree(mesh.vertices)
     _, nearest_vertex = tree.query(points)
+
+    if vertex_colors is None or vertex_colors.size == 0:
+        # No usable color information; fall back to a neutral gray.
+        return np.full((n, 3), 180, dtype=int)
+
+    vertex_colors = _coerce_rgb(vertex_colors, len(mesh.vertices))
     return np.clip(vertex_colors[nearest_vertex].astype(int), 0, 255)
 
 

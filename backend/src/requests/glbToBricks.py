@@ -1,25 +1,18 @@
 """
-Model to Bricks (GLB or OBJ upload)
+GLB to Bricks
 
-Upload a 3D model and run it through the glb2brick pipeline, choosing the
-voxelizer (trimesh or obj2voxel). Accepts either:
-- a single .glb file, or
-- a .obj file plus its referenced .mtl (and texture images).
-
-OBJ uploads are converted to GLB (preserving materials/textures) and then fed
-through the same pipeline. Mirrors the imageToBricks flow: creates a generation
-record, processes in a background task, and returns the generation_id
-immediately for polling.
+Upload a GLB file directly and run it through the glb2brick pipeline, choosing
+the voxelizer (trimesh or obj2voxel). Mirrors the imageToBricks flow: creates a
+generation record, processes in a background task, and returns the
+generation_id immediately for polling.
 """
 
 import os
-import shutil
 import logging
 import asyncio
 import tempfile
-from typing import List
 
-from fastapi import UploadFile, Depends, HTTPException
+from fastapi import UploadFile, File, Form, Depends, HTTPException
 from pydantic import BaseModel
 
 from ..utils.auth import get_user_with_optional_auth, handle_auth_and_tracking
@@ -37,42 +30,15 @@ class GlbToBricksResponse(BaseModel):
     message: str = "Generation started"
 
 
-def _safe_name(name: str) -> str:
-    """Return just the basename, stripped of any path components."""
-    return os.path.basename((name or "").replace("\\", "/"))
-
-
-def _referenced_mtl_names(obj_path: str) -> List[str]:
-    """Extract the .mtl filenames referenced by an OBJ's `mtllib` lines."""
-    names: List[str] = []
-    try:
-        with open(obj_path, "r", errors="ignore") as f:
-            for line in f:
-                if line.lower().startswith("mtllib"):
-                    names.extend(_safe_name(p) for p in line.split()[1:])
-    except Exception as e:
-        logger.warning(f"Failed to parse mtllib from OBJ: {e}")
-    return names
-
-
-def _convert_obj_to_glb(obj_path: str, glb_path: str) -> None:
-    """Load an OBJ (with adjacent MTL/textures) and export it as GLB."""
-    import trimesh
-
-    loaded = trimesh.load(obj_path, process=False)
-    loaded.export(glb_path)
-
-
-async def process_model_to_bricks_task(
+async def process_glb_to_bricks_task(
     generation_id: str,
-    work_dir: str,
-    main_filename: str,
+    glb_path: str,
     voxelizer: str,
     detail_level: float,
     user_email: str,
     is_developer: bool,
 ):
-    """Background task: convert (if needed) and run glb2brick, then store artifacts."""
+    """Background task: run glb2brick on the uploaded GLB and store all artifacts."""
     heartbeat_task = None
     try:
         await generation_storage.update_status(generation_id, "processing")
@@ -89,18 +55,6 @@ async def process_model_to_bricks_task(
                     logger.warning(f"Heartbeat update failed: {e}")
 
         heartbeat_task = asyncio.create_task(heartbeat())
-
-        main_path = os.path.join(work_dir, main_filename)
-
-        # Convert OBJ -> GLB so the rest of the pipeline is uniform.
-        if main_filename.lower().endswith(".obj"):
-            glb_path = os.path.join(work_dir, os.path.splitext(main_filename)[0] + ".glb")
-            logger.info(f"Converting OBJ to GLB: {main_path} -> {glb_path}")
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: _convert_obj_to_glb(main_path, glb_path)
-            )
-        else:
-            glb_path = main_path
 
         # Run the GLB -> bricks pipeline with the selected voxelizer.
         logger.info(f"Running glb2brick (voxelizer={voxelizer}) for {glb_path}")
@@ -133,7 +87,7 @@ async def process_model_to_bricks_task(
         with open(mpd_path, "r") as f:
             mpd_content = f.read()
 
-        # Store the (converted) GLB.
+        # Store the uploaded GLB.
         with open(glb_path, "rb") as f:
             glb_content = f.read()
         await generation_storage.store_model_file(
@@ -200,13 +154,13 @@ async def process_model_to_bricks_task(
             has_mpd=True,
             ldr_size=len(ldr_content),
             mpd_size=len(mpd_content),
-            image_type="model_upload",
+            image_type="glb_upload",
             is_developer=is_developer,
         )
-        logger.info(f"Successfully completed model generation {generation_id}")
+        logger.info(f"Successfully completed GLB generation {generation_id}")
 
     except Exception as e:
-        logger.error(f"Model upload task failed for generation {generation_id}: {e}")
+        logger.error(f"GLB background task failed for generation {generation_id}: {e}")
         if heartbeat_task:
             heartbeat_task.cancel()
         try:
@@ -220,83 +174,41 @@ async def process_model_to_bricks_task(
             user_id=user_email,
         )
     finally:
-        try:
-            if work_dir and os.path.isdir(work_dir):
-                shutil.rmtree(work_dir, ignore_errors=True)
-        except Exception:
-            pass
+        for path_var in ("glb_path", "ldr_path", "mpd_path", "vox_path", "xyzrgb_path"):
+            try:
+                p = locals().get(path_var)
+                if p and os.path.exists(p):
+                    os.unlink(p)
+            except Exception:
+                pass
 
 
 async def glb_to_bricks(
-    files: List[UploadFile],
-    voxelizer: str,
-    detail_level: float,
-    auth_info: dict,
+    file: UploadFile = File(...),
+    voxelizer: str = Form("trimesh"),
+    detail_level: float = Form(40.0),
+    auth_info: dict = Depends(get_user_with_optional_auth),
 ) -> GlbToBricksResponse:
     """
-    Upload a model (GLB, or OBJ + its MTL/textures) and convert it to bricks.
+    Upload a GLB and convert it to a brick structure.
+
+    Form fields:
+    - file: the .glb file (multipart upload)
+    - voxelizer: "trimesh" (default) or "obj2voxel"
+    - detail_level: voxel resolution (default 40)
 
     Returns generation_id immediately; poll GET /generation/{id} for status.
     """
     if voxelizer not in ("trimesh", "obj2voxel"):
         raise HTTPException(status_code=400, detail="voxelizer must be 'trimesh' or 'obj2voxel'")
 
-    if not files:
-        raise HTTPException(status_code=400, detail="No files uploaded")
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".glb"):
+        raise HTTPException(status_code=400, detail="Only .glb files are supported")
 
-    # Save all uploaded files into a temp working directory under their names.
-    work_dir = tempfile.mkdtemp(prefix="model_upload_")
-    saved_names: List[str] = []
-    total_bytes = 0
-    try:
-        for up in files:
-            name = _safe_name(up.filename or "")
-            if not name:
-                continue
-            contents = await up.read()
-            total_bytes += len(contents)
-            with open(os.path.join(work_dir, name), "wb") as f:
-                f.write(contents)
-            saved_names.append(name)
-
-        if not saved_names:
-            raise HTTPException(status_code=400, detail="No valid files uploaded")
-
-        # Identify the main model file (prefer GLB, else OBJ).
-        glb_files = [n for n in saved_names if n.lower().endswith(".glb")]
-        obj_files = [n for n in saved_names if n.lower().endswith(".obj")]
-        if glb_files:
-            main_filename = glb_files[0]
-        elif obj_files:
-            main_filename = obj_files[0]
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="Upload must include a .glb or .obj file",
-            )
-
-        # For OBJ, ensure the referenced .mtl file(s) were also uploaded.
-        if main_filename.lower().endswith(".obj"):
-            obj_path = os.path.join(work_dir, main_filename)
-            referenced = _referenced_mtl_names(obj_path)
-            uploaded_lower = {n.lower() for n in saved_names}
-            missing = [m for m in referenced if m.lower() not in uploaded_lower]
-            if missing:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "This OBJ references material file(s) that were not uploaded: "
-                        f"{', '.join(missing)}. Please upload the .mtl (and any textures) "
-                        "alongside the .obj."
-                    ),
-                )
-    except HTTPException:
-        shutil.rmtree(work_dir, ignore_errors=True)
-        raise
-    except Exception as e:
-        shutil.rmtree(work_dir, ignore_errors=True)
-        logger.error(f"Failed to save uploaded files: {e}")
-        raise HTTPException(status_code=400, detail="Failed to read uploaded files")
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     user_info = handle_auth_and_tracking(
         auth_info=auth_info,
@@ -304,9 +216,7 @@ async def glb_to_bricks(
         track_properties={
             "voxelizer": voxelizer,
             "detail_level": detail_level,
-            "upload_bytes": total_bytes,
-            "main_format": "obj" if main_filename.lower().endswith(".obj") else "glb",
-            "file_count": len(saved_names),
+            "glb_size": len(contents),
         },
         required_credits=0,
     )
@@ -325,21 +235,25 @@ async def glb_to_bricks(
         user_id = auth_info.get("user_id", user_email)
         user_type = "authenticated"
 
+    # Persist the upload to a temp file the background task can read.
+    fd, glb_path = tempfile.mkstemp(suffix=".glb")
+    with os.fdopen(fd, "wb") as f:
+        f.write(contents)
+
     try:
         generation_id = await generation_storage.create_generation(
             user_id=user_id,
             user_type=user_type,
-            prompt=f"Model upload: {main_filename}",
+            prompt=f"GLB upload: {file.filename}",
             detail_level=detail_level,
             endpoint="glbToBricks",
             model_3d=f"upload:{voxelizer}",
         )
 
         asyncio.create_task(
-            process_model_to_bricks_task(
+            process_glb_to_bricks_task(
                 generation_id=generation_id,
-                work_dir=work_dir,
-                main_filename=main_filename,
+                glb_path=glb_path,
                 voxelizer=voxelizer,
                 detail_level=detail_level,
                 user_email=user_email,
@@ -352,8 +266,9 @@ async def glb_to_bricks(
             message="Generation started. Poll /generation/{generation_id} for status.",
         )
     except Exception as e:
-        shutil.rmtree(work_dir, ignore_errors=True)
-        logger.error(f"Failed to start model generation: {e}")
+        if os.path.exists(glb_path):
+            os.unlink(glb_path)
+        logger.error(f"Failed to start GLB generation: {e}")
         track_error(
             error_type=type(e).__name__,
             error_message=str(e),
