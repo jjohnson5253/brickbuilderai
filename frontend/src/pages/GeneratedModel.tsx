@@ -58,8 +58,11 @@ interface HeaderProps {
 
 function Header({ onGuardedNavigate }: HeaderProps) {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isSupabaseConfigured } = useAuth();
   const [githubStars, setGithubStars] = useState<number | null>(null);
+
+  // Show profile menu if user is logged in OR if Supabase is not configured
+  const showProfileMenu = user || !isSupabaseConfigured;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -132,8 +135,8 @@ function Header({ onGuardedNavigate }: HeaderProps) {
           Community
         </button>
         {githubStarLink}
-        {user ? (
-          // Logged in: show account dropdown
+        {showProfileMenu ? (
+          // Logged in or no Supabase: show account dropdown
           <>
             {/* Dashboard button */}
             <button
