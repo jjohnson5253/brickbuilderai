@@ -758,7 +758,7 @@ export default function LandingPage() {
           : 'No internet connection';
       } else if (errorMsg.includes('FAL_KEY')) {
         // Backend is running but FAL_KEY is not configured
-        errorMessage = 'FAL_KEY not configured. Set FAL_KEY in backend .env file.';
+        errorMessage = 'FAL_KEY not configured. Set FAL_KEY in .env file and restart the backend server.';
       } else if (errorMsg) {
         // Use the error message from the backend
         errorMessage = errorMsg;
