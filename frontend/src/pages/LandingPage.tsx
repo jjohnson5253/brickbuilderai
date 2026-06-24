@@ -229,7 +229,7 @@ export default function LandingPage() {
   const [lastGeneration, setLastGeneration] = useState<GetGenerationResponse | null>(null);
 
   const navigate = useNavigate();
-  const [isCardHidden, setIsCardHidden] = useState(false);
+  const [isCardHidden, setIsCardHidden] = useState(true);
   const [areOptionsHidden, setAreOptionsHidden] = useState(true);
 
   // Login modal state
