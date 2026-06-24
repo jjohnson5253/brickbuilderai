@@ -93,10 +93,22 @@ app.add_middleware(
 
 FAL_KEY = os.getenv("FAL_KEY")
 if not FAL_KEY:
-    raise ValueError("FAL_KEY environment variable is required")
+    logger.warning(
+        "FAL_KEY environment variable is not set. Image and text generation "
+        "endpoints will return errors until FAL_KEY is configured."
+    )
+else:
+    # Set the FAL API key
+    os.environ["FAL_KEY"] = FAL_KEY
 
-# Set the FAL API key
-os.environ["FAL_KEY"] = FAL_KEY
+
+def require_fal_key():
+    """Dependency that checks if FAL_KEY is configured."""
+    if not FAL_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="FAL_KEY not configured. Set FAL_KEY in .env file and restart the backend server."
+        )
 
 # Validate authentication configuration at startup
 from .utils.auth import supabase_client, SUPABASE_ENABLED
@@ -140,7 +152,8 @@ async def serve_local_storage(bucket: str, file_path: str):
 @app.post("/imageToBricks")
 async def imageToBricks_endpoint(
     request: ImageToBricksRequest = ImageToBricksRequest(),
-    auth_info: dict = Depends(get_user_with_optional_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth),
+    _fal: None = Depends(require_fal_key)
 ):
     """
     Start image to brick conversion.
@@ -155,7 +168,8 @@ async def imageToBricks_endpoint(
 @app.post("/textToBricks")
 async def textToBricks_endpoint(
     request: TextToBricksRequest,
-    auth_info: dict = Depends(get_user_with_optional_auth)
+    auth_info: dict = Depends(get_user_with_optional_auth),
+    _fal: None = Depends(require_fal_key)
 ):
     """
     Start text to brick conversion.
@@ -224,7 +238,8 @@ async def resize_model_endpoint(
 @app.post("/promptEditModel", response_model=ImageToBricksResponse)
 async def prompt_edit_model_endpoint(
     request: PromptEditModelRequest,
-    auth_info: dict = Depends(require_paid_auth)
+    auth_info: dict = Depends(require_paid_auth),
+    _fal: None = Depends(require_fal_key)
 ) -> ImageToBricksResponse:
     """
     Start editing a model with a prompt. Returns new generation_id immediately.
