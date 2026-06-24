@@ -24,7 +24,7 @@ export default function App() {
   return (
     <BrowserRouter>
       {/* <ProtectedRoute> */}
-        <AnnouncementBanner />
+        {/* <AnnouncementBanner /> */}
         <Routes>
           {/* Public */}
           <Route path="/" element={<LandingPage />} />
