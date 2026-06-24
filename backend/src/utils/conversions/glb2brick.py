@@ -82,9 +82,9 @@ def load_xyzrgb_to_voxel_array(xyzrgb_path: str) -> Tuple[np.ndarray, np.ndarray
     return voxel_array, color_array, metadata
 
 
-def glb2xyzrgb(glb_path: str, voxel_size: float = 32) -> Dict[str, Any]:
+def glb2xyzrgb(glb_path: str, voxel_size: float = 32, voxelizer: str = "trimesh") -> Dict[str, Any]:
     """
-    First half of the pipeline: GLB -> trimesh voxelization -> xyzrgb file.
+    First half of the pipeline: GLB -> voxelization -> xyzrgb file.
 
     Returns immediately once the xyzrgb content is ready, without running
     brick optimization or LDR generation.
@@ -92,6 +92,8 @@ def glb2xyzrgb(glb_path: str, voxel_size: float = 32) -> Dict[str, Any]:
     Args:
         glb_path: Path to input GLB file
         voxel_size: Resolution for voxelization (default: 32)
+        voxelizer: Which voxelizer to use, "trimesh" (default) or "obj2voxel"
+            (the legacy GLB -> OBJ -> C++ obj2voxel path)
 
     Returns:
         Dictionary with:
@@ -99,15 +101,46 @@ def glb2xyzrgb(glb_path: str, voxel_size: float = 32) -> Dict[str, Any]:
         - xyzrgb_content: The xyzrgb file contents as a string
         - input_stem: The stem of the input file (needed by glb2brick)
     """
-    print(f"🚀 Starting GLB->XYZRGB pipeline for: {glb_path}")
+    voxelizer = (voxelizer or "trimesh").lower()
+    if voxelizer not in ("trimesh", "obj2voxel"):
+        raise ValueError(f"Unknown voxelizer '{voxelizer}'. Use 'trimesh' or 'obj2voxel'.")
+
+    print(f"🚀 Starting GLB->XYZRGB pipeline for: {glb_path} (voxelizer={voxelizer})")
 
     input_stem = Path(glb_path).stem
     obj2vox_build_dir = Path("src/utils/cpp/obj2vox/build")
 
-    # Step 1: Voxelize the GLB directly with trimesh (color-preserving).
-    # This replaces the previous GLB -> OBJ -> obj2voxel (C++) path.
-    from .trimesh_voxelizer import glb_to_xyzrgb, write_vox_from_xyzrgb
-    xyzrgb_build_path = glb_to_xyzrgb(glb_path, input_stem, voxel_size, obj2vox_build_dir)
+    from .trimesh_voxelizer import write_vox_from_xyzrgb
+
+    if voxelizer == "obj2voxel":
+        # Legacy path: GLB -> OBJ (+texture) -> C++ obj2voxel -> xyzrgb.
+        print(f"\n📝 Step 1: Converting GLB to OBJ...")
+        from .glb2obj import glb_to_obj
+        obj_path, mtl_path, texture_path = glb_to_obj(glb_path)
+
+        from .obj2voxel import obj_to_voxel
+        xyzrgb_build_path = obj_to_voxel(obj_path, mtl_path, texture_path, input_stem, voxel_size)
+
+        # Clean up OBJ/MTL/texture intermediates.
+        files_to_delete = [
+            obj2vox_build_dir / Path(obj_path).name,
+            obj2vox_build_dir / "material.mtl",
+            Path(obj_path),
+            Path(mtl_path) if mtl_path else None,
+            Path(texture_path) if texture_path else None,
+        ]
+        # Remove every copied texture (material_0.png, material_1.png, ...) from
+        # both the build dir and the source dir.
+        for texture_dir in {obj2vox_build_dir, Path(obj_path).parent}:
+            files_to_delete.extend(texture_dir.glob("material_*.png"))
+        for file_path in files_to_delete:
+            if file_path and file_path.exists():
+                file_path.unlink()
+                print(f"  🗑️  Deleted: {file_path}")
+    else:
+        # Default path: voxelize the GLB directly with trimesh (color-preserving).
+        from .trimesh_voxelizer import glb_to_xyzrgb
+        xyzrgb_build_path = glb_to_xyzrgb(glb_path, input_stem, voxel_size, obj2vox_build_dir)
 
     # Step 2: Convert xyzrgb colors to the LDR palette.
     print(f"\n🔄 Step 2: Mapping voxel colors to LDR palette...")
@@ -131,7 +164,7 @@ def glb2xyzrgb(glb_path: str, voxel_size: float = 32) -> Dict[str, Any]:
     }
 
 
-def glb2brick(glb_path: str, world_size: float = 25.0, voxel_size: float = 32, xyzrgb_path: str = None, auto_adjust_brick_count: bool = True) -> Dict[str, Any]:
+def glb2brick(glb_path: str, world_size: float = 25.0, voxel_size: float = 32, xyzrgb_path: str = None, auto_adjust_brick_count: bool = True, voxelizer: str = "trimesh") -> Dict[str, Any]:
     """
     Complete pipeline: GLB -> PLY -> voxel array -> optimized bricks.
     
@@ -143,8 +176,9 @@ def glb2brick(glb_path: str, world_size: float = 25.0, voxel_size: float = 32, x
         glb_path: Path to input GLB file
         world_size: World size for processing (default: 25.0)
         voxel_size: Resolution for voxelization (default: 32)
-        xyzrgb_path: Optional path to existing .xyzrgb file to skip GLB->OBJ->voxel conversion
+        xyzrgb_path: Optional path to existing .xyzrgb file to skip GLB->voxel conversion
         auto_adjust_brick_count: Whether to auto-adjust voxel size to hit target brick count (default: True)
+        voxelizer: Which voxelizer to use, "trimesh" (default) or "obj2voxel"
     
     Returns:
         Dictionary with processing information
@@ -168,8 +202,8 @@ def glb2brick(glb_path: str, world_size: float = 25.0, voxel_size: float = 32, x
             print(f"\n⏩ Skipping GLB->OBJ->voxel conversion, loading from existing XYZRGB file...")
             voxel_array, color_array, metadata = load_xyzrgb_to_voxel_array(xyzrgb_path)
         else:
-            # Run GLB -> OBJ -> voxel -> LDR-color conversion via glb2xyzrgb
-            xyzrgb_info = glb2xyzrgb(glb_path, voxel_size=voxel_size)
+            # Run GLB -> voxel -> LDR-color conversion via glb2xyzrgb
+            xyzrgb_info = glb2xyzrgb(glb_path, voxel_size=voxel_size, voxelizer=voxelizer)
             xyzrgb_path = xyzrgb_info['xyzrgb_file']
             voxel_array, color_array, metadata = load_xyzrgb_to_voxel_array(xyzrgb_path)
         

@@ -1,6 +1,6 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
-import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard } from "lucide-react";
+import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard, Box } from "lucide-react";
 import { SEO } from "../components/SEO";
 import FallingBricks from "../components/FallingBricks";
 import LoginModal from "../components/LoginModal";
@@ -14,6 +14,7 @@ import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { useAuth } from "../contexts/AuthContext";
 import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
+import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
 
 // Check if 3D streaming (SAM3D) is enabled by default via environment variable
@@ -59,6 +60,12 @@ type GenerationType = "streaming" | "non-streaming";
 const GENERATION_TYPE_PRESETS: { label: string; value: GenerationType; description?: string }[] = [
   { label: "Streaming", value: "streaming", description: "SAM3D with live 3D preview" },
   { label: "Standard", value: "non-streaming", description: "Trellis (faster, no preview)" },
+];
+
+type VoxelizerOption = "trimesh" | "obj2voxel";
+const VOXELIZER_PRESETS: { label: string; value: VoxelizerOption; description?: string }[] = [
+  { label: "Trimesh", value: "trimesh", description: "Python voxelizer with texture color sampling" },
+  { label: "obj2voxel", value: "obj2voxel", description: "Legacy C++ voxelizer" },
 ];
 
 const NAV_LINKS = [
@@ -196,6 +203,7 @@ export default function LandingPage() {
   const [generationType, setGenerationType] = useState<GenerationType>(
     STREAMING_ENABLED_BY_DEFAULT ? "streaming" : "non-streaming"
   );
+  const [voxelizer, setVoxelizer] = useState<VoxelizerOption>("trimesh");
   const [imgFile, setImgFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -223,6 +231,7 @@ export default function LandingPage() {
   const navigate = useNavigate();
   const [isCardHidden, setIsCardHidden] = useState(false);
   const [areOptionsHidden, setAreOptionsHidden] = useState(true);
+  const [showGlbUpload, setShowGlbUpload] = useState(false);
 
   // Login modal state
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -398,6 +407,7 @@ export default function LandingPage() {
         modelQuality?: ModelQuality;
         styleOption?: StyleOption;
         generationType?: GenerationType;
+        voxelizer?: VoxelizerOption;
         areOptionsHidden?: boolean;
         image?: { name: string; type: string; base64: string } | null;
       };
@@ -406,6 +416,7 @@ export default function LandingPage() {
       if (payload.modelQuality) setModelQuality(payload.modelQuality);
       if (payload.styleOption) setStyleOption(payload.styleOption);
       if (payload.generationType) setGenerationType(payload.generationType);
+      if (payload.voxelizer) setVoxelizer(payload.voxelizer);
       if (typeof payload.areOptionsHidden === 'boolean') setAreOptionsHidden(payload.areOptionsHidden);
       if (payload.image && payload.image.base64) {
         try {
@@ -526,6 +537,7 @@ export default function LandingPage() {
         modelQuality,
         styleOption,
         generationType,
+        voxelizer,
         areOptionsHidden,
         image: imageData,
       };
@@ -659,6 +671,7 @@ export default function LandingPage() {
           promptOption,
           handleStreamEvent,
           stream3d,
+          voxelizer,
         );
         modelName = imgFile.name.replace(/\.[^/.]+$/, ''); // Remove file extension
       } else {
@@ -671,6 +684,7 @@ export default function LandingPage() {
           promptOption,
           handleStreamEvent,
           stream3d,
+          voxelizer,
         );
         modelName = prompt.trim();
       }
@@ -840,28 +854,44 @@ export default function LandingPage() {
                   onBlur={() => setFocused(false)}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPrompt(e.target.value)}
                   placeholder={imgFile ? "Image uploaded - text prompt disabled" : (showTypewriter ? typedPlaceholder : "")}
-                  className="input w-full h-12 rounded-full pr-40 pl-4 text-base shadow-sm border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="input w-full h-12 rounded-full pr-64 pl-4 text-base shadow-sm border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   disabled={loading || !!imgFile}
                 />
-                <button
-                  type="button"
-                  onClick={onPickImage}
-                  className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white hover:bg-slate-100 px-3 py-1.5 text-sm text-slate-600 transition-colors"
+                <div
+                  className="flex items-center gap-1.5"
                   style={{
                     position: 'absolute',
                     right: '6px',
-                    left: 'auto',
                     top: '50%',
                     transform: 'translateY(-50%)',
                     zIndex: 2,
                   }}
-                  aria-label="Upload image"
-                  title="Upload image"
-                  disabled={loading}
                 >
-                  <ImageIcon className="h-4 w-4" />
-                  Upload Image
-                </button>
+                  <button
+                    type="button"
+                    onClick={onPickImage}
+                    className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white hover:bg-slate-100 px-3 py-1.5 text-sm text-slate-600 transition-colors"
+                    aria-label="Upload image"
+                    title="Upload image"
+                    disabled={loading}
+                  >
+                    <ImageIcon className="h-4 w-4" />
+                    Upload Image
+                  </button>
+                  {false && (
+                  <button
+                    type="button"
+                    onClick={() => setShowGlbUpload(prev => !prev)}
+                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors ${showGlbUpload ? 'border-[#f44336] bg-red-50 text-[#f44336]' : 'border-gray-200 bg-white hover:bg-slate-100 text-slate-600'}`}
+                    aria-label="Upload glb"
+                    title="Upload glb"
+                    disabled={loading}
+                  >
+                    <Box className="h-4 w-4" />
+                    Upload glb
+                  </button>
+                  )}
+                </div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -873,24 +903,30 @@ export default function LandingPage() {
               </div>
 
               {!loading && (
-              <div className="flex items-center justify-center gap-2 mt-3 landing-fade-in landing-delay-3">
-                <button
-                  type="button"
-                  onClick={onGenerate}
-                  className="inline-flex items-center justify-center h-12 rounded-full px-6 min-w-36 text-white transition-colors bg-[#f44336] cursor-pointer hover:bg-[#ff6b6b]"
-                >
-                  <Sparkles className="mr-2 h-5 w-5" />
-                  Generate
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAreOptionsHidden(prev => !prev)}
-                  className="inline-flex items-center justify-center h-10 w-10 rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
-                  aria-label="Toggle settings"
-                >
-                  <Settings className="h-5 w-5" />
-                </button>
-              </div>
+                showGlbUpload ? (
+                  <div className="mt-3 w-full max-w-xl mx-auto landing-fade-in landing-delay-3">
+                    <GlbUploadCard autoOpen />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center gap-2 mt-3 landing-fade-in landing-delay-3">
+                    <button
+                      type="button"
+                      onClick={onGenerate}
+                      className="inline-flex items-center justify-center h-12 rounded-full px-6 min-w-36 text-white transition-colors bg-[#f44336] cursor-pointer hover:bg-[#ff6b6b]"
+                    >
+                      <Sparkles className="mr-2 h-5 w-5" />
+                      Generate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAreOptionsHidden(prev => !prev)}
+                      className="inline-flex items-center justify-center h-10 w-10 rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
+                      aria-label="Toggle settings"
+                    >
+                      <Settings className="h-5 w-5" />
+                    </button>
+                  </div>
+                )
               )}
             </div>
 
@@ -998,6 +1034,31 @@ export default function LandingPage() {
                       title={gt.description}
                     >
                       {gt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Voxelizer chips - only relevant for the Standard (Trellis) 3D mode */}
+            {!loading && !areOptionsHidden && generationType === "non-streaming" && (
+              <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
+                <span className="text-sm text-slate-500">Voxelizer:</span>
+                {VOXELIZER_PRESETS.map((vx) => {
+                  const active = vx.value === voxelizer;
+                  return (
+                    <button
+                      key={vx.value}
+                      onClick={() => !loading && setVoxelizer(vx.value)}
+                      className={`rounded-full px-4 py-1 text-sm transition-all duration-150 ${
+                        active
+                          ? "bg-[#f44336] text-white border border-transparent"
+                          : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
+                      } ${loading ? "cursor-not-allowed" : "cursor-pointer"}`}
+                      disabled={loading}
+                      title={vx.description}
+                    >
+                      {vx.label}
                     </button>
                   );
                 })}
@@ -1232,8 +1293,11 @@ function HowItWorks() {
 
 function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isSupabaseConfigured } = useAuth();
   const [githubStars, setGithubStars] = useState<number | null>(null);
+
+  // Show profile menu if user is logged in OR if Supabase is not configured
+  const showProfileMenu = user || !isSupabaseConfigured;
 
   useEffect(() => {
     let cancelled = false;
@@ -1311,8 +1375,8 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
 
       {/* Login / Sign Up OR Account Menu */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {user ? (
-          // Logged in: show GitHub stars and account dropdown
+        {showProfileMenu ? (
+          // Logged in or no Supabase: show GitHub stars and account dropdown
           <>
             {githubStarLink}
 

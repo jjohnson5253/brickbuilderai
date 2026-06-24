@@ -45,11 +45,28 @@ def obj_to_voxel(
         shutil.copy(mtl_path, mtl_build_path)
         print(f"  📋 Copied MTL to: {mtl_build_path}")
     
+    # Copy ALL texture/image files that live next to the OBJ. When a GLB has
+    # multiple materials, trimesh emits several textures (material_0.png,
+    # material_1.png, ...) and the MTL references all of them. Copying only the
+    # first one makes obj2voxel abort on faces using the other materials.
+    copied_textures = []
+    source_dir = Path(obj_path).parent
+    texture_exts = {".png", ".jpg", ".jpeg", ".bmp", ".tga"}
+    for img_file in sorted(source_dir.iterdir()):
+        if img_file.suffix.lower() in texture_exts:
+            dest = obj2vox_build_dir / img_file.name
+            shutil.copy(img_file, dest)
+            copied_textures.append(dest)
+            print(f"  📋 Copied texture to: {dest}")
+
+    # Fall back to the explicitly provided texture if it lives elsewhere and
+    # wasn't already copied above.
     texture_build_path = None
     if texture_path:
         texture_build_path = obj2vox_build_dir / Path(texture_path).name
-        shutil.copy(texture_path, texture_build_path)
-        print(f"  📋 Copied texture to: {texture_build_path}")
+        if texture_build_path not in copied_textures:
+            shutil.copy(texture_path, texture_build_path)
+            print(f"  📋 Copied texture to: {texture_build_path}")
     
     # Run obj2voxel executable
     xyzrgb_filename = f"{input_stem}.xyzrgb"
