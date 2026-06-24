@@ -11,6 +11,7 @@ import os
 import logging
 import asyncio
 import tempfile
+from typing import Optional
 
 from fastapi import UploadFile, File, Form, Depends, HTTPException
 from pydantic import BaseModel

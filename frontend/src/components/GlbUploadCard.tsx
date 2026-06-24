@@ -24,6 +24,7 @@ function GlbViewer({ objectUrl }: { objectUrl: string }) {
     let renderer: THREE.WebGLRenderer | null = null;
     let animationId = 0;
     let resizeObserver: ResizeObserver | null = null;
+    // Holds the controls instance for cleanup
     let controls: { dispose: () => void; update: () => void } | null = null;
 
     const container = containerRef.current;
@@ -44,6 +45,7 @@ function GlbViewer({ objectUrl }: { objectUrl: string }) {
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0xeef2f5);
+
         const camera = new THREE.PerspectiveCamera(45, width / height, 0.01, 1000);
 
         renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -67,6 +69,7 @@ function GlbViewer({ objectUrl }: { objectUrl: string }) {
             const model = gltf.scene;
             scene.add(model);
 
+            // Frame the model.
             const bbox = new THREE.Box3().setFromObject(model);
             const size = bbox.getSize(new THREE.Vector3());
             const center = bbox.getCenter(new THREE.Vector3());
@@ -168,7 +171,8 @@ export function GlbUploadCard({ autoOpen = false }: { autoOpen?: boolean } = {})
     };
   }, [objectUrl]);
 
-  // Open the file browser automatically when requested by the parent.
+  // Open the file browser automatically when requested (e.g. the parent's
+  // "Upload glb" button was clicked).
   useEffect(() => {
     if (autoOpen) fileInputRef.current?.click();
   }, [autoOpen]);
@@ -279,7 +283,7 @@ export function GlbUploadCard({ autoOpen = false }: { autoOpen?: boolean } = {})
             })}
           </div>
 
-          <div className="flex flex-col items-start gap-3">
+          <div className="flex flex-col items-center gap-3">
             <button
               type="button"
               onClick={handleConvert}
