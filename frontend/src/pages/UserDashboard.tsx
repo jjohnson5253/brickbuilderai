@@ -12,7 +12,6 @@ import { GetUserGenerationsApiService, GenerationWithOrder, OrderInfo } from "..
 import { GetGenerationsByImageApiService, GenerationIteration } from "../services/getGenerationsByImageApi";
 import { SEO } from "../components/SEO";
 import { SiteFooter } from "../components/SiteFooter";
-import { GlbUploadCard } from "../components/GlbUploadCard";
 
 type TabKey = "dashboard" | "generations" | "orders" | "settings";
 
@@ -605,8 +604,6 @@ const SettingsPanel: React.FC = () => {
           )}
         </div>
       </div>
-
-      <GlbUploadCard />
     </div>
   );
 };
