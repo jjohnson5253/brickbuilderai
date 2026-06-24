@@ -84,7 +84,7 @@ def load_xyzrgb_to_voxel_array(xyzrgb_path: str) -> Tuple[np.ndarray, np.ndarray
 
 def glb2xyzrgb(glb_path: str, voxel_size: float = 32) -> Dict[str, Any]:
     """
-    First half of the pipeline: GLB -> OBJ -> voxelization -> xyzrgb file.
+    First half of the pipeline: GLB -> trimesh voxelization -> xyzrgb file.
 
     Returns immediately once the xyzrgb content is ready, without running
     brick optimization or LDR generation.
@@ -104,22 +104,13 @@ def glb2xyzrgb(glb_path: str, voxel_size: float = 32) -> Dict[str, Any]:
     input_stem = Path(glb_path).stem
     obj2vox_build_dir = Path("src/utils/cpp/obj2vox/build")
 
-    # Step 1: Convert GLB to OBJ with texture
-    print(f"\n📝 Step 1: Converting GLB to OBJ...")
-    from .glb2obj import glb_to_obj
-    obj_path, mtl_path, texture_path = glb_to_obj(glb_path)
-    print(f"  ✅ Created OBJ: {obj_path}")
-    if mtl_path:
-        print(f"  ✅ Created MTL: {mtl_path}")
-    if texture_path:
-        print(f"  ✅ Found texture: {texture_path}")
+    # Step 1: Voxelize the GLB directly with trimesh (color-preserving).
+    # This replaces the previous GLB -> OBJ -> obj2voxel (C++) path.
+    from .trimesh_voxelizer import glb_to_xyzrgb, write_vox_from_xyzrgb
+    xyzrgb_build_path = glb_to_xyzrgb(glb_path, input_stem, voxel_size, obj2vox_build_dir)
 
-    # Step 2: Convert OBJ to voxels using obj2voxel
-    from .obj2voxel import obj_to_voxel
-    xyzrgb_build_path = obj_to_voxel(obj_path, mtl_path, texture_path, input_stem, voxel_size)
-
-    # Load and convert xyzrgb colors to LDR palette
-    print(f"\n🔄 Step 3: Loading voxels from generated XYZRGB file...")
+    # Step 2: Convert xyzrgb colors to the LDR palette.
+    print(f"\n🔄 Step 2: Mapping voxel colors to LDR palette...")
     xyzrgb_path = str(xyzrgb_build_path)
 
     with open(xyzrgb_path, 'r') as f:
@@ -129,19 +120,9 @@ def glb2xyzrgb(glb_path: str, voxel_size: float = 32) -> Dict[str, Any]:
         f.write(converted_xyzrgb_content)
     print(f"  💾 Saved LDR-colored XYZRGB file: {xyzrgb_path}")
 
-    # Clean up OBJ/MTL/texture intermediates
-    files_to_delete = [
-        obj2vox_build_dir / Path(obj_path).name,
-        obj2vox_build_dir / "material.mtl",
-        obj2vox_build_dir / "material_0.png",
-        Path(obj_path),
-        Path(mtl_path) if mtl_path else None,
-        Path(texture_path) if texture_path else None,
-    ]
-    for file_path in files_to_delete:
-        if file_path and file_path.exists():
-            file_path.unlink()
-            print(f"  🗑️  Deleted: {file_path}")
+    # Step 3: Emit the secondary .vox artifact (used by storage uploads).
+    vox_path = str(obj2vox_build_dir / f"{input_stem}.vox")
+    write_vox_from_xyzrgb(vox_path, converted_xyzrgb_content)
 
     return {
         'xyzrgb_file': xyzrgb_path,
@@ -334,8 +315,7 @@ def glb2brick(glb_path: str, world_size: float = 25.0, voxel_size: float = 32, x
         'problematic_xyzrgb_file': problematic_xyzrgb_path,
         'brick_count': len(brick_structure.bricks),
         'processing_steps': [
-            'GLB -> OBJ conversion',
-            'OBJ -> XYZRGB voxelization (obj2voxel)',
+            'GLB -> XYZRGB voxelization (trimesh)',
             'XYZRGB -> Voxel Array', 
             'Voxel Array -> Optimized Bricks',
             'Optimized Bricks -> Colored Visualization'
