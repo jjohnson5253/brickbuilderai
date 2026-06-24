@@ -1,7 +1,7 @@
 # Minimal Dockerfile for Railway deployment
 FROM python:3.11-slim
 
-# Install system dependencies for Open3D and C++ compilation
+# Install system dependencies for Open3D
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libx11-6 \
@@ -9,9 +9,6 @@ RUN apt-get update && \
         xvfb \
         curl \
         unzip \
-        cmake \
-        g++ \
-        make \
         && rm -rf /var/lib/apt/lists/* \
         && apt-get clean
 
@@ -31,14 +28,6 @@ RUN mkdir -p /root/ldraw && \
 
 # Copy project files (README.md is required for package build)
 COPY . .
-
-# Build obj2voxel C++ executable
-RUN cd src/utils/cpp/obj2vox && \
-    mkdir -p build && \
-    cd build && \
-    cmake .. && \
-    make && \
-    chmod +x obj2voxel
 
 # Install Python dependencies
 RUN uv sync --frozen
