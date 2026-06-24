@@ -48,6 +48,28 @@ Upload a photo or type a prompt, and BrickBuilder turns it into a real brick bui
 
 ## Running locally
 
+<details>
+<summary>🤖 <strong>AI Setup Prompt</strong> — Copy this prompt to your AI assistant to set up the project automatically</summary>
+
+```
+Help me set up and run the BrickBuilder project locally.
+
+Prerequisites I need installed:
+- Python 3.10+
+- Node.js
+- uv (Python package manager from Astral)
+
+Steps:
+1. Copy backend/.env-example to backend/.env and frontend/.env-example to frontend/.env
+2. Ask me for my fal.ai API key and set FAL_KEY in backend/.env
+3. Run `python install.py` to install dependencies (uses uv for backend, npm for frontend)
+4. Run `python run.py` to start both the backend API (port 8002) and frontend dev server
+
+The backend is a FastAPI server, frontend is React+Vite. Let me know if any dependencies are missing.
+```
+
+</details>
+
 ### Prerequisites
 
 | Requirement | Notes |
