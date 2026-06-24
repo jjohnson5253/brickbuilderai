@@ -747,7 +747,15 @@ export default function LandingPage() {
       
     } catch (error) {
       console.error('Generation failed:', error);
-      setGenerationError('Generation failed. Please try again');
+      // Check if error is a network error - if user is online but fetch failed, backend is likely not running
+      const isNetworkError = error instanceof TypeError && error.message === 'Failed to fetch';
+      let errorMessage = 'Generation failed. Please try again';
+      if (isNetworkError) {
+        errorMessage = navigator.onLine 
+          ? 'Backend services not running' 
+          : 'No internet connection';
+      }
+      setGenerationError(errorMessage);
       setLoading(false);
       setPreviewImageUrl(null);
       setGenerationStatus(null);
