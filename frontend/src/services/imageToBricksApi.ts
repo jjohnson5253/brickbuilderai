@@ -240,6 +240,7 @@ export class ImageToBricksApiService {
     promptOption: string = 'a',
     onEvent?: (event: StreamEvent) => void,
     stream3d: boolean = true,
+    voxelizer: string = 'trimesh',
   ): Promise<ImageToBricksResponse> {
     console.log('[stream] Sending streaming image-to-bricks request');
 
@@ -270,6 +271,7 @@ export class ImageToBricksApiService {
         use_red_bricks: true,
         stream: true,
         stream_3d: stream3d,
+        voxelizer: voxelizer,
       }),
     });
 
