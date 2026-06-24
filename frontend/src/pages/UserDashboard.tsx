@@ -194,16 +194,18 @@ const GenerationCard: React.FC<{g: GenerationWithOrder; onView: () => void; auth
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm hover:shadow transition-shadow">
       <div className="p-3 sm:p-4 flex gap-3 sm:gap-4">
-        <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden bg-slate-100 border flex items-center justify-center flex-shrink-0">
+        <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden bg-slate-100 border flex-shrink-0">
           {mainImage ? (
             <img
               src={mainImage}
               alt={g.prompt}
-              className="w-full h-full object-cover object-center"
+              className="absolute inset-0 w-full h-full object-contain"
               draggable={false}
             />
           ) : (
-            <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-slate-300" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-slate-300" />
+            </div>
           )}
           {showOverlay && (
             <div className="absolute top-1 right-1 w-1/3 aspect-square rounded-md overflow-hidden border-2 border-white shadow-md bg-slate-100">
@@ -374,16 +376,18 @@ const OrderCard: React.FC<{g: GenerationWithOrder; onView: () => void}> = ({g, o
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm hover:shadow transition-shadow">
       <div className="p-3 sm:p-4 flex gap-3 sm:gap-4">
-        <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-lg overflow-hidden bg-slate-100 border flex items-center justify-center flex-shrink-0">
+        <div className="relative w-20 h-20 sm:w-28 sm:h-28 rounded-lg overflow-hidden bg-slate-100 border flex-shrink-0">
           {previewImage ? (
             <img
               src={previewImage}
               alt={displayPrompt}
-              className="w-full h-full object-cover object-center"
+              className="absolute inset-0 w-full h-full object-contain"
               draggable={false}
             />
           ) : (
-            <Box className="w-6 h-6 sm:w-8 sm:h-8 text-slate-300" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Box className="w-6 h-6 sm:w-8 sm:h-8 text-slate-300" />
+            </div>
           )}
         </div>
 
