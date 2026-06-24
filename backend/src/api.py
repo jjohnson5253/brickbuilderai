@@ -107,7 +107,7 @@ def require_fal_key():
     if not FAL_KEY:
         raise HTTPException(
             status_code=503,
-            detail="FAL_KEY not configured. Set FAL_KEY in .env file."
+            detail="FAL_KEY not configured. Set FAL_KEY in .env file and restart the backend server."
         )
 
 # Validate authentication configuration at startup
