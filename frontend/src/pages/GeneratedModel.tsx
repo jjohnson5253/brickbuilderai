@@ -13,6 +13,13 @@ const DEMO_MODEL_IDS = new Set(
   Object.values(modelsMetadata).map((m) => m.id)
 );
 
+// When running against the local database, generations created on the live
+// hosted site won't exist locally. In that case we offer a link to view the
+// generation on the live deployment instead.
+const API_MODE = import.meta.env.VITE_API_MODE || 'local';
+const IS_LOCAL_API = API_MODE === 'local';
+const LIVE_SITE_URL = 'https://trybrickbuilder.com';
+
 // Mirrors the backend /updateUsername validation: 3-30 chars,
 // letters, numbers, underscores, hyphens, or periods.
 const USERNAME_PATTERN = /^[A-Za-z0-9_.-]{3,30}$/;
@@ -1614,13 +1621,27 @@ export default function GeneratedModel() {
         {generationError && !generationLoading && (
           <div className="flex flex-col items-center justify-center py-32">
             <div className="text-red-500 text-lg font-semibold mb-4">Failed to Load Model</div>
-            <p className="text-slate-600 mb-6">{generationError}</p>
-            <button
-              onClick={() => navigate("/")}
-              className="px-6 py-2 bg-[#f44336] text-white rounded-full hover:bg-[#ff6b6b] transition-all"
-            >
-              Go Back Home
-            </button>
+            <p className="text-slate-600 mb-6">
+              {/not found|404/i.test(generationError) ? 'Generation not found' : generationError}
+            </p>
+
+            {/* When running locally, the generation may only exist on the live
+                hosted site. Offer a link to view it there. */}
+            {IS_LOCAL_API && searchParams.get('id') && (
+              <div className="max-w-md text-center bg-amber-50 border border-amber-200 rounded-xl px-6 py-4">
+                <p className="text-sm text-slate-700">
+                  This generation might be hosted on the live BrickBuilder site.{' '}
+                  <a
+                    href={`${LIVE_SITE_URL}/generated-model?id=${searchParams.get('id')}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#f44336] hover:text-[#ff6b6b] underline"
+                  >
+                    View it there
+                  </a>
+                </p>
+              </div>
+            )}
           </div>
         )}
 
