@@ -1,6 +1,0 @@
-# directories
-build*/
-
-# files
-**/.directory
-**/CMakeLists.txt.user

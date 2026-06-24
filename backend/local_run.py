@@ -4,8 +4,9 @@ Local development server script
 """
 import sys
 import os
-import subprocess
-from pathlib import Path
+import time
+import threading
+from contextlib import contextmanager
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -14,21 +15,48 @@ load_dotenv()
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-# Build obj2voxel C++ executable if not already built
-obj2voxel_exe = Path("src/utils/cpp/obj2vox/build/obj2voxel")
-if not obj2voxel_exe.exists():
-    print("Building obj2voxel executable...")
-    build_dir = Path("src/utils/cpp/obj2vox/build")
-    build_dir.mkdir(parents=True, exist_ok=True)
-    
-    subprocess.run(["cmake", ".."], cwd=str(build_dir), check=True)
-    subprocess.run(["make"], cwd=str(build_dir), check=True)
-    print("obj2voxel build complete")
+
+def log(message: str) -> None:
+    """Print a timestamped startup message that flushes immediately."""
+    print(f"[startup] {message}", flush=True)
+
+
+@contextmanager
+def heartbeat(message: str):
+    """Print a progress message every second while the wrapped block runs."""
+    done = threading.Event()
+
+    def _beat() -> None:
+        seconds = 0
+        while not done.wait(1):
+            seconds += 1
+            log(f"{message} ({seconds}s)")
+
+    thread = threading.Thread(target=_beat, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        done.set()
+        thread.join()
+
 
 if __name__ == "__main__":
-    import uvicorn
-    from src.api import app
-    
+    _start = time.perf_counter()
+
+    log("Starting BrickBuilderAI backend...")
+    log("Loading dependencies (Open3D, ML libraries, API routes)... this can take ~20s on first start")
+
+    with heartbeat("Loading dependencies. Please wait."):
+        import uvicorn
+
+    log("Importing application (src.api)...")
+    with heartbeat("Importing application. Please wait."):
+        from src.api import app
+
+    log(f"Application loaded in {time.perf_counter() - _start:.1f}s")
+    log("Launching server on http://0.0.0.0:8002 ...")
+
     uvicorn.run(
         app,
         host="0.0.0.0",
