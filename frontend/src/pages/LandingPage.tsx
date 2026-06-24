@@ -64,12 +64,6 @@ const GENERATION_TYPE_PRESETS: { label: string; value: GenerationType; descripti
   { label: "Standard", value: "non-streaming", description: "Trellis (faster, no preview)" },
 ];
 
-type VoxelizerOption = "trimesh" | "obj2voxel";
-const VOXELIZER_PRESETS: { label: string; value: VoxelizerOption; description?: string }[] = [
-  { label: "Trimesh", value: "trimesh", description: "Python voxelizer with texture color sampling" },
-  { label: "obj2voxel", value: "obj2voxel", description: "Legacy C++ voxelizer" },
-];
-
 const NAV_LINKS = [
   { label: "Products", href: "#products" },
   { label: "Models", href: "#models" },
@@ -205,7 +199,6 @@ export default function LandingPage() {
   const [generationType, setGenerationType] = useState<GenerationType>(
     STREAMING_ENABLED_BY_DEFAULT ? "streaming" : "non-streaming"
   );
-  const [voxelizer, setVoxelizer] = useState<VoxelizerOption>("trimesh");
   const [imgFile, setImgFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -409,7 +402,6 @@ export default function LandingPage() {
         modelQuality?: ModelQuality;
         styleOption?: StyleOption;
         generationType?: GenerationType;
-        voxelizer?: VoxelizerOption;
         areOptionsHidden?: boolean;
         image?: { name: string; type: string; base64: string } | null;
       };
@@ -418,7 +410,6 @@ export default function LandingPage() {
       if (payload.modelQuality) setModelQuality(payload.modelQuality);
       if (payload.styleOption) setStyleOption(payload.styleOption);
       if (payload.generationType) setGenerationType(payload.generationType);
-      if (payload.voxelizer) setVoxelizer(payload.voxelizer);
       if (typeof payload.areOptionsHidden === 'boolean') setAreOptionsHidden(payload.areOptionsHidden);
       if (payload.image && payload.image.base64) {
         try {
@@ -539,7 +530,6 @@ export default function LandingPage() {
         modelQuality,
         styleOption,
         generationType,
-        voxelizer,
         areOptionsHidden,
         image: imageData,
       };
@@ -673,7 +663,6 @@ export default function LandingPage() {
           promptOption,
           handleStreamEvent,
           stream3d,
-          voxelizer,
         );
         modelName = imgFile.name.replace(/\.[^/.]+$/, ''); // Remove file extension
       } else {
@@ -686,7 +675,6 @@ export default function LandingPage() {
           promptOption,
           handleStreamEvent,
           stream3d,
-          voxelizer,
         );
         modelName = prompt.trim();
       }
@@ -1023,31 +1011,6 @@ export default function LandingPage() {
                       title={gt.description}
                     >
                       {gt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Voxelizer chips - only relevant for the Standard (Trellis) 3D mode */}
-            {!loading && !areOptionsHidden && generationType === "non-streaming" && (
-              <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
-                <span className="text-sm text-slate-500">Voxelizer:</span>
-                {VOXELIZER_PRESETS.map((vx) => {
-                  const active = vx.value === voxelizer;
-                  return (
-                    <button
-                      key={vx.value}
-                      onClick={() => !loading && setVoxelizer(vx.value)}
-                      className={`rounded-full px-4 py-1 text-sm transition-all duration-150 ${
-                        active
-                          ? "bg-[#f44336] text-white border border-transparent"
-                          : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
-                      } ${loading ? "cursor-not-allowed" : "cursor-pointer"}`}
-                      disabled={loading}
-                      title={vx.description}
-                    >
-                      {vx.label}
                     </button>
                   );
                 })}
