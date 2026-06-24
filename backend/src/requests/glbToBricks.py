@@ -175,7 +175,7 @@ async def process_glb_to_bricks_task(
             user_id=user_email,
         )
     finally:
-        for path_var in ("glb_path", "ldr_path", "mpd_path", "vox_path", "xyzrgb_path"):
+        for path_var in ("glb_path", "ldr_path", "mpd_path", "vox_path", "xyzrgb_path", "problematic_xyzrgb_path"):
             try:
                 p = locals().get(path_var)
                 if p and os.path.exists(p):
