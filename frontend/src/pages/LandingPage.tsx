@@ -747,7 +747,23 @@ export default function LandingPage() {
       
     } catch (error) {
       console.error('Generation failed:', error);
-      setGenerationError('Generation failed. Please try again');
+      // Check if error is a network error - if user is online but fetch failed, backend is likely not running
+      const isNetworkError = error instanceof TypeError && error.message === 'Failed to fetch';
+      const errorMsg = error instanceof Error ? error.message : '';
+      
+      let errorMessage = 'Generation failed. Please try again';
+      if (isNetworkError) {
+        errorMessage = navigator.onLine 
+          ? 'Backend services not running. Check terminal for errors.' 
+          : 'No internet connection';
+      } else if (errorMsg.includes('FAL_KEY')) {
+        // Backend is running but FAL_KEY is not configured
+        errorMessage = 'FAL_KEY not configured. Set FAL_KEY in .env file and restart the backend server.';
+      } else if (errorMsg) {
+        // Use the error message from the backend
+        errorMessage = errorMsg;
+      }
+      setGenerationError(errorMessage);
       setLoading(false);
       setPreviewImageUrl(null);
       setGenerationStatus(null);
