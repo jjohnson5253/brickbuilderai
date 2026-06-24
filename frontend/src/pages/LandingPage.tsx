@@ -1,6 +1,6 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
-import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard } from "lucide-react";
+import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard, Box } from "lucide-react";
 import { SEO } from "../components/SEO";
 import FallingBricks from "../components/FallingBricks";
 import LoginModal from "../components/LoginModal";
@@ -229,8 +229,9 @@ export default function LandingPage() {
   const [lastGeneration, setLastGeneration] = useState<GetGenerationResponse | null>(null);
 
   const navigate = useNavigate();
-  const [isCardHidden, setIsCardHidden] = useState(true);
+  const [isCardHidden, setIsCardHidden] = useState(false);
   const [areOptionsHidden, setAreOptionsHidden] = useState(true);
+  const [showGlbUpload, setShowGlbUpload] = useState(false);
 
   // Login modal state
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -853,28 +854,42 @@ export default function LandingPage() {
                   onBlur={() => setFocused(false)}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPrompt(e.target.value)}
                   placeholder={imgFile ? "Image uploaded - text prompt disabled" : (showTypewriter ? typedPlaceholder : "")}
-                  className="input w-full h-12 rounded-full pr-40 pl-4 text-base shadow-sm border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="input w-full h-12 rounded-full pr-64 pl-4 text-base shadow-sm border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   disabled={loading || !!imgFile}
                 />
-                <button
-                  type="button"
-                  onClick={onPickImage}
-                  className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white hover:bg-slate-100 px-3 py-1.5 text-sm text-slate-600 transition-colors"
+                <div
+                  className="flex items-center gap-1.5"
                   style={{
                     position: 'absolute',
                     right: '6px',
-                    left: 'auto',
                     top: '50%',
                     transform: 'translateY(-50%)',
                     zIndex: 2,
                   }}
-                  aria-label="Upload image"
-                  title="Upload image"
-                  disabled={loading}
                 >
-                  <ImageIcon className="h-4 w-4" />
-                  Upload Image
-                </button>
+                  <button
+                    type="button"
+                    onClick={onPickImage}
+                    className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white hover:bg-slate-100 px-3 py-1.5 text-sm text-slate-600 transition-colors"
+                    aria-label="Upload image"
+                    title="Upload image"
+                    disabled={loading}
+                  >
+                    <ImageIcon className="h-4 w-4" />
+                    Upload Image
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowGlbUpload(prev => !prev)}
+                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors ${showGlbUpload ? 'border-[#f44336] bg-red-50 text-[#f44336]' : 'border-gray-200 bg-white hover:bg-slate-100 text-slate-600'}`}
+                    aria-label="Upload glb"
+                    title="Upload glb"
+                    disabled={loading}
+                  >
+                    <Box className="h-4 w-4" />
+                    Upload glb
+                  </button>
+                </div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -886,24 +901,30 @@ export default function LandingPage() {
               </div>
 
               {!loading && (
-              <div className="flex items-center justify-center gap-2 mt-3 landing-fade-in landing-delay-3">
-                <button
-                  type="button"
-                  onClick={onGenerate}
-                  className="inline-flex items-center justify-center h-12 rounded-full px-6 min-w-36 text-white transition-colors bg-[#f44336] cursor-pointer hover:bg-[#ff6b6b]"
-                >
-                  <Sparkles className="mr-2 h-5 w-5" />
-                  Generate
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAreOptionsHidden(prev => !prev)}
-                  className="inline-flex items-center justify-center h-10 w-10 rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
-                  aria-label="Toggle settings"
-                >
-                  <Settings className="h-5 w-5" />
-                </button>
-              </div>
+                showGlbUpload ? (
+                  <div className="mt-3 w-full max-w-xl mx-auto landing-fade-in landing-delay-3">
+                    <GlbUploadCard autoOpen />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center gap-2 mt-3 landing-fade-in landing-delay-3">
+                    <button
+                      type="button"
+                      onClick={onGenerate}
+                      className="inline-flex items-center justify-center h-12 rounded-full px-6 min-w-36 text-white transition-colors bg-[#f44336] cursor-pointer hover:bg-[#ff6b6b]"
+                    >
+                      <Sparkles className="mr-2 h-5 w-5" />
+                      Generate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAreOptionsHidden(prev => !prev)}
+                      className="inline-flex items-center justify-center h-10 w-10 rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
+                      aria-label="Toggle settings"
+                    >
+                      <Settings className="h-5 w-5" />
+                    </button>
+                  </div>
+                )
               )}
             </div>
 
@@ -1039,13 +1060,6 @@ export default function LandingPage() {
                     </button>
                   );
                 })}
-              </div>
-            )}
-
-            {/* Upload GLB - convert your own model through glb2brick */}
-            {!loading && !areOptionsHidden && (
-              <div className="w-full max-w-xl" style={{ zIndex: 25 }}>
-                <GlbUploadCard />
               </div>
             )}
 

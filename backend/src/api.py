@@ -1,5 +1,6 @@
 import os
 import logging
+from typing import List
 
 # Configure headless mode for Open3D before any imports
 os.environ["DISPLAY"] = ":99"
@@ -184,17 +185,18 @@ async def textToBricks_endpoint(
 
 @app.post("/glbToBricks", response_model=GlbToBricksResponse)
 async def glbToBricks_endpoint(
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     voxelizer: str = Form("trimesh"),
     detail_level: float = Form(40.0),
     auth_info: dict = Depends(get_user_with_optional_auth)
 ) -> GlbToBricksResponse:
     """
-    Upload a GLB file and convert it to a brick structure via glb2brick.
-    Choose the voxelizer with the `voxelizer` form field ("trimesh" or "obj2voxel").
+    Upload a 3D model (a .glb, or a .obj plus its .mtl/textures) and convert it
+    to a brick structure via glb2brick. Choose the voxelizer with the
+    `voxelizer` form field ("trimesh" or "obj2voxel").
     Returns generation_id immediately for polling.
     """
-    return await glb_to_bricks(file, voxelizer, detail_level, auth_info)
+    return await glb_to_bricks(files, voxelizer, detail_level, auth_info)
 
 
 @app.post("/ldrToMpd", response_model=LdrToMpdResponse)
