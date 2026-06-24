@@ -17,9 +17,11 @@ import { SiteFooter } from "../components/SiteFooter";
 import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
 
-// Check if 3D streaming (SAM3D) is enabled by default via environment variable
+// Check if 3D streaming (SAM3D) is enabled by default via environment variable.
+// Streaming requires a RunPod endpoint, so it is opt-in: default to Standard
+// (Trellis) unless VITE_ENABLE_STREAMING is explicitly set to 'true'.
 // Note: Image generation always uses flux-2 streaming regardless of this setting
-const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING !== 'false';
+const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING === 'true';
 
 // Toggle whether users must be logged in before starting a generation.
 const REQUIRE_LOGIN_FOR_GENERATION = false;
