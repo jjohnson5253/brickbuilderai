@@ -14,6 +14,7 @@ import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { useAuth } from "../contexts/AuthContext";
 import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
+import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
 
 // Check if 3D streaming (SAM3D) is enabled by default via environment variable
@@ -1038,6 +1039,13 @@ export default function LandingPage() {
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Upload GLB - convert your own model through glb2brick */}
+            {!loading && !areOptionsHidden && (
+              <div className="w-full max-w-xl" style={{ zIndex: 25 }}>
+                <GlbUploadCard />
               </div>
             )}
 
