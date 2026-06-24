@@ -108,7 +108,8 @@ def glb2xyzrgb(glb_path: str, voxel_size: float = 32, voxelizer: str = "trimesh"
     print(f"🚀 Starting GLB->XYZRGB pipeline for: {glb_path} (voxelizer={voxelizer})")
 
     input_stem = Path(glb_path).stem
-    obj2vox_build_dir = Path("src/utils/cpp/obj2vox/build")
+    obj2vox_build_dir = Path("tmp")
+    obj2vox_build_dir.mkdir(parents=True, exist_ok=True)
 
     from .trimesh_voxelizer import write_vox_from_xyzrgb
 
@@ -186,7 +187,8 @@ def glb2brick(glb_path: str, world_size: float = 25.0, voxel_size: float = 32, x
     print(f"🚀 Starting full pipeline for: {glb_path}")
     
     input_stem = Path(glb_path).stem
-    obj2vox_build_dir = Path("src/utils/cpp/obj2vox/build")
+    obj2vox_build_dir = Path("tmp")
+    obj2vox_build_dir.mkdir(parents=True, exist_ok=True)
     
     # Determine if we should run brick count adjustment
     should_adjust = auto_adjust_brick_count and MAX_VOXEL_ADJUSTMENT_ITERATIONS > 1
