@@ -113,9 +113,8 @@ The SAM3D worker image is published publicly on Docker Hub as `jjohnson5253/mani
 See `serverless/README.md` if you want to build and push your own image instead.
 
 ## Attributes
-- Voxelization: https://github.com/eisenwave/obj2voxel
 - Legolization: https://github.com/AvaLovelace1/BrickGPT/
-- image-to-3D streaming: https://github.com/rehan-remade/Manifold
+- Image-to-3D Streaming: https://github.com/rehan-remade/Manifold
 
 ## License
 
