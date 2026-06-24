@@ -18,23 +18,21 @@ const getBaseUrl = (): string => {
 
 export class GlbToBricksApiService {
   /**
-   * Upload a model (a single .glb, or a .obj plus its .mtl/textures) and start
-   * a brick conversion. Returns the generation_id; poll GET /generation/{id}.
+   * Upload a GLB file and start a brick conversion.
+   * Returns the generation_id; poll GET /generation/{id} for status.
    */
-  static async uploadModel(
-    files: File[],
+  static async uploadGlb(
+    file: File,
     voxelizer: 'trimesh' | 'obj2voxel' = 'trimesh',
     detailLevel: number = 40,
     authToken?: string,
   ): Promise<GlbToBricksResponse> {
-    if (!files || files.length === 0) {
-      throw new Error('At least one file is required');
+    if (!file) {
+      throw new Error('A GLB file is required');
     }
 
     const formData = new FormData();
-    for (const f of files) {
-      formData.append('files', f);
-    }
+    formData.append('file', file);
     formData.append('voxelizer', voxelizer);
     formData.append('detail_level', String(detailLevel));
 
@@ -50,7 +48,7 @@ export class GlbToBricksApiService {
     });
 
     if (!response.ok) {
-      let errorMessage = 'Failed to convert model to bricks';
+      let errorMessage = 'Failed to convert GLB to bricks';
       try {
         const errorText = await response.text();
         try {
