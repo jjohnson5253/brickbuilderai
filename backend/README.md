@@ -124,5 +124,3 @@ can view events at `https://dashboard.stripe.com/acct_1SRdqKBSm75IitZv/test/work
 Colors used are in `gobrick_colors.csv`
 ### Part Types
 Part types used are in `brick_library.json`
-
-Copyright Jake Johnson and Jacob Lindberg 2026
