@@ -125,11 +125,14 @@ def glb2xyzrgb(glb_path: str, voxel_size: float = 32, voxelizer: str = "trimesh"
         files_to_delete = [
             obj2vox_build_dir / Path(obj_path).name,
             obj2vox_build_dir / "material.mtl",
-            obj2vox_build_dir / "material_0.png",
             Path(obj_path),
             Path(mtl_path) if mtl_path else None,
             Path(texture_path) if texture_path else None,
         ]
+        # Remove every copied texture (material_0.png, material_1.png, ...) from
+        # both the build dir and the source dir.
+        for texture_dir in {obj2vox_build_dir, Path(obj_path).parent}:
+            files_to_delete.extend(texture_dir.glob("material_*.png"))
         for file_path in files_to_delete:
             if file_path and file_path.exists():
                 file_path.unlink()
