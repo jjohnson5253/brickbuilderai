@@ -17,6 +17,3 @@ You can renew ssl certs on vercel like this:
 ```bash
 vercel certs issue brickbuilder.ai
 ```
-
-## License
-Copyright Jake Johnson and Jacob Lindberg 2026
