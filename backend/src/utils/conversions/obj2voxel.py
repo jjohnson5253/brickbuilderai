@@ -2,6 +2,7 @@
 
 import subprocess
 import shutil
+import sys
 from pathlib import Path
 from typing import Tuple, Optional
 
@@ -55,8 +56,13 @@ def obj_to_voxel(
     xyzrgb_filename = f"{input_stem}.xyzrgb"
     xyzrgb_build_path = obj2vox_build_dir / xyzrgb_filename
     
-    # Get absolute path to the executable
-    obj2voxel_exe = (obj2vox_build_dir / "obj2voxel").resolve()
+    # Get absolute path to the executable (use .exe on Windows)
+    exe_name = "obj2voxel.exe" if sys.platform == "win32" else "obj2voxel"
+    obj2voxel_exe = (obj2vox_build_dir / exe_name).resolve()
+    
+    # Also check Release subfolder on Windows (Visual Studio output)
+    if not obj2voxel_exe.exists() and sys.platform == "win32":
+        obj2voxel_exe = (obj2vox_build_dir / "Release" / exe_name).resolve()
     
     if not obj2voxel_exe.exists():
         raise RuntimeError(f"obj2voxel executable not found: {obj2voxel_exe}")
