@@ -184,6 +184,17 @@ async def process_update_model_task(
         except asyncio.CancelledError:
             pass
 
+        # Clean up tmp artifacts written by glb2brick (vox / problematic xyzrgb
+        # land in backend/tmp, outside the TemporaryDirectory used above).
+        try:
+            result_paths = locals().get('result') or {}
+            for key in ('ldr_file', 'vox_file', 'xyzrgb_file', 'problematic_xyzrgb_file'):
+                p = result_paths.get(key)
+                if p and Path(p).exists():
+                    Path(p).unlink()
+        except Exception as cleanup_e:
+            logger.warning(f"Failed to clean up temporary files: {cleanup_e}")
+
 
 async def update_model(request: UpdateModelRequest, auth_info: dict) -> UpdateModelResponse:
     """

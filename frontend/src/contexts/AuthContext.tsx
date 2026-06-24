@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { User, Session, AuthError } from '@supabase/supabase-js'
-import { supabase } from '../lib/supabase'
+import { supabase, isSupabaseConfigured } from '../lib/supabase'
 import { UpdateUsernameApiService, UsernameTakenError } from '../services/updateUsernameApi'
 import { ClaimGenerationApiService } from '../services/claimGenerationApi'
 import { getAnonymousGenerationIds, removeAnonymousGenerationId } from '../utils/anonGenerations'
@@ -19,6 +19,7 @@ interface AuthContextType {
   session: Session | null
   loading: boolean
   userProfile: UserProfile | null
+  isSupabaseConfigured: boolean
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>
   signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>
   signOut: () => Promise<{ error: AuthError | null }>
@@ -277,6 +278,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     session,
     loading,
     userProfile,
+    isSupabaseConfigured,
     signIn,
     signUp,
     signOut,

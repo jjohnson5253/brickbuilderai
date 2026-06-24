@@ -38,6 +38,7 @@ class TextToBricksRequest(BaseModel):
     prompt_option: Optional[str] = "a"  # Prompt option: "a", "b", or "c" to select prompt enhancement file
     stream: Optional[bool] = False  # If True, return an SSE stream (image frames always stream)
     stream_3d: Optional[bool] = True  # If True, use SAM3D streamed voxels; if False, use Trellis (non-streamed 3D)
+    voxelizer: Optional[str] = "trimesh"  # Voxelizer for non-streamed 3D: "trimesh" or "obj2voxel"
     _image_model: str = "nano-banana"  # Model for image generation
 
     @validator('prompt')
@@ -63,6 +64,12 @@ class TextToBricksRequest(BaseModel):
             raise ValueError("prompt_option must be 'a', 'b', or 'c'")
         return v
 
+    @validator('voxelizer')
+    def validate_voxelizer(cls, v):
+        if v not in ["trimesh", "obj2voxel"]:
+            raise ValueError("voxelizer must be 'trimesh' or 'obj2voxel'")
+        return v
+
 
 async def process_text_to_bricks_task(
     generation_id: str,
@@ -75,7 +82,8 @@ async def process_text_to_bricks_task(
     user_info: dict,
     auth_info: dict,
     user_email: str,
-    is_developer: bool
+    is_developer: bool,
+    voxelizer: str = "trimesh"
 ):
     """
     Background task that processes the text-to-bricks conversion.
@@ -146,7 +154,8 @@ async def process_text_to_bricks_task(
             is_base64=False,
             detail_level=detail_level,
             apply_image_editing=False,  # Image is already processed
-            status_callback=status_callback
+            status_callback=status_callback,
+            voxelizer=voxelizer
         )
         
         # Deduct credits IMMEDIATELY after successful fal.ai API calls
@@ -396,7 +405,8 @@ async def text_to_bricks(
             user_info=user_info,
             auth_info=auth_info,
             user_email=user_email,
-            is_developer=is_developer
+            is_developer=is_developer,
+            voxelizer=request.voxelizer
         ))
         
         # Return immediately with generation_id

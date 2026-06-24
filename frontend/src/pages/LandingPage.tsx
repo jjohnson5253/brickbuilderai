@@ -1,6 +1,6 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
-import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard } from "lucide-react";
+import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard, Box } from "lucide-react";
 import { SEO } from "../components/SEO";
 import FallingBricks from "../components/FallingBricks";
 import LoginModal from "../components/LoginModal";
@@ -14,11 +14,14 @@ import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { useAuth } from "../contexts/AuthContext";
 import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
+import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
 
-// Check if 3D streaming (SAM3D) is enabled by default via environment variable
+// Check if 3D streaming (SAM3D) is enabled by default via environment variable.
+// Streaming requires a RunPod endpoint, so it is opt-in: default to Standard
+// (Trellis) unless VITE_ENABLE_STREAMING is explicitly set to 'true'.
 // Note: Image generation always uses flux-2 streaming regardless of this setting
-const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING !== 'false';
+const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING === 'true';
 
 // Toggle whether users must be logged in before starting a generation.
 const REQUIRE_LOGIN_FOR_GENERATION = false;
@@ -223,6 +226,7 @@ export default function LandingPage() {
   const navigate = useNavigate();
   const [isCardHidden, setIsCardHidden] = useState(false);
   const [areOptionsHidden, setAreOptionsHidden] = useState(true);
+  const [showGlbUpload, setShowGlbUpload] = useState(false);
 
   // Login modal state
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -747,7 +751,23 @@ export default function LandingPage() {
       
     } catch (error) {
       console.error('Generation failed:', error);
-      setGenerationError('Generation failed. Please try again');
+      // Check if error is a network error - if user is online but fetch failed, backend is likely not running
+      const isNetworkError = error instanceof TypeError && error.message === 'Failed to fetch';
+      const errorMsg = error instanceof Error ? error.message : '';
+      
+      let errorMessage = 'Generation failed. Please try again';
+      if (isNetworkError) {
+        errorMessage = navigator.onLine 
+          ? 'Backend services not running. Check terminal for errors.' 
+          : 'No internet connection';
+      } else if (errorMsg.includes('FAL_KEY')) {
+        // Backend is running but FAL_KEY is not configured
+        errorMessage = 'FAL_KEY not configured. Set FAL_KEY in .env file and restart the backend server.';
+      } else if (errorMsg) {
+        // Use the error message from the backend
+        errorMessage = errorMsg;
+      }
+      setGenerationError(errorMessage);
       setLoading(false);
       setPreviewImageUrl(null);
       setGenerationStatus(null);
@@ -824,28 +844,31 @@ export default function LandingPage() {
                   onBlur={() => setFocused(false)}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPrompt(e.target.value)}
                   placeholder={imgFile ? "Image uploaded - text prompt disabled" : (showTypewriter ? typedPlaceholder : "")}
-                  className="input w-full h-12 rounded-full pr-40 pl-4 text-base shadow-sm border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="input w-full h-12 rounded-full pr-64 pl-4 text-base shadow-sm border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   disabled={loading || !!imgFile}
                 />
-                <button
-                  type="button"
-                  onClick={onPickImage}
-                  className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white hover:bg-slate-100 px-3 py-1.5 text-sm text-slate-600 transition-colors"
+                <div
+                  className="flex items-center gap-1.5"
                   style={{
                     position: 'absolute',
                     right: '6px',
-                    left: 'auto',
                     top: '50%',
                     transform: 'translateY(-50%)',
                     zIndex: 2,
                   }}
-                  aria-label="Upload image"
-                  title="Upload image"
-                  disabled={loading}
                 >
-                  <ImageIcon className="h-4 w-4" />
-                  Upload Image
-                </button>
+                  <button
+                    type="button"
+                    onClick={onPickImage}
+                    className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white hover:bg-slate-100 px-3 py-1.5 text-sm text-slate-600 transition-colors"
+                    aria-label="Upload image"
+                    title="Upload image"
+                    disabled={loading}
+                  >
+                    <ImageIcon className="h-4 w-4" />
+                    Upload Image
+                  </button>
+                </div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -857,24 +880,30 @@ export default function LandingPage() {
               </div>
 
               {!loading && (
-              <div className="flex items-center justify-center gap-2 mt-3 landing-fade-in landing-delay-3">
-                <button
-                  type="button"
-                  onClick={onGenerate}
-                  className="inline-flex items-center justify-center h-12 rounded-full px-6 min-w-36 text-white transition-colors bg-[#f44336] cursor-pointer hover:bg-[#ff6b6b]"
-                >
-                  <Sparkles className="mr-2 h-5 w-5" />
-                  Generate
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAreOptionsHidden(prev => !prev)}
-                  className="inline-flex items-center justify-center h-10 w-10 rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
-                  aria-label="Toggle settings"
-                >
-                  <Settings className="h-5 w-5" />
-                </button>
-              </div>
+                showGlbUpload ? (
+                  <div className="mt-3 w-full max-w-xl mx-auto landing-fade-in landing-delay-3">
+                    <GlbUploadCard autoOpen />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center gap-2 mt-3 landing-fade-in landing-delay-3">
+                    <button
+                      type="button"
+                      onClick={onGenerate}
+                      className="inline-flex items-center justify-center h-12 rounded-full px-6 min-w-36 text-white transition-colors bg-[#f44336] cursor-pointer hover:bg-[#ff6b6b]"
+                    >
+                      <Sparkles className="mr-2 h-5 w-5" />
+                      Generate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAreOptionsHidden(prev => !prev)}
+                      className="inline-flex items-center justify-center h-10 w-10 rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 cursor-pointer"
+                      aria-label="Toggle settings"
+                    >
+                      <Settings className="h-5 w-5" />
+                    </button>
+                  </div>
+                )
               )}
             </div>
 
@@ -988,6 +1017,27 @@ export default function LandingPage() {
               </div>
             )}
 
+            {/* Upload GLB toggle - lives in settings */}
+            {!loading && !areOptionsHidden && (
+              <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
+                <span className="text-sm text-slate-500">Upload GLB:</span>
+                <button
+                  type="button"
+                  onClick={() => setShowGlbUpload(prev => !prev)}
+                  className={`flex items-center gap-1.5 rounded-full px-4 py-1 text-sm transition-all duration-150 ${
+                    showGlbUpload
+                      ? "bg-[#f44336] text-white border border-transparent"
+                      : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
+                  } cursor-pointer`}
+                  aria-label="Upload glb"
+                  title="Upload a 3D model (.glb) and convert it into bricks"
+                >
+                  <Box className="h-4 w-4" />
+                  {showGlbUpload ? "Hide GLB Upload" : "Upload GLB"}
+                </button>
+              </div>
+            )}
+
             {!loading && (
               <>
                 {/* <p className="mt-2 text-sm text-slate-500 landing-fade-in landing-delay-3">
@@ -1004,7 +1054,7 @@ export default function LandingPage() {
                 </button>
                 
                 {/* Last completed generation */}
-                {lastGeneration && !isCardHidden && (
+                {/* {lastGeneration && !isCardHidden && (
                   <div className="mt-4 w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-sm relative">
                     <button
                       onClick={() => setIsCardHidden(true)}
@@ -1037,7 +1087,7 @@ export default function LandingPage() {
                       </div>
                     </div>
                   </div>
-                )}
+                )} */}
               </>
             )}
           </div>
@@ -1216,8 +1266,11 @@ function HowItWorks() {
 
 function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isSupabaseConfigured } = useAuth();
   const [githubStars, setGithubStars] = useState<number | null>(null);
+
+  // Show profile menu if user is logged in OR if Supabase is not configured
+  const showProfileMenu = user || !isSupabaseConfigured;
 
   useEffect(() => {
     let cancelled = false;
@@ -1295,8 +1348,8 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
 
       {/* Login / Sign Up OR Account Menu */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {user ? (
-          // Logged in: show GitHub stars and account dropdown
+        {showProfileMenu ? (
+          // Logged in or no Supabase: show GitHub stars and account dropdown
           <>
             {githubStarLink}
 

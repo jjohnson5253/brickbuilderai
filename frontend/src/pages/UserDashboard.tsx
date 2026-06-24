@@ -20,7 +20,7 @@ type TabKey = "dashboard" | "generations" | "orders" | "settings";
 const USERNAME_PATTERN = /^[A-Za-z0-9_.-]{3,30}$/;
 
 /* ----------------------------- Sidebar ----------------------------- */
-const Sidebar: React.FC<{active:TabKey; onChange:(t:TabKey)=>void; onLogout:()=>void; isOpen:boolean; onClose:()=>void}> = ({active, onChange, onLogout, isOpen, onClose}) => {
+const Sidebar: React.FC<{active:TabKey; onChange:(t:TabKey)=>void; onLogout:()=>void; isOpen:boolean; onClose:()=>void; showLogout:boolean}> = ({active, onChange, onLogout, isOpen, onClose, showLogout}) => {
   const tabs: { key: TabKey; label: string; icon: any }[] = [
     { key: "dashboard", label: "Overview", icon: TrendingUp },
     { key: "generations", label: "My Generations", icon: Sparkles },
@@ -62,7 +62,7 @@ const Sidebar: React.FC<{active:TabKey; onChange:(t:TabKey)=>void; onLogout:()=>
       </div>
 
       {/* Nav (scrolls), reserve space for fixed bottom */}
-      <nav className="p-4 space-y-3 flex-1 overflow-y-auto pb-40">
+      <nav className={`p-4 space-y-3 flex-1 overflow-y-auto ${showLogout ? 'pb-40' : 'pb-4'}`}>
         {tabs.map((t) => {
           const Icon = t.icon;
           const isActive = active === t.key;
@@ -89,15 +89,17 @@ const Sidebar: React.FC<{active:TabKey; onChange:(t:TabKey)=>void; onLogout:()=>
         })}
       </nav>
 
-      {/* Logout — pinned bottom of sidebar */}
-      <div className="absolute left-0 bottom-0 w-full p-4 border-t border-slate-200 bg-white">
-        <button 
-          onClick={onLogout}
-          className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-        >
-          <LogOut className="w-4 h-4" /> Log out
-        </button>
-      </div>
+      {/* Logout — pinned bottom of sidebar (only when Supabase is configured) */}
+      {showLogout && (
+        <div className="absolute left-0 bottom-0 w-full p-4 border-t border-slate-200 bg-white">
+          <button 
+            onClick={onLogout}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+          >
+            <LogOut className="w-4 h-4" /> Log out
+          </button>
+        </div>
+      )}
     </aside>
     </>
   );
@@ -192,16 +194,18 @@ const GenerationCard: React.FC<{g: GenerationWithOrder; onView: () => void; auth
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm hover:shadow transition-shadow">
       <div className="p-3 sm:p-4 flex gap-3 sm:gap-4">
-        <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden bg-slate-100 border flex items-center justify-center flex-shrink-0">
+        <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-lg overflow-hidden bg-slate-100 border flex-shrink-0">
           {mainImage ? (
             <img
               src={mainImage}
               alt={g.prompt}
-              className="w-full h-full object-cover object-center"
+              className="absolute inset-0 w-full h-full object-contain"
               draggable={false}
             />
           ) : (
-            <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-slate-300" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-slate-300" />
+            </div>
           )}
           {showOverlay && (
             <div className="absolute top-1 right-1 w-1/3 aspect-square rounded-md overflow-hidden border-2 border-white shadow-md bg-slate-100">
@@ -372,16 +376,18 @@ const OrderCard: React.FC<{g: GenerationWithOrder; onView: () => void}> = ({g, o
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm hover:shadow transition-shadow">
       <div className="p-3 sm:p-4 flex gap-3 sm:gap-4">
-        <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-lg overflow-hidden bg-slate-100 border flex items-center justify-center flex-shrink-0">
+        <div className="relative w-20 h-20 sm:w-28 sm:h-28 rounded-lg overflow-hidden bg-slate-100 border flex-shrink-0">
           {previewImage ? (
             <img
               src={previewImage}
               alt={displayPrompt}
-              className="w-full h-full object-cover object-center"
+              className="absolute inset-0 w-full h-full object-contain"
               draggable={false}
             />
           ) : (
-            <Box className="w-6 h-6 sm:w-8 sm:h-8 text-slate-300" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Box className="w-6 h-6 sm:w-8 sm:h-8 text-slate-300" />
+            </div>
           )}
         </div>
 
@@ -616,7 +622,7 @@ const UserDashboard: React.FC = () => {
     t === "dashboard" || t === "generations" || t === "orders" || t === "settings";
   const [tab, setTab] = useState<TabKey>(isValidTab(tabParam) ? tabParam : "dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { user, userProfile, loading, signOut, session } = useAuth();
+  const { user, userProfile, loading, signOut, session, isSupabaseConfigured } = useAuth();
   const navigate = useNavigate();
   const [generations, setGenerations] = useState<GenerationWithOrder[]>([]);
   const [allOrders, setAllOrders] = useState<OrderInfo[]>([]);
@@ -643,7 +649,9 @@ const UserDashboard: React.FC = () => {
 
   // Fetch generations for the logged-in user using the API
   const fetchGenerations = async (currentOffset: number, append: boolean = false) => {
-    if (!session?.access_token) return;
+    // When Supabase is configured, require auth token
+    // When Supabase is not configured, allow anonymous access
+    if (isSupabaseConfigured && !session?.access_token) return;
     
     if (append) {
       setLoadingMore(true);
@@ -653,7 +661,7 @@ const UserDashboard: React.FC = () => {
     
     try {
       const response = await GetUserGenerationsApiService.getUserGenerations(
-        session.access_token,
+        session?.access_token, // Will be undefined when Supabase is not configured
         PAGE_LIMIT,
         currentOffset
       );
@@ -680,8 +688,13 @@ const UserDashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchGenerations(0);
-  }, [session]);
+    // Fetch generations when:
+    // - Supabase is configured and we have a session, OR
+    // - Supabase is not configured (anonymous mode)
+    if (!isSupabaseConfigured || session) {
+      fetchGenerations(0);
+    }
+  }, [session, isSupabaseConfigured]);
 
   const handleLoadMore = () => {
     const newOffset = offset + PAGE_LIMIT;
@@ -713,12 +726,12 @@ const UserDashboard: React.FC = () => {
     }
   });
 
-  // Redirect to signup if not authenticated
+  // Redirect to signup if not authenticated (only when Supabase is configured)
   useEffect(() => {
-    if (!loading && !user) {
+    if (isSupabaseConfigured && !loading && !user) {
       navigate("/signup?message=dashboard");
     }
-  }, [user, loading, navigate]);
+  }, [user, loading, navigate, isSupabaseConfigured]);
 
   const handleViewGeneration = (generationId: string) => {
     // Navigate to view with generation ID in URL
@@ -730,8 +743,8 @@ const UserDashboard: React.FC = () => {
     navigate('/');
   };
 
-  // Show nothing while checking auth or redirecting
-  if (loading || !user) {
+  // Show loading state while checking auth (only when Supabase is configured)
+  if (isSupabaseConfigured && (loading || !user)) {
     return (
       <div className="min-h-screen bg-[#fbfbfd] flex items-center justify-center">
         <div className="text-slate-500">Loading...</div>
@@ -745,7 +758,7 @@ const UserDashboard: React.FC = () => {
     credits: userProfile?.credits || 0,
   };
 
-  const displayName = user.email?.split('@')[0] || 'Builder';
+  const displayName = user?.email?.split('@')[0] || 'Builder';
 
   return (
     <div className="min-h-screen bg-[#fbfbfd]">
@@ -757,6 +770,7 @@ const UserDashboard: React.FC = () => {
           onLogout={handleLogout}
           isOpen={mobileMenuOpen}
           onClose={() => setMobileMenuOpen(false)}
+          showLogout={isSupabaseConfigured}
         />
 
         {/* Right column */}

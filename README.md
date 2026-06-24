@@ -48,6 +48,54 @@ Upload a photo or type a prompt, and BrickBuilder turns it into a real brick bui
 
 ## Running locally
 
+<details>
+<summary>🤖 <strong>AI Setup Prompt</strong> — Copy this prompt to your AI assistant to set up the project automatically</summary>
+
+```
+Help me set up and run the BrickBuilder project locally.
+
+Prerequisites I need installed:
+- Python 3.10+
+- Node.js
+- uv (Python package manager from Astral)
+
+Steps:
+1. Copy backend/.env-example to backend/.env and frontend/.env-example to frontend/.env
+2. Ask me for my fal.ai API key and set FAL_KEY in backend/.env
+3. Run `python install.py` to install dependencies (uses uv for backend, npm for frontend)
+4. Run `python run.py` to start both the backend API (port 8002) and frontend dev server. The backend server will take a minute to start the first run as it builds c++ executables.
+
+The backend is a FastAPI server, frontend is React+Vite. Let me know if any dependencies are missing.
+```
+
+</details>
+
+### Prerequisites
+
+| Requirement | Notes |
+| --- | --- |
+| **Python 3.10+** | [python.org/downloads](https://www.python.org/downloads/) |
+| **Node.js** | [nodejs.org](https://nodejs.org/) |
+| **uv** | Python package manager — [install guide](https://docs.astral.sh/uv/getting-started/installation/) |
+| **fal.ai account** | Sign up at [fal.ai](https://fal.ai/) and get an API key |
+
+### Environment setup
+
+1. Copy the example env files:
+   ```bash
+   cp backend/.env-example backend/.env
+   cp frontend/.env-example frontend/.env
+   ```
+
+2. Set your fal API key in `backend/.env`:
+   ```
+   FAL_KEY=your_fal_api_key_here
+   ```
+
+3. (Optional) Configure Supabase, Stripe, and other integrations in the `.env` files as needed. A local postgres database will be spun up if supabase is not connected.
+
+### Install & run
+
 ```bash
 python install.py
 python run.py

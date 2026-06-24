@@ -15,10 +15,13 @@ interface ProfileMenuProps {
  * Reusable account dropdown shown in page headers for logged-in users.
  * Displays the user id and quick links to the dashboard's generations and
  * settings tabs, plus a log out action.
+ * 
+ * When Supabase is not configured, the menu shows navigation links but hides
+ * the username and logout option.
  */
 export function ProfileMenu({ onNavigate }: ProfileMenuProps) {
   const navigate = useNavigate();
-  const { user, userProfile, signOut } = useAuth();
+  const { user, userProfile, signOut, isSupabaseConfigured } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const go = (path: string) => {
@@ -34,6 +37,9 @@ export function ProfileMenu({ onNavigate }: ProfileMenuProps) {
     (userProfile?.username && userProfile.username.trim()) ||
     user?.email ||
     "Account";
+
+  // Only show username when Supabase is configured and user is logged in
+  const showUserIdentity = isSupabaseConfigured && user;
 
   return (
     <div className="relative">
@@ -64,12 +70,14 @@ export function ProfileMenu({ onNavigate }: ProfileMenuProps) {
             className="absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-lg border border-slate-200 py-2"
             style={{ zIndex: 51 }}
           >
-            {/* User identity */}
-            <div className="px-4 py-2 border-b border-slate-100">
-              <p className="text-sm font-semibold text-slate-900 truncate">
-                {displayName}
-              </p>
-            </div>
+            {/* User identity - only show when Supabase is configured and user is logged in */}
+            {showUserIdentity && (
+              <div className="px-4 py-2 border-b border-slate-100">
+                <p className="text-sm font-semibold text-slate-900 truncate">
+                  {displayName}
+                </p>
+              </div>
+            )}
 
             <button
               onClick={() => go("/dashboard?tab=generations")}
@@ -87,19 +95,24 @@ export function ProfileMenu({ onNavigate }: ProfileMenuProps) {
               Settings
             </button>
 
-            <div className="my-1 border-t border-slate-100" />
+            {/* Logout - only show when Supabase is configured */}
+            {isSupabaseConfigured && (
+              <>
+                <div className="my-1 border-t border-slate-100" />
 
-            <button
-              onClick={async () => {
-                setDropdownOpen(false);
-                await signOut();
-                navigate("/");
-              }}
-              className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
-            >
-              <LogOut className="h-4 w-4" />
-              Log out
-            </button>
+                <button
+                  onClick={async () => {
+                    setDropdownOpen(false);
+                    await signOut();
+                    navigate("/");
+                  }}
+                  className="w-full px-4 py-2.5 text-left text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 cursor-pointer bg-transparent border-none"
+                >
+                  <LogOut className="h-4 w-4" />
+                  Log out
+                </button>
+              </>
+            )}
           </div>
         </>
       )}

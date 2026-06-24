@@ -19,7 +19,10 @@ import { SiteFooter } from "../components/SiteFooter";
 
 function CommunityHeader() {
   const navigate = useNavigate();
-  const { user, userProfile } = useAuth();
+  const { user, userProfile, isSupabaseConfigured } = useAuth();
+
+  // Show profile menu if user is logged in OR if Supabase is not configured
+  const showProfileMenu = user || !isSupabaseConfigured;
 
   return (
     <header className="flex items-center justify-between w-full relative landing-fade-in landing-delay-1" style={{ zIndex: 50 }}>
@@ -38,14 +41,17 @@ function CommunityHeader() {
       </a>
 
       <div className="flex items-center gap-3">
-        {user ? (
+        {showProfileMenu ? (
           <>
-            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
-              <Coins className="h-4 w-4 text-amber-600" />
-              <span className="text-sm font-semibold text-amber-700">
-                {userProfile?.credits ?? 0}
-              </span>
-            </div>
+            {/* Only show credits when user is logged in with Supabase */}
+            {user && isSupabaseConfigured && (
+              <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
+                <Coins className="h-4 w-4 text-amber-600" />
+                <span className="text-sm font-semibold text-amber-700">
+                  {userProfile?.credits ?? 0}
+                </span>
+              </div>
+            )}
 
             <button
               className="inline-flex items-center gap-1.5 bg-transparent text-slate-700 border-none text-sm px-3 h-9 cursor-pointer transition-all duration-200 hover:text-[#f44336] hover:-translate-y-px"

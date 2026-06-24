@@ -2,6 +2,7 @@
       "name": "auto-brick-builder",
       "version": "0.1.0",
       "private": true,
+      "type": "module",
       "dependencies": {
             "@dimforge/rapier3d-compat": "^0.19.3",
             "@react-three/drei": "^9.103.0",
