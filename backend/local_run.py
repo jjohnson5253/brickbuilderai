@@ -4,6 +4,7 @@ Local development server script
 """
 import sys
 import os
+import time
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -12,10 +13,26 @@ load_dotenv()
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
+
+def log(message: str) -> None:
+    """Print a timestamped startup message that flushes immediately."""
+    print(f"[startup] {message}", flush=True)
+
+
 if __name__ == "__main__":
+    _start = time.perf_counter()
+
+    log("Starting BrickBuilderAI backend...")
+    log("Loading dependencies (Open3D, ML libraries, API routes)... this can take ~20s on first start")
+
     import uvicorn
+
+    log("Importing application (src.api)...")
     from src.api import app
-    
+
+    log(f"Application loaded in {time.perf_counter() - _start:.1f}s")
+    log("Launching server on http://0.0.0.0:8002 ...")
+
     uvicorn.run(
         app,
         host="0.0.0.0",
