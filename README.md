@@ -48,6 +48,32 @@ Upload a photo or type a prompt, and BrickBuilder turns it into a real brick bui
 
 ## Running locally
 
+### Prerequisites
+
+| Requirement | Notes |
+| --- | --- |
+| **Python 3.10+** | [python.org/downloads](https://www.python.org/downloads/) |
+| **Node.js** | [nodejs.org](https://nodejs.org/) |
+| **uv** | Python package manager — [install guide](https://docs.astral.sh/uv/getting-started/installation/) |
+| **fal.ai account** | Sign up at [fal.ai](https://fal.ai/) and get an API key |
+
+### Environment setup
+
+1. Copy the example env files:
+   ```bash
+   cp backend/.env-example backend/.env
+   cp frontend/.env-example frontend/.env
+   ```
+
+2. Set your fal API key in `backend/.env`:
+   ```
+   FAL_KEY=your_fal_api_key_here
+   ```
+
+3. (Optional) Configure Supabase, Stripe, and other integrations in the `.env` files as needed. A local postgres database will be spun up if supabase is not connected.
+
+### Install & run
+
 ```bash
 python install.py
 python run.py
