@@ -10,6 +10,7 @@ import SignupPage from "./pages/SignupPage";
 import UserDashboard from "./pages/UserDashboard"; // NEW
 import CommunityPage from "./pages/CommunityPage";
 import CompetitionsPage from "./pages/CompetitionsPage";
+import GlbToLegoPage from "./pages/GlbToLegoPage";
 import { AnnouncementBanner } from "./components/AnnouncementBanner";
 // import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -24,7 +25,7 @@ export default function App() {
   return (
     <BrowserRouter>
       {/* <ProtectedRoute> */}
-        <AnnouncementBanner />
+        {/* <AnnouncementBanner /> */}
         <Routes>
           {/* Public */}
           <Route path="/" element={<LandingPage />} />
@@ -35,6 +36,7 @@ export default function App() {
           {/* App pages */}
           <Route path="/dashboard" element={<UserDashboard />} /> {/* NEW */}
           <Route path="/generated-model" element={<GeneratedModel />} />
+          <Route path="/glb-to-lego" element={<GlbToLegoPage />} />
           <Route path="/instructions" element={<InstructionsPage />} />
           <Route path="/order" element={<OrderKit />} />
           <Route path="/success" element={<Success />} />
