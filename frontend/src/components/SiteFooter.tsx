@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Github, Instagram, Youtube } from "lucide-react";
 
 // TikTok icon (not provided by lucide-react)
@@ -66,6 +67,14 @@ export function SiteFooter() {
             support@brickbuilder.ai
           </a>
         </div> */}
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs">
+          <Link to="/glb-to-lego" className="hover:text-[#f44336] transition-colors">
+            GLB to LEGO Converter
+          </Link>
+          <Link to="/community" className="hover:text-[#f44336] transition-colors">
+            Community Models
+          </Link>
+        </div>
         <div className="text-xs text-slate-400">
           © 2026 BrickBuilder
         </div>

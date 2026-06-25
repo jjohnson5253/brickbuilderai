@@ -8,6 +8,7 @@ interface SEOProps {
   url?: string;
   type?: string;
   noIndex?: boolean;
+  structuredData?: Record<string, unknown> | Record<string, unknown>[];
 }
 
 export function SEO({
@@ -17,9 +18,10 @@ export function SEO({
   image = "https://brickbuilder.ai/twitter-preview.png",
   url = "https://brickbuilder.ai/",
   type = "website",
-  noIndex = false
+  noIndex = false,
+  structuredData
 }: SEOProps) {
-  const structuredData = {
+  const defaultStructuredData = {
     "@context": "https://schema.org",
     "@type": "WebApplication",
     "name": "BrickBuilder AI",
@@ -83,7 +85,7 @@ export function SEO({
       
       {/* Structured Data */}
       <script type="application/ld+json">
-        {JSON.stringify(structuredData, null, 2)}
+        {JSON.stringify(structuredData ?? defaultStructuredData, null, 2)}
       </script>
     </Helmet>
   );
