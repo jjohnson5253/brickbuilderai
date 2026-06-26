@@ -26,10 +26,10 @@ Upload a photo or type a prompt, and BrickBuilder turns it into a real brick bui
 1. **Image or text in** — start from any picture, or describe what you want.
 2. **3D reconstruction** — a Trellis or SAM-3D model converts the subject into a solid shape.
 3. **Voxelization** - 3D model is voxelized if using Trellis, or gotten directly from the SAM3D stream.
-3. **Brick optimization** — an optimizer packs the voxels into real LEGO®-compatible parts.
-4. **Build it** — explore the model in 3D, follow the instructions, download the LDR/MPD, or order the parts.
+4. **Brick optimization** — an optimizer packs the voxels into real LEGO®-compatible parts.
+5. **Build it** — explore the model in 3D, follow the instructions, download the LDR/MPD, or order the parts.
 
-Since the LEGO pipeline only needs voxels, BrickBuilder streams SAM3D's geometry/appearance callbacks and stops after the final colored voxel output. This avoids the extra mesh decoding and GLB export step, reducing end-to-end generation time.
+Generation time is typically under 30 seconds when SAM3D is used.
 
 ## Examples
 
@@ -104,7 +104,7 @@ python run.py
 ```
 Voxelization with SAM-3D produces better results than Trellis, but it runs as a separate worker that you host on RunPod. To enable it, deploy the SAM-3D image on [RunPod](https://www.runpod.io/)
 
-With streaming SAM3D enabled, end-to-end generation time is typically less than 30 seconds.
+Since the LEGO pipeline only needs voxels, BrickBuilder streams SAM3D's geometry/appearance callbacks and stops after the final colored voxel output. This avoids the extra mesh decoding and GLB export step, reducing end-to-end generation time.
 
 The SAM3D worker image is published publicly on Docker Hub as `jjohnson5253/manifold-sam3d:latest`, so you can deploy it on RunPod without building it yourself:
 
