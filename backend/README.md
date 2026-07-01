@@ -84,6 +84,19 @@ curl -X POST http://localhost:8002/promptEditModel \
   -d '{"generation_id": "your_generation_id_here", "edit_prompt": "make it red and add a hat"}' \
   -o edited_model_response.json
 ```
+#### /llmRender
+Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`.
+```bash
+curl -X POST http://localhost:8002/llmRender \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <your DEVELOPER_API_KEY>" \
+  -d '{
+    "xyzrgb_url": "https://example.com/model.xyzrgb",
+    "reference_image_url": "https://example.com/reference.png",
+    "prompt": "match the character colors, preserving the model shape"
+  }' \
+  -o llm_render_response.json
+```
 #### /estimatePrice
 ```bash
 curl -X POST http://localhost:8002/estimatePrice \

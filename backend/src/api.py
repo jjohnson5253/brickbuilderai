@@ -22,6 +22,7 @@ from .requests.partToMpd import part_to_mpd, PartToMpdRequest, PartToMpdResponse
 from .requests.ldrToMpd import ldr_to_mpd, LdrToMpdRequest, LdrToMpdResponse
 from .requests.resizeModel import resize_model, ResizeModelRequest, ResizeModelResponse
 from .requests.promptEditModel import prompt_edit_model, PromptEditModelRequest
+from .requests.llmRender import llm_render, LlmRenderRequest, LlmRenderResponse
 from .requests.createCheckoutSession import create_checkout_session, CreateCheckoutSessionRequest, CreateCheckoutSessionResponse
 from .requests.stripeWebhook import stripe_webhook, StripeWebhookRequest, StripeWebhookResponse
 from .requests.getGeneration import get_generation, GetGenerationRequest, GetGenerationResponse
@@ -101,6 +102,13 @@ if not FAL_KEY:
 else:
     # Set the FAL API key
     os.environ["FAL_KEY"] = FAL_KEY
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    logger.warning(
+        "OPENAI_API_KEY environment variable is not set. /llmRender will return "
+        "errors until OPENAI_API_KEY is configured."
+    )
 
 
 def require_fal_key():
@@ -262,6 +270,21 @@ async def prompt_edit_model_endpoint(
     Poll GET /generation/{generation_id} for status and results.
     """
     return await prompt_edit_model(request, auth_info)
+
+
+@app.post("/llmRender", response_model=LlmRenderResponse)
+async def llm_render_endpoint(
+    request: LlmRenderRequest,
+    auth_info: dict = Depends(get_user_with_optional_auth),
+) -> LlmRenderResponse:
+    """
+    Recolor an xyzrgb voxel model to better match a reference image.
+
+    The endpoint fetches xyzrgb_url, summarizes the voxel shape for spatial
+    reasoning, sends that summary plus reference_image_url to OpenAI, applies
+    the returned semantic recoloring rules, and returns updated xyzrgb content.
+    """
+    return await llm_render(request, auth_info)
 
 
 @app.post("/createCheckoutSession", response_model=CreateCheckoutSessionResponse)
