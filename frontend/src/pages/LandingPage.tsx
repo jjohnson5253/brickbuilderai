@@ -663,8 +663,10 @@ export default function LandingPage() {
           promptOption,
           handleStreamEvent,
           stream3d,
+          'trimesh',
+          prompt.trim(),
         );
-        modelName = imgFile.name.replace(/\.[^/.]+$/, ''); // Remove file extension
+        modelName = prompt.trim() || imgFile.name.replace(/\.[^/.]+$/, ''); // Remove file extension
       } else {
         console.log(`Generating from text prompt (3D ${stream3d ? 'streaming' : 'standard'}):`, prompt.trim());
         postResponse = await TextToBricksApiService.generateBricksFromTextStream(
@@ -843,9 +845,9 @@ export default function LandingPage() {
                   onFocus={() => setFocused(true)}
                   onBlur={() => setFocused(false)}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPrompt(e.target.value)}
-                  placeholder={imgFile ? "Image uploaded - text prompt disabled" : (showTypewriter ? typedPlaceholder : "")}
+                  placeholder={imgFile ? "Add optional image instructions" : (showTypewriter ? typedPlaceholder : "")}
                   className="input w-full h-12 rounded-full pr-64 pl-4 text-base shadow-sm border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                  disabled={loading || !!imgFile}
+                  disabled={loading}
                 />
                 <div
                   className="flex items-center gap-1.5"
@@ -1565,4 +1567,3 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
     </div>
   );
 });
-

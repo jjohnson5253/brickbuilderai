@@ -9,6 +9,7 @@
     server: {
       port: 3000,
       open: true,
+      allowedHosts: ['.ngrok-free.app'],
     },
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],

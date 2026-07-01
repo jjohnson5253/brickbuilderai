@@ -328,28 +328,30 @@ def generate_image_from_image(image_input: str, is_base64: bool = False, edit_pr
                 for log in update.logs:
                     logger.debug(f"Nano banana edit progress: {log['message']}")
         
-        # Use custom edit_prompt if provided, otherwise use default 3D style prompt based on model_option
-        if edit_prompt:
-            prompt = f"{edit_prompt}"
-        else:
-            # Select prompt enhancement based on model_option (a=regular, b=premium) and prompt_option (a, b, or c)
-            if model_option.lower() == "b":
-                # Premium (trellis-2)
-                if prompt_option.lower() == "c":
-                    prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_C
-                elif prompt_option.lower() == "b":
-                    prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_B
-                else:
-                    prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_A
+        # Select prompt enhancement based on model_option (a=regular, b=premium) and prompt_option (a, b, or c)
+        if model_option.lower() == "b":
+            # Premium (trellis-2)
+            if prompt_option.lower() == "c":
+                prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_C
+            elif prompt_option.lower() == "b":
+                prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_B
             else:
-                # Regular (trellis or sam3d)
-                if prompt_option.lower() == "c":
-                    prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_C
-                elif prompt_option.lower() == "b":
-                    prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_B
-                else:
-                    prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_A
-            
+                prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_A
+        else:
+            # Regular (trellis or sam3d)
+            if prompt_option.lower() == "c":
+                prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_C
+            elif prompt_option.lower() == "b":
+                prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_B
+            else:
+                prompt_enhancement_base = PROMPT_ENHANCEMENT_3D_REGULAR_OPTION_A
+
+        # Use custom edit_prompt when provided, but still pass it through the
+        # selected prompt enhancement so image-to-bricks keeps the same style
+        # controls as text-to-bricks.
+        if edit_prompt:
+            prompt = f"{edit_prompt.strip()}, {prompt_enhancement_base}"
+        else:
             prompt = f"Detect the main subject in this image. {prompt_enhancement_base}"
         
         logger.info(f"Submitting image to nano banana edit API with prompt: {prompt}")
@@ -614,6 +616,7 @@ async def generate_image_from_image_streaming(
     is_base64: bool = False,
     model_option: str = "a",
     prompt_option: str = "a",
+    edit_prompt: Optional[str] = None,
 ) -> Tuple[str, str, str]:
     """
     Streaming version of generate_image_from_image that sends SSE events
@@ -626,6 +629,7 @@ async def generate_image_from_image_streaming(
         is_base64: Whether image_url is base64 encoded data
         model_option: "a" for regular, "b" for premium, "c" for sam3d
         prompt_option: "a", "b", or "c" to select prompt enhancement version
+        edit_prompt: Optional custom prompt to combine with the selected enhancement
 
     Returns:
         Tuple of (resized_original_url, edited_image_url, prompt_enhancement)
@@ -657,7 +661,7 @@ async def generate_image_from_image_streaming(
         generate_image_from_image,
         image_url,
         is_base64,
-        None,  # edit_prompt
+        edit_prompt,
         model_option,
         prompt_option,
         status_callback,
