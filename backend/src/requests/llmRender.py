@@ -288,8 +288,9 @@ async def _call_openai_for_rules(
             ]
         },
         "selector_notes": (
-            "x/y/z selector ranges are normalized 0..1 over the voxel bounds and are optional. "
-            "source_colors is optional and should target existing approximate colors. "
+            "x/y/z selector ranges are normalized 0..1 over the voxel bounds. "
+            "Use [0, 1] for axes that should not be spatially constrained. "
+            "Use source_colors=[] when the rule should not target existing approximate colors. "
             "Use broad semantic regions, not per-voxel edits. Keep rules under 40."
         ),
         "scene_summary": scene_summary,
@@ -323,10 +324,44 @@ async def _call_openai_for_rules(
                             "maxItems": 40,
                             "items": {
                                 "type": "object",
-                                "additionalProperties": True,
+                                "additionalProperties": False,
                                 "properties": {
                                     "name": {"type": "string"},
-                                    "selector": {"type": "object"},
+                                    "selector": {
+                                        "type": "object",
+                                        "additionalProperties": False,
+                                        "properties": {
+                                            "x": {
+                                                "type": "array",
+                                                "minItems": 2,
+                                                "maxItems": 2,
+                                                "items": {"type": "number", "minimum": 0, "maximum": 1},
+                                            },
+                                            "y": {
+                                                "type": "array",
+                                                "minItems": 2,
+                                                "maxItems": 2,
+                                                "items": {"type": "number", "minimum": 0, "maximum": 1},
+                                            },
+                                            "z": {
+                                                "type": "array",
+                                                "minItems": 2,
+                                                "maxItems": 2,
+                                                "items": {"type": "number", "minimum": 0, "maximum": 1},
+                                            },
+                                            "source_colors": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "array",
+                                                    "minItems": 3,
+                                                    "maxItems": 3,
+                                                    "items": {"type": "integer", "minimum": 0, "maximum": 255},
+                                                },
+                                            },
+                                            "color_tolerance": {"type": "number", "minimum": 0, "maximum": 442},
+                                        },
+                                        "required": ["x", "y", "z", "source_colors", "color_tolerance"],
+                                    },
                                     "color": {
                                         "type": "array",
                                         "minItems": 3,
@@ -335,7 +370,7 @@ async def _call_openai_for_rules(
                                     },
                                     "strength": {"type": "number", "minimum": 0, "maximum": 1},
                                 },
-                                "required": ["name", "selector", "color"],
+                                "required": ["name", "selector", "color", "strength"],
                             },
                         }
                     },
