@@ -28,10 +28,12 @@ import { GetPriceApiService, GetPriceResponse } from "../services/getPriceApi";
 import { ResizeScaler } from "../components/ResizeScaler";
 import { ResizeModelApiService } from "../services/resizeModelApi";
 import { PromptEditModelApiService } from "../services/promptEditModelApi";
+import { LlmRenderApiService } from "../services/llmRenderApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
+import { UpdateModelApiService, UpdateModelResponse } from "../services/updateModelApi";
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
@@ -46,6 +48,7 @@ import {
   Star,
   Loader2,
   Pencil,
+  Sparkles,
   Users,
   Github,
   ArrowLeft,
@@ -235,6 +238,8 @@ export default function GeneratedModel() {
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
   const [editPreviewImageUrl, setEditPreviewImageUrl] = React.useState<string | null>(null);
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
+  const [isLlmEditing, setIsLlmEditing] = React.useState(false);
+  const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
   
   // Voxel editor state
   const [showVoxelEditor, setShowVoxelEditor] = React.useState(false);
@@ -784,6 +789,141 @@ export default function GeneratedModel() {
     waiters.push({ resolve, reject });
     previewUploadWaitersRef.current.set(generationId, waiters);
   }), []);
+
+  const handleUpdatedModelStarted = React.useCallback(async (
+    response: UpdateModelResponse,
+    options: { captureVoxelPreview?: boolean; preserveEditorContent?: boolean } = {}
+  ) => {
+    if (!response.generation_id) {
+      throw new Error('No generation ID returned from update');
+    }
+
+    localStorage.setItem('lastGenerationId', response.generation_id);
+    localStorage.setItem('GENERATION_ID', response.generation_id);
+    if (!currentUser) recordAnonymousGeneration(response.generation_id);
+
+    setCurrentGenerationId(response.generation_id);
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.set('id', response.generation_id);
+    window.history.replaceState({}, '', newUrl.toString());
+
+    if (savePollingAbortRef.current) {
+      savePollingAbortRef.current.abort();
+    }
+    const abortController = new AbortController();
+    savePollingAbortRef.current = abortController;
+
+    setIsSavePolling(true);
+    setSavePollingError(null);
+
+    try {
+      const completedGeneration = await GetGenerationApiService.pollUntilComplete(
+        response.generation_id,
+        undefined,
+        undefined,
+        undefined,
+        abortController.signal
+      );
+
+      console.log('[GeneratedModel] Update polling completed:', completedGeneration.generation_id);
+
+      if (completedGeneration.ldr_content) {
+        setLdrContent(completedGeneration.ldr_content);
+        localStorage.setItem('LDR_CONTENT', completedGeneration.ldr_content);
+        localStorage.setItem('lastLdrContent', completedGeneration.ldr_content);
+      }
+
+      let newMpdContent: string | null = null;
+      if (completedGeneration.mpd_url) {
+        try {
+          const mpdResponse = await fetch(completedGeneration.mpd_url);
+          if (mpdResponse.ok) {
+            newMpdContent = await mpdResponse.text();
+          }
+        } catch (mpdError) {
+          console.warn('Failed to fetch MPD from URL:', mpdError);
+        }
+      }
+
+      if (!newMpdContent && completedGeneration.ldr_content) {
+        try {
+          const authToken = (await supabase.auth.getSession()).data.session?.access_token;
+          const mpdData = await LdrToMpdApiService.convertLdrToMpd(
+            completedGeneration.ldr_content,
+            modelName,
+            authToken
+          );
+          newMpdContent = mpdData.mpd_content;
+        } catch (mpdError) {
+          console.warn('Failed to convert LDR to MPD:', mpdError);
+        }
+      }
+
+      if (newMpdContent) {
+        previewUploadedForRef.current.delete(response.generation_id);
+        setNeedsPreviewUpload(true);
+        if (options.captureVoxelPreview) {
+          activeSavePreviewUploadRef.current = waitForPreviewUpload(response.generation_id).finally(() => {
+            activeSavePreviewUploadRef.current = null;
+          });
+          const voxelPreview = voxelCapturePreviewRef.current?.() ?? null;
+          setPreviewPngDataUrl(voxelPreview);
+        }
+        setMpdContent(newMpdContent);
+        localStorage.setItem('MPD_CONTENT', newMpdContent);
+        localStorage.setItem('lastMpdContent', newMpdContent);
+      }
+
+      if (completedGeneration.xyzrgb_url) {
+        setXyzrgbUrl(completedGeneration.xyzrgb_url);
+
+        if (!options.preserveEditorContent || !showVoxelEditor) {
+          try {
+            const xyzrgbResponse = await fetch(completedGeneration.xyzrgb_url);
+            if (xyzrgbResponse.ok) {
+              const content = await xyzrgbResponse.text();
+              setXyzrgbContent(content);
+            }
+          } catch (err) {
+            console.warn('Failed to fetch xyzrgb content:', err);
+          }
+        }
+      }
+
+      if (completedGeneration.problematic_xyzrgb_url) {
+        setProblematicXyzrgbUrl(completedGeneration.problematic_xyzrgb_url);
+
+        try {
+          const problematicResponse = await fetch(completedGeneration.problematic_xyzrgb_url);
+          if (problematicResponse.ok) {
+            const problematicContent = await problematicResponse.text();
+            setProblematicXyzrgbContent(problematicContent);
+          }
+        } catch (problematicErr) {
+          console.warn('Failed to fetch problematic xyzrgb content:', problematicErr);
+        }
+      } else {
+        setProblematicXyzrgbUrl(null);
+        setProblematicXyzrgbContent(null);
+      }
+
+      setScreenshots(null);
+      setPriceRefreshCounter(c => c + 1);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('[GeneratedModel] Update polling aborted (superseded by newer save)');
+        return;
+      }
+      console.error('Update polling failed:', error);
+      setSavePollingError(error instanceof Error ? error.message : 'Failed to process model update');
+      throw error;
+    } finally {
+      if (savePollingAbortRef.current === abortController) {
+        setIsSavePolling(false);
+        savePollingAbortRef.current = null;
+      }
+    }
+  }, [currentUser, modelName, showVoxelEditor, waitForPreviewUpload]);
 
   // Upload the captured preview image once every required piece of async state
   // is ready. This effect re-runs whenever any dependency changes, so it
@@ -1356,6 +1496,66 @@ export default function GeneratedModel() {
     }
   }, [editPrompt, editModelQuality, accessToken, modelName, currentGenerationId]);
 
+  const handleLlmEditModel = React.useCallback(async () => {
+    if (!currentGenerationId) {
+      setLlmEditError('No generation ID found for LLM edit');
+      return;
+    }
+
+    if (!xyzrgbUrl) {
+      setLlmEditError('No xyzrgb file found for this generation');
+      return;
+    }
+
+    setIsLlmEditing(true);
+    setLlmEditError(null);
+
+    try {
+      let referenceImageUrl = processedImageUrl;
+      if (!referenceImageUrl) {
+        const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
+        referenceImageUrl = generation.processed_image_url || generation.external_image_url;
+        if (generation.processed_image_url) {
+          setProcessedImageUrl(generation.processed_image_url);
+        }
+      }
+
+      if (!referenceImageUrl) {
+        throw new Error('No reference image found for this generation');
+      }
+
+      const llmResponse = await LlmRenderApiService.llmRender(
+        xyzrgbUrl,
+        referenceImageUrl,
+        'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
+        accessToken || undefined
+      );
+
+      setXyzrgbContent(llmResponse.xyzrgb_content);
+
+      const updateResponse = await UpdateModelApiService.updateModel(
+        currentGenerationId,
+        llmResponse.xyzrgb_content,
+        accessToken || undefined
+      );
+
+      await handleUpdatedModelStarted(updateResponse, {
+        preserveEditorContent: false,
+      });
+    } catch (error) {
+      console.error('GeneratedModel - LLM edit failed:', error);
+      setLlmEditError(error instanceof Error ? error.message : 'Failed to apply LLM edit');
+    } finally {
+      setIsLlmEditing(false);
+    }
+  }, [
+    accessToken,
+    currentGenerationId,
+    handleUpdatedModelStarted,
+    processedImageUrl,
+    xyzrgbUrl,
+  ]);
+
   // Guard an action (e.g. in-app navigation) behind the unsaved-changes modal.
   // If the voxel editor has unsaved changes, prompt the user; otherwise run immediately.
   const guardUnsavedChanges = (action: PendingExitAction) => {
@@ -1694,156 +1894,10 @@ export default function GeneratedModel() {
             resizeScaler={currentScaler}
             onResizeScalerChange={setCurrentScaler}
             onSaveSuccess={async (response) => {
-            // Store new generation ID in localStorage immediately
-            localStorage.setItem('lastGenerationId', response.generation_id);
-            if (response.generation_id) {
-              localStorage.setItem('GENERATION_ID', response.generation_id);
-              // If created while logged out, remember it so it can be claimed on login.
-              if (!currentUser) recordAnonymousGeneration(response.generation_id);
-            }
-            
-            // Update the displayed generation ID and URL immediately
-            setCurrentGenerationId(response.generation_id);
-            const newUrl = new URL(window.location.href);
-            newUrl.searchParams.set('id', response.generation_id);
-            window.history.replaceState({}, '', newUrl.toString());
-            
-            // Start polling — backend is now processing LDR asynchronously
-            
-            // Cancel any previous save polling
-            if (savePollingAbortRef.current) {
-              savePollingAbortRef.current.abort();
-            }
-            const abortController = new AbortController();
-            savePollingAbortRef.current = abortController;
-            
-            setIsSavePolling(true);
-            setSavePollingError(null);
-            
-            try {
-              // Poll until generation completes (LDR processing finishes)
-              const completedGeneration = await GetGenerationApiService.pollUntilComplete(
-                response.generation_id,
-                undefined,
-                undefined,
-                undefined,
-                abortController.signal
-              );
-              
-              console.log('[GeneratedModel] Save polling completed:', completedGeneration.generation_id);
-              
-              // Update LDR content
-              if (completedGeneration.ldr_content) {
-                setLdrContent(completedGeneration.ldr_content);
-                localStorage.setItem('LDR_CONTENT', completedGeneration.ldr_content);
-                localStorage.setItem('lastLdrContent', completedGeneration.ldr_content);
-              }
-              
-              // Get MPD content from URL or convert LDR to MPD
-              let newMpdContent: string | null = null;
-              if (completedGeneration.mpd_url) {
-                try {
-                  const mpdResponse = await fetch(completedGeneration.mpd_url);
-                  if (mpdResponse.ok) {
-                    newMpdContent = await mpdResponse.text();
-                  }
-                } catch (mpdError) {
-                  console.warn('Failed to fetch MPD from URL:', mpdError);
-                }
-              }
-              
-              if (!newMpdContent && completedGeneration.ldr_content) {
-                try {
-                  const authToken = (await supabase.auth.getSession()).data.session?.access_token;
-                  const mpdData = await LdrToMpdApiService.convertLdrToMpd(
-                    completedGeneration.ldr_content,
-                    modelName,
-                    authToken
-                  );
-                  newMpdContent = mpdData.mpd_content;
-                } catch (mpdError) {
-                  console.warn('Failed to convert LDR to MPD:', mpdError);
-                }
-              }
-              
-              if (newMpdContent) {
-                previewUploadedForRef.current.delete(response.generation_id);
-                setNeedsPreviewUpload(true);
-                activeSavePreviewUploadRef.current = waitForPreviewUpload(response.generation_id).finally(() => {
-                  activeSavePreviewUploadRef.current = null;
-                });
-                // Grab a fresh preview straight from the voxel editor scene so
-                // the user can stay in the editor — no need to exit to the 3D
-                // viewer just to capture one. The upload effect picks this up.
-                const voxelPreview = voxelCapturePreviewRef.current?.() ?? null;
-                setPreviewPngDataUrl(voxelPreview);
-                setMpdContent(newMpdContent);
-                localStorage.setItem('MPD_CONTENT', newMpdContent);
-                localStorage.setItem('lastMpdContent', newMpdContent);
-              }
-              
-              // Update xyzrgb URLs and content
-              if (completedGeneration.xyzrgb_url) {
-                setXyzrgbUrl(completedGeneration.xyzrgb_url);
-                
-                // Only update xyzrgb content if the voxel editor is NOT open.
-                // When the editor is open, it already holds the correct voxel state
-                // (the user's edits). Overwriting it would reset the editor and
-                // lose in-progress work. We still update problematic overlay below.
-                if (!showVoxelEditor) {
-                  try {
-                    const xyzrgbResponse = await fetch(completedGeneration.xyzrgb_url);
-                    if (xyzrgbResponse.ok) {
-                      const content = await xyzrgbResponse.text();
-                      setXyzrgbContent(content);
-                    }
-                  } catch (err) {
-                    console.warn('Failed to fetch xyzrgb content:', err);
-                  }
-                }
-              }
-              
-              // Update problematic xyzrgb URL and content
-              if (completedGeneration.problematic_xyzrgb_url) {
-                setProblematicXyzrgbUrl(completedGeneration.problematic_xyzrgb_url);
-                
-                try {
-                  const problematicResponse = await fetch(completedGeneration.problematic_xyzrgb_url);
-                  if (problematicResponse.ok) {
-                    const problematicContent = await problematicResponse.text();
-                    setProblematicXyzrgbContent(problematicContent);
-                  }
-                } catch (problematicErr) {
-                  console.warn('Failed to fetch problematic xyzrgb content:', problematicErr);
-                }
-              } else {
-                // Clear problematic content if no URL is returned
-                setProblematicXyzrgbUrl(null);
-                setProblematicXyzrgbContent(null);
-              }
-              
-              // Clear screenshots to regenerate with new model
-              setScreenshots(null);
-
-              // Re-trigger price fetch now that the generation is complete
-              setPriceRefreshCounter(c => c + 1);
-              
-              console.log(`Model saved successfully. New generation ID: ${response.generation_id}`);
-            } catch (error) {
-              // Ignore abort errors — means a newer save superseded this one
-              if (error instanceof DOMException && error.name === 'AbortError') {
-                console.log('[GeneratedModel] Save polling aborted (superseded by newer save)');
-                return;
-              }
-              console.error('Save polling failed:', error);
-              setSavePollingError(error instanceof Error ? error.message : 'Failed to process model after save');
-            } finally {
-              // Only clear polling state if this controller wasn't replaced
-              if (savePollingAbortRef.current === abortController) {
-                setIsSavePolling(false);
-                savePollingAbortRef.current = null;
-              }
-            }
+            await handleUpdatedModelStarted(response, {
+              captureVoxelPreview: true,
+              preserveEditorContent: true,
+            });
           }}
           />
         </div>
@@ -2009,8 +2063,29 @@ export default function GeneratedModel() {
             </p>
           )}
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
-            {/* Edit Model button — white with grey border, turns red on hover */}
-            <button
+            <div className="flex w-full flex-col gap-3 sm:w-auto">
+              <button
+                  type="button"
+                  aria-label="LLM edit model"
+                  onClick={() => guardUnsavedChanges(() => { void handleLlmEditModel(); })}
+                  disabled={isLlmEditing || isSavePolling || xyzrgbLoading || !xyzrgbUrl || !currentGenerationId}
+                  className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                  {isLlmEditing ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      LLM editing...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} />
+                      LLM edit
+                    </>
+                  )}
+              </button>
+
+              {/* Edit Model button — white with grey border, turns red on hover */}
+              <button
                 type="button"
                 aria-label="Edit model"
                 onClick={handleEditModelClick}
@@ -2036,7 +2111,8 @@ export default function GeneratedModel() {
                     {showVoxelEditor ? 'Exit Block Editor' : 'Edit'}
                   </>
                 )}
-            </button>
+              </button>
+            </div>
 
             {/* Instructions button — white with grey border, turns red on hover */}
             <button
@@ -2136,6 +2212,9 @@ export default function GeneratedModel() {
           )}
           {savePollingError && (
             <p className="text-red-500 text-sm">{savePollingError}</p>
+          )}
+          {llmEditError && (
+            <p className="text-red-500 text-sm">{llmEditError}</p>
           )}
           {communityToggleError && (
             <p className="text-red-500 text-sm">{communityToggleError}</p>
