@@ -88,6 +88,7 @@ app.add_middleware(
         "https://brickbuilderai-staging.vercel.app",
         "https://trybrickbuilder.com",
     ],
+    allow_origin_regex=r"https://.*\.ngrok-free\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
