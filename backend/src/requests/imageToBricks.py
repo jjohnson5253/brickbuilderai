@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 class ImageToBricksRequest(BaseModel):
     image_url: Optional[str] = None
     image_base64: Optional[str] = None
+    prompt: Optional[str] = None
     detail_level: Optional[float] = 1.6  # Default to 1.6 for fewer bricks
     edit_image: Optional[bool] = True   # Flag to apply nano banana edit preprocessing
     model_option: Optional[str] = "a"  # Model option: "a" for trellis, "b" for trellis-2, "c" for sam3d
@@ -89,6 +90,13 @@ class ImageToBricksRequest(BaseModel):
         if v not in ["trimesh", "obj2voxel"]:
             raise ValueError("voxelizer must be 'trimesh' or 'obj2voxel'")
         return v
+
+    @validator('prompt')
+    def normalize_prompt(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        return v or None
     
 
 class ImageToBricksResponse(BaseModel):
@@ -118,6 +126,7 @@ async def process_image_to_bricks_task(
     auth_info: dict,
     user_email: str,
     is_developer: bool,
+    prompt: Optional[str] = None,
     storage_original_url: Optional[str] = None,
     voxelizer: str = "trimesh"
 ):
@@ -171,7 +180,7 @@ async def process_image_to_bricks_task(
         if edit_image:
             logger.info("Applying nano banana edit preprocessing to image")
             original_resized_url, processed_image_url, prompt_enhancement = await asyncio.get_event_loop().run_in_executor(
-                None, generate_image_from_image, image_input, is_base64, None, model_option, prompt_option, status_callback
+                None, generate_image_from_image, image_input, is_base64, prompt, model_option, prompt_option, status_callback
             )
             
             # Update status with the external_image_url and prompt_enhancement immediately after image editing
@@ -410,6 +419,7 @@ async def image_to_bricks(
         "detail_level": request.detail_level,
         "edit_image": request.edit_image,
         "model_option": request.model_option,
+        "has_prompt": bool(request.prompt),
         "model_3d": model_3d
     }
     
@@ -455,7 +465,7 @@ async def image_to_bricks(
         generation_id = await generation_storage.create_generation(
             user_id=user_id,
             user_type=user_type,
-            prompt="no text prompt",
+            prompt=request.prompt or "no text prompt",
             detail_level=request.detail_level,
             endpoint="imageToBricks",
             model_3d=model_3d
@@ -475,6 +485,7 @@ async def image_to_bricks(
             auth_info=auth_info,
             user_email=user_email,
             is_developer=is_developer,
+            prompt=request.prompt,
             storage_original_url=image_input if not is_base64 else None,
             voxelizer=request.voxelizer
         ))
@@ -517,6 +528,7 @@ async def image_to_bricks_stream(
         "detail_level": request.detail_level,
         "edit_image": request.edit_image,
         "model_option": request.model_option,
+        "has_prompt": bool(request.prompt),
         "stream": True,
     }
 
@@ -562,7 +574,7 @@ async def image_to_bricks_stream(
         generation_id = await generation_storage.create_generation(
             user_id=user_id,
             user_type=user_type,
-            prompt="no text prompt",
+            prompt=request.prompt or "no text prompt",
             detail_level=request.detail_level,
             endpoint="imageToBricks",
             model_3d="sam3d" if request.stream_3d else ("trellis-2" if request.model_option == "b" else "trellis"),
@@ -579,6 +591,7 @@ async def image_to_bricks_stream(
                 original_image_url=storage_original_url,
                 model_option=request.model_option,
                 prompt_option=request.prompt_option,
+                image_prompt=request.prompt,
                 edit_image=request.edit_image,
                 stream_3d=request.stream_3d,
             ),
