@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 
 MAX_XYZRGB_BYTES = 8 * 1024 * 1024
 MAX_VOXELS = 350_000
-DEFAULT_MODEL = os.getenv("OPENAI_LLM_RENDER_MODEL", "gpt-5.5")
+DEFAULT_MODEL = os.getenv("OPENAI_LLM_RENDER_MODEL", "gpt-5.6-sol")
+DEFAULT_REASONING_EFFORT = os.getenv("OPENAI_LLM_RENDER_REASONING_EFFORT", "max")
 
 
 class LlmRenderRequest(BaseModel):
@@ -388,6 +389,7 @@ async def _call_openai_for_rules(
                 ],
             },
         ],
+        "reasoning": {"effort": DEFAULT_REASONING_EFFORT},
         "text": {
             "format": {
                 "type": "json_schema",
