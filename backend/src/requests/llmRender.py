@@ -1,3 +1,5 @@
+import base64
+from io import BytesIO
 import json
 import logging
 import os
@@ -7,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from fastapi import HTTPException
+from PIL import Image, ImageDraw
 from pydantic import BaseModel, validator
 
 from ..utils.posthog_client import track_api_call, track_error
@@ -217,6 +220,71 @@ def _build_scene_summary(voxels: List[Dict[str, int]], grid_size: int) -> Dict[s
     }
 
 
+def _project_voxels(
+    voxels: List[Dict[str, int]],
+    horizontal_axis: str,
+    vertical_axis: str,
+    depth_axis: str,
+    bounds: Dict[str, Tuple[int, int]],
+    image_size: int = 256,
+) -> Image.Image:
+    width = bounds[horizontal_axis][1] - bounds[horizontal_axis][0] + 1
+    height = bounds[vertical_axis][1] - bounds[vertical_axis][0] + 1
+    scale = max(1, min(image_size // max(width, 1), image_size // max(height, 1)))
+    canvas_width = max(1, width * scale)
+    canvas_height = max(1, height * scale)
+    image = Image.new("RGB", (canvas_width, canvas_height), "white")
+    draw = ImageDraw.Draw(image)
+    nearest_by_pixel: Dict[Tuple[int, int], Tuple[int, Tuple[int, int, int]]] = {}
+
+    for voxel in voxels:
+        px = voxel[horizontal_axis] - bounds[horizontal_axis][0]
+        py = bounds[vertical_axis][1] - voxel[vertical_axis]
+        depth = voxel[depth_axis]
+        key = (px, py)
+        color = (voxel["r"], voxel["g"], voxel["b"])
+        previous = nearest_by_pixel.get(key)
+        if previous is None or depth > previous[0]:
+            nearest_by_pixel[key] = (depth, color)
+
+    for (px, py), (_, color) in nearest_by_pixel.items():
+        draw.rectangle(
+            [px * scale, py * scale, (px + 1) * scale - 1, (py + 1) * scale - 1],
+            fill=color,
+        )
+
+    return image.resize((image_size, image_size), Image.Resampling.NEAREST)
+
+
+def _build_voxel_preview_data_url(voxels: List[Dict[str, int]]) -> str:
+    bounds = _bounds(voxels)
+    views = [
+        ("front", _project_voxels(voxels, "x", "z", "y", bounds)),
+        ("side", _project_voxels(voxels, "y", "z", "x", bounds)),
+        ("top", _project_voxels(voxels, "x", "y", "z", bounds)),
+    ]
+
+    label_height = 28
+    gap = 12
+    tile_size = 256
+    composite = Image.new(
+        "RGB",
+        (tile_size * len(views) + gap * (len(views) - 1), tile_size + label_height),
+        "white",
+    )
+    draw = ImageDraw.Draw(composite)
+
+    for index, (label, view) in enumerate(views):
+        x = index * (tile_size + gap)
+        composite.paste(view, (x, label_height))
+        draw.text((x + 8, 7), label, fill=(0, 0, 0))
+
+    buffer = BytesIO()
+    composite.save(buffer, format="PNG", optimize=True)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 def _extract_response_text(response_json: Dict[str, Any]) -> str:
     if isinstance(response_json.get("output_text"), str):
         return response_json["output_text"]
@@ -250,6 +318,7 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 async def _call_openai_for_rules(
     scene_summary: Dict[str, Any],
     reference_image_url: str,
+    voxel_preview_image_url: str,
     prompt: Optional[str],
     model: str,
 ) -> List[Dict[str, Any]]:
@@ -262,19 +331,22 @@ async def _call_openai_for_rules(
 
     system_prompt = (
         "You recolor voxel xyzrgb models to match a reference image semantically. "
-        "Do not change geometry. Return only JSON."
+        "Use the reference image as the target palette and the voxel preview image "
+        "as the current model appearance. Do not change geometry. Return only JSON."
     )
     user_prompt = {
         "task": (
-            "Inspect the reference image and the compact voxel scene summary. "
-            "Create recoloring rules that make the voxel object look more like the "
-            "reference image while preserving shape."
+            "Inspect both images. First infer the major semantic color regions in "
+            "the reference image, then map those regions onto the visible front, side, "
+            "and top voxel preview. Create recoloring rules that make the voxel object "
+            "look more like the reference image while preserving shape."
         ),
         "optional_user_prompt": prompt,
         "rule_schema": {
             "rules": [
                 {
                     "name": "short semantic region name",
+                    "reason": "which reference-image region this rule maps to",
                     "selector": {
                         "x": [0.0, 1.0],
                         "y": [0.0, 1.0],
@@ -291,7 +363,11 @@ async def _call_openai_for_rules(
             "x/y/z selector ranges are normalized 0..1 over the voxel bounds. "
             "Use [0, 1] for axes that should not be spatially constrained. "
             "Use source_colors=[] when the rule should not target existing approximate colors. "
-            "Use broad semantic regions, not per-voxel edits. Keep rules under 40."
+            "Existing dominant colors in scene_summary are source colors, not the target palette. "
+            "Do not simply apply high-frequency existing colors across the model. "
+            "Prefer contiguous semantic regions and colors visible in the reference image. "
+            "Use the fewest rules that explain the reference image; keep rules under 16. "
+            "Order specific rules before broad base-color rules."
         ),
         "scene_summary": scene_summary,
     }
@@ -308,6 +384,7 @@ async def _call_openai_for_rules(
                 "content": [
                     {"type": "input_text", "text": json.dumps(user_prompt)},
                     {"type": "input_image", "image_url": reference_image_url},
+                    {"type": "input_image", "image_url": voxel_preview_image_url},
                 ],
             },
         ],
@@ -321,12 +398,13 @@ async def _call_openai_for_rules(
                     "properties": {
                         "rules": {
                             "type": "array",
-                            "maxItems": 40,
+                            "maxItems": 16,
                             "items": {
                                 "type": "object",
                                 "additionalProperties": False,
                                 "properties": {
                                     "name": {"type": "string"},
+                                    "reason": {"type": "string"},
                                     "selector": {
                                         "type": "object",
                                         "additionalProperties": False,
@@ -370,7 +448,7 @@ async def _call_openai_for_rules(
                                     },
                                     "strength": {"type": "number", "minimum": 0, "maximum": 1},
                                 },
-                                "required": ["name", "selector", "color", "strength"],
+                                "required": ["name", "reason", "selector", "color", "strength"],
                             },
                         }
                     },
@@ -475,7 +553,7 @@ def _apply_rules(
     recolored = [voxel.copy() for voxel in voxels]
     applied_rules: List[Dict[str, Any]] = []
 
-    for raw_rule in rules[:40]:
+    for raw_rule in rules[:16]:
         if not isinstance(raw_rule, dict):
             continue
         color = _coerce_rgb(raw_rule.get("color"))
@@ -507,6 +585,7 @@ def _apply_rules(
         applied_rules.append(
             {
                 "name": raw_rule.get("name", "unnamed rule"),
+                "reason": raw_rule.get("reason"),
                 "selector": selector,
                 "color": list(color),
                 "strength": strength,
@@ -532,9 +611,11 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
         xyzrgb_content = await _fetch_text_url(request.xyzrgb_url, MAX_XYZRGB_BYTES)
         voxels = _parse_xyzrgb(xyzrgb_content)
         scene_summary = _build_scene_summary(voxels, request.grid_size or 4)
+        voxel_preview_image_url = _build_voxel_preview_data_url(voxels)
         rules = await _call_openai_for_rules(
             scene_summary=scene_summary,
             reference_image_url=request.reference_image_url,
+            voxel_preview_image_url=voxel_preview_image_url,
             prompt=request.prompt,
             model=model,
         )
