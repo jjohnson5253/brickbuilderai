@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -144,18 +144,6 @@ def _bounds(voxels: List[Dict[str, int]]) -> Dict[str, Tuple[int, int]]:
     }
 
 
-def _quantize_color(r: int, g: int, b: int, step: int = 32) -> Tuple[int, int, int]:
-    return tuple(min(255, int(round(channel / step) * step)) for channel in (r, g, b))
-
-
-def _dominant_colors(voxels: List[Dict[str, int]], limit: int = 18) -> List[Dict[str, Any]]:
-    counter = Counter(_quantize_color(v["r"], v["g"], v["b"]) for v in voxels)
-    return [
-        {"rgb": list(color), "count": count}
-        for color, count in counter.most_common(limit)
-    ]
-
-
 def _axis_value_to_cell(value: int, low: int, high: int, grid_size: int) -> int:
     if high == low:
         return 0
@@ -169,9 +157,7 @@ def _spatial_cells(
     grid_size: int,
     limit: int = 96,
 ) -> List[Dict[str, Any]]:
-    cells: Dict[Tuple[int, int, int], Dict[str, Any]] = defaultdict(
-        lambda: {"count": 0, "colors": Counter()}
-    )
+    cells: Dict[Tuple[int, int, int], int] = defaultdict(int)
 
     for voxel in voxels:
         cell = (
@@ -179,14 +165,12 @@ def _spatial_cells(
             _axis_value_to_cell(voxel["y"], *bounds["y"], grid_size),
             _axis_value_to_cell(voxel["z"], *bounds["z"], grid_size),
         )
-        cells[cell]["count"] += 1
-        cells[cell]["colors"][_quantize_color(voxel["r"], voxel["g"], voxel["b"])] += 1
+        cells[cell] += 1
 
     summarized = []
-    for (x, y, z), data in sorted(
-        cells.items(), key=lambda item: item[1]["count"], reverse=True
-    )[:limit]:
-        color, color_count = data["colors"].most_common(1)[0]
+    for (x, y, z), count in sorted(cells.items(), key=lambda item: item[1], reverse=True)[
+        :limit
+    ]:
         summarized.append(
             {
                 "cell": [x, y, z],
@@ -195,9 +179,7 @@ def _spatial_cells(
                     [round(y / grid_size, 3), round((y + 1) / grid_size, 3)],
                     [round(z / grid_size, 3), round((z + 1) / grid_size, 3)],
                 ],
-                "count": data["count"],
-                "dominant_rgb": list(color),
-                "dominant_rgb_count": color_count,
+                "count": count,
             }
         )
     return summarized
@@ -212,7 +194,6 @@ def _build_scene_summary(voxels: List[Dict[str, int]], grid_size: int) -> Dict[s
         "dimensions": {
             axis: values[1] - values[0] + 1 for axis, values in bounds.items()
         },
-        "dominant_colors": _dominant_colors(voxels),
         "spatial_grid": {
             "grid_size_per_axis": grid_size,
             "cell_coordinates": "0 is low/min on an axis; grid_size-1 is high/max",
@@ -236,19 +217,25 @@ def _project_voxels(
     canvas_height = max(1, height * scale)
     image = Image.new("RGB", (canvas_width, canvas_height), "white")
     draw = ImageDraw.Draw(image)
-    nearest_by_pixel: Dict[Tuple[int, int], Tuple[int, Tuple[int, int, int]]] = {}
+    nearest_by_pixel: Dict[Tuple[int, int], int] = {}
+    low_depth, high_depth = bounds[depth_axis]
 
     for voxel in voxels:
         px = voxel[horizontal_axis] - bounds[horizontal_axis][0]
         py = bounds[vertical_axis][1] - voxel[vertical_axis]
         depth = voxel[depth_axis]
         key = (px, py)
-        color = (voxel["r"], voxel["g"], voxel["b"])
         previous = nearest_by_pixel.get(key)
-        if previous is None or depth > previous[0]:
-            nearest_by_pixel[key] = (depth, color)
+        if previous is None or depth > previous:
+            nearest_by_pixel[key] = depth
 
-    for (px, py), (_, color) in nearest_by_pixel.items():
+    for (px, py), depth in nearest_by_pixel.items():
+        if high_depth == low_depth:
+            normalized_depth = 1.0
+        else:
+            normalized_depth = (depth - low_depth) / (high_depth - low_depth)
+        shade = round(180 - normalized_depth * 95)
+        color = (shade, shade, shade)
         draw.rectangle(
             [px * scale, py * scale, (px + 1) * scale - 1, (py + 1) * scale - 1],
             fill=color,
@@ -332,15 +319,16 @@ async def _call_openai_for_rules(
 
     system_prompt = (
         "You recolor voxel xyzrgb models to match a reference image semantically. "
-        "Use the reference image as the target palette and the voxel preview image "
-        "as the current model appearance. Do not change geometry. Return only JSON."
+        "Use the reference image as the only target palette. Use the neutral voxel "
+        "preview and occupancy summary only to understand geometry. Do not change geometry. "
+        "Return only JSON."
     )
     user_prompt = {
         "task": (
             "Inspect both images. First infer the major semantic color regions in "
             "the reference image, then map those regions onto the visible front, side, "
-            "and top voxel preview. Create recoloring rules that make the voxel object "
-            "look more like the reference image while preserving shape."
+            "and top neutral voxel preview. Create recoloring rules that make the voxel "
+            "object look more like the reference image while preserving shape."
         ),
         "optional_user_prompt": prompt,
         "rule_schema": {
@@ -363,9 +351,9 @@ async def _call_openai_for_rules(
         "selector_notes": (
             "x/y/z selector ranges are normalized 0..1 over the voxel bounds. "
             "Use [0, 1] for axes that should not be spatially constrained. "
-            "Use source_colors=[] when the rule should not target existing approximate colors. "
-            "Existing dominant colors in scene_summary are source colors, not the target palette. "
-            "Do not simply apply high-frequency existing colors across the model. "
+            "Set source_colors=[] unless the optional user prompt explicitly asks to preserve "
+            "or replace a current color. Do not infer target colors from the voxel model's "
+            "existing colors; choose target colors from the reference image. "
             "Prefer contiguous semantic regions and colors visible in the reference image. "
             "Use the fewest rules that explain the reference image; keep rules under 16. "
             "Order specific rules before broad base-color rules."
