@@ -427,6 +427,7 @@ class GenerationStorage:
         try:
             # Generate the parts list CSV
             csv_content = generate_parts_list_csv(ldr_content)
+            brick_count = sum(parse_ldr_file(ldr_content).values())
             
             # Upload to Supabase Storage (timestamp for unique URL to bust CDN cache)
             timestamp = int(time.time())
@@ -437,10 +438,18 @@ class GenerationStorage:
                 content_type="text/csv"
             )
             
-            # Update the database with the CSV URL
-            update_data = {"parts_list_csv_url": storage_url}
+            # Keep the aggregate-friendly count beside the generated artifact so
+            # public stats never need to download and parse every parts-list CSV.
+            update_data = {
+                "parts_list_csv_url": storage_url,
+                "brick_count": brick_count,
+            }
             result = self.client.table("generations").update(update_data).eq("id", generation_id).execute()
-            logger.info(f"Updated generation {generation_id} with parts_list_csv_url")
+            logger.info(
+                "Updated generation %s with parts_list_csv_url and brick_count=%s",
+                generation_id,
+                brick_count,
+            )
             return storage_url
             
         except Exception as e:
@@ -449,6 +458,37 @@ class GenerationStorage:
                 raise
             # Don't raise - this shouldn't break the main flow
             return None
+
+    async def get_generation_stats(self) -> Dict[str, int]:
+        """Return public, aggregate-only generation statistics."""
+        try:
+            rpc = getattr(self.client, "rpc", None)
+            if callable(rpc):
+                try:
+                    result = rpc("get_generation_stats").execute()
+                    if result.data:
+                        row = result.data[0] if isinstance(result.data, list) else result.data
+                        return {
+                            "generation_count": int(row.get("generation_count") or 0),
+                            "brick_count": int(row.get("brick_count") or 0),
+                        }
+                except Exception as exc:
+                    # This also makes local development and rolling deploys work
+                    # before the production database migration has been applied.
+                    logger.warning("Generation stats RPC unavailable; using query fallback: %s", exc)
+
+            result = self.client.table("generations").select(
+                "brick_count", count="exact"
+            ).execute()
+            return {
+                "generation_count": int(result.count or 0),
+                "brick_count": sum(
+                    int(row.get("brick_count") or 0) for row in (result.data or [])
+                ),
+            }
+        except Exception as exc:
+            logger.error("Failed to retrieve generation stats: %s", exc)
+            raise
     
     async def update_status(
         self,

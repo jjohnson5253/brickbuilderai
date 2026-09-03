@@ -11,7 +11,6 @@ from pydantic import BaseModel
 from fastapi import HTTPException
 
 from ..utils.generation_storage import generation_storage
-from ..utils.brickowl_utils import generate_parts_list_csv
 from ..utils.posthog_client import track_api_call, track_error
 from ..utils.auth import handle_auth_and_tracking
 
@@ -108,19 +107,12 @@ async def update_ldr_and_parts_list(request: UpdateLdrAndPartsListRequest, auth_
         
         logger.info(f"Successfully stored LDR file: {ldr_url}")
 
-        # Generate the parts list CSV and upload with timestamped path
-        csv_content = generate_parts_list_csv(request.ldr_content)
-        csv_file_path = f"generations/{request.generation_id}/parts_list_{timestamp}.csv"
-        parts_list_csv_url = await generation_storage._upload_file_to_storage(
-            file_content=csv_content,
-            file_path=csv_file_path,
-            content_type="text/csv"
+        # Regenerate the parts list and update its URL and brick count together.
+        parts_list_csv_url = await generation_storage.store_parts_list_csv(
+            generation_id=request.generation_id,
+            ldr_content=request.ldr_content,
+            raise_on_error=True,
         )
-        
-        # Update the parts_list_csv_url in the generations table
-        generation_storage.client.table("generations").update(
-            {"parts_list_csv_url": parts_list_csv_url}
-        ).eq("id", request.generation_id).execute()
         
         if not parts_list_csv_url:
             logger.warning(f"Failed to store parts list CSV for generation {request.generation_id}")
