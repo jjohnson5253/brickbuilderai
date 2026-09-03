@@ -5,6 +5,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Link } from 'react-router-dom';
 import { MousePointer2, Move, Save, Pipette, Brush, Plus, Trash2, Undo2, Redo2, BoxSelect, ChevronDown, Box, Minus, ChevronLeft, ChevronRight, HelpCircle, X, AlertTriangle } from 'lucide-react';
 import { UpdateModelApiService, UpdateModelResponse } from '../services/updateModelApi';
+import posthog from 'posthog-js';
 
 type InteractionMode = 'select' | 'pan' | 'add' | 'paint';
 type SelectSubMode = 'regular' | 'byColor' | 'marquee';
@@ -304,6 +305,14 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  const trackMenuClick = (menuItem: string, properties: Record<string, unknown> = {}) => {
+    posthog.capture('voxel_editor_menu_item_clicked', {
+      generation_id: generationId,
+      menu_item: menuItem,
+      ...properties,
+    });
+  };
 
   // Notify parent when hasChanges changes
   useEffect(() => {
@@ -2620,6 +2629,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         <div style={{ position: 'relative', display: 'flex' }}>
           <button
             onClick={() => {
+              trackMenuClick('select', { select_mode: selectSubMode });
               if (mode === 'select') {
                 setSelectDropdownOpen(!selectDropdownOpen);
               } else {
@@ -2659,6 +2669,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
           <button
             onClick={(e) => {
               e.stopPropagation();
+              trackMenuClick('select_dropdown');
               setSelectDropdownOpen(!selectDropdownOpen);
             }}
             className={tutorialAction === 'switchToByColor' || tutorialAction === 'byColorSelect' || tutorialAction === 'marqueeSelect' ? 'tutorial-pulse' : ''}
@@ -2712,6 +2723,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
               >
                 <button
                   onClick={() => {
+                    trackMenuClick('select_regular');
                     setSelectSubMode('regular');
                     setMode('select');
                     setSelectDropdownOpen(false);
@@ -2746,6 +2758,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
                 </button>
                 <button
                   onClick={() => {
+                    trackMenuClick('select_by_color');
                     setSelectSubMode('byColor');
                     setMode('select');
                     setSelectDropdownOpen(false);
@@ -2781,6 +2794,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
                 </button>
                 <button
                   onClick={() => {
+                    trackMenuClick('select_marquee');
                     setSelectSubMode('marquee');
                     setMode('select');
                     setSelectDropdownOpen(false);
@@ -2839,6 +2853,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         </button> */}
         <button
           onClick={() => {
+            trackMenuClick('paint');
             setMode('paint');
             // Set paint color to selected color if available, otherwise use current or default
             if (selectedColor) {
@@ -2867,6 +2882,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         
         <button
           onClick={() => {
+            trackMenuClick('add_block');
             setMode('add');
             // Set add color to selected color if available, otherwise use current or default
             if (selectedColor) {
@@ -2897,7 +2913,10 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         
         {/* Delete button - removes selected voxels */}
         <button
-          onClick={deleteSelectedVoxels}
+          onClick={() => {
+            trackMenuClick('delete_blocks', { selection_count: selectionCount });
+            deleteSelectedVoxels();
+          }}
           disabled={selectionCount === 0}
           title={selectionCount > 0 ? `Delete ${selectionCount} selected voxel${selectionCount > 1 ? 's' : ''} (Delete/Backspace)` : 'No voxels selected'}
           className={tutorialAction === 'delete' && selectionCount > 0 ? 'tutorial-pulse' : ''}
@@ -2924,6 +2943,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         {/* Tutorial help button */}
         <button
           onClick={() => {
+            trackMenuClick('tutorial');
             setShowTutorial(true);
             setTutorialStep(0);
           }}
@@ -2995,7 +3015,10 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         >
         {/* Undo button */}
         <button
-          onClick={handleUndo}
+          onClick={() => {
+            trackMenuClick('undo');
+            handleUndo();
+          }}
           disabled={!canUndo}
           title={canUndo ? 'Undo (Ctrl+Z)' : 'Nothing to undo'}
           className={tutorialAction === 'undo' ? 'tutorial-pulse' : ''}
@@ -3017,7 +3040,10 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         
         {/* Redo button */}
         <button
-          onClick={handleRedo}
+          onClick={() => {
+            trackMenuClick('redo');
+            handleRedo();
+          }}
           disabled={!canRedo}
           title={canRedo ? 'Redo (Ctrl+Shift+Z)' : 'Nothing to redo'}
           style={{
@@ -3041,7 +3067,10 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
           <>
             <div style={{ width: '1px', backgroundColor: '#d1d5db', margin: '4px 2px' }} />
             <button
-              onClick={handleSave}
+              onClick={() => {
+                trackMenuClick('save');
+                void handleSave();
+              }}
               disabled={!hasChanges || isSaving}
               title={hasChanges ? 'Save Changes' : 'No changes to save'}
               className={tutorialAction === 'save' ? 'tutorial-pulse' : ''}
@@ -3146,7 +3175,10 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
           >
           {/* Header with selected color */}
           <div 
-            onClick={() => setPaletteExpanded(!paletteExpanded)}
+            onClick={() => {
+              trackMenuClick('color_palette_toggle', { expanded: !paletteExpanded });
+              setPaletteExpanded(!paletteExpanded);
+            }}
             style={{ 
               display: 'flex',
               alignItems: 'center',
@@ -3189,6 +3221,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
                 <button
                   key={color.name}
                   onClick={() => {
+                    trackMenuClick('color_selected', { color_name: color.name });
                     setSelectedColor(color);
                     if (mode === 'add') {
                       setAddColor(color);
@@ -3230,7 +3263,10 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
           >
             {/* Header row - click to toggle */}
             <div
-              onClick={() => setResizeExpanded(!resizeExpanded)}
+              onClick={() => {
+                trackMenuClick('resize_panel_toggle', { expanded: !resizeExpanded });
+                setResizeExpanded(!resizeExpanded);
+              }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -3263,7 +3299,12 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
                   {resizeScaler ?? 25}
                 </div>
                 <button
-                  onClick={() => { if (!isResizing) setShowResizeWarning(true); }}
+                  onClick={() => {
+                    if (!isResizing) {
+                      trackMenuClick('resize', { detail_level: resizeScaler ?? 25 });
+                      setShowResizeWarning(true);
+                    }
+                  }}
                   disabled={isResizing}
                   className={tutorialAction === 'resize' ? 'tutorial-pulse' : ''}
                   style={{
@@ -3309,6 +3350,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
         }}>
           <button
             onClick={() => {
+              trackMenuClick('previous_camera_mode', { current_mode: sphereMode });
               setSphereMode(prev => 
                 prev === 'rotate' ? 'zoom' : prev === 'pan' ? 'rotate' : 'pan'
               );
@@ -3352,6 +3394,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
           
           <button
             onClick={() => {
+              trackMenuClick('next_camera_mode', { current_mode: sphereMode });
               setSphereMode(prev => 
                 prev === 'rotate' ? 'pan' : prev === 'pan' ? 'zoom' : 'rotate'
               );
