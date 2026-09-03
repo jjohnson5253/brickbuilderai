@@ -9,6 +9,7 @@ import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { SEO } from "../components/SEO";
 import { SiteFooter } from "../components/SiteFooter";
 import { supabase } from "../lib/supabase";
+import posthog from "posthog-js";
 
 type LocationState = {
   name?: string;
@@ -233,6 +234,14 @@ export default function OrderKit() {
     // Get generation_id and cart_id from state or localStorage
     const generationId = state?.generation_id || localStorage.getItem('lastGenerationId') || undefined;
     const brickowlCartId = state?.cart_id || localStorage.getItem('current_cart_id') || undefined;
+
+    posthog.capture('order_checkout_clicked', {
+      generation_id: generationId,
+      total_cents: totalCents,
+      currency: 'USD',
+      parts_quantity: BOM.reduce((total, part) => total + part.qty, 0),
+      distinct_parts: BOM.length,
+    });
 
     const data = await CreateCheckoutSessionApiService.createCheckoutSession({
       name: `${name} – ${size} Kit`,

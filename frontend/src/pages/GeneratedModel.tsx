@@ -38,6 +38,7 @@ import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
+import posthog from "posthog-js";
 import { useAuth } from "../contexts/AuthContext";
 import {
   HandCoins,
@@ -1612,6 +1613,10 @@ export default function GeneratedModel() {
       
       setShowVoxelEditor(true);
       setShowResizeScaler(true);
+      posthog.capture('voxel_editor_opened', {
+        generation_id: currentGenerationId,
+        is_demo_model: isDemoModel,
+      });
     } catch (err) {
       console.error('Failed to fetch xyzrgb content:', err);
       setXyzrgbError(`Failed to load voxel data: ${err}`);
@@ -1621,6 +1626,12 @@ export default function GeneratedModel() {
   };
 
   const handleEditModelClick = async () => {
+    posthog.capture('generated_model_edit_button_clicked', {
+      generation_id: currentGenerationId,
+      action: showVoxelEditor ? 'exit_editor' : 'enter_editor',
+      is_demo_model: isDemoModel,
+    });
+
     // Stop the attention pulse permanently once the user has discovered the
     // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
     setHasClickedEditModel(true);
