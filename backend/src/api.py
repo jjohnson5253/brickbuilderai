@@ -26,6 +26,7 @@ from .requests.llmRender import llm_render, LlmRenderRequest, LlmRenderResponse
 from .requests.createCheckoutSession import create_checkout_session, CreateCheckoutSessionRequest, CreateCheckoutSessionResponse
 from .requests.stripeWebhook import stripe_webhook, StripeWebhookRequest, StripeWebhookResponse
 from .requests.getGeneration import get_generation, GetGenerationRequest, GetGenerationResponse
+from .requests.getGenerationStats import get_generation_stats, GetGenerationStatsResponse
 from .requests.getUserGenerations import get_user_generations, GetUserGenerationsRequest, GetUserGenerationsResponse
 from .requests.getGenerationsByImage import get_generations_by_image, GetGenerationsByImageRequest, GetGenerationsByImageResponse
 from .requests.getCommunityGenerations import get_community_generations, GetCommunityGenerationsRequest, GetCommunityGenerationsResponse
@@ -331,6 +332,12 @@ async def get_generation_by_id_endpoint(
     """Get generation status and data by generation ID (GET version for polling)"""
     request = GetGenerationRequest(generation_id=generation_id)
     return await get_generation(request)
+
+
+@app.get("/generation-stats", response_model=GetGenerationStatsResponse)
+async def get_generation_stats_endpoint() -> GetGenerationStatsResponse:
+    """Return aggregate counts for the public landing-page tracker."""
+    return await get_generation_stats()
 
 
 @app.post("/getUserGenerations", response_model=GetUserGenerationsResponse)
