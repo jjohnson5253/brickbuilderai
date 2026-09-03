@@ -96,3 +96,24 @@ def test_get_owned_generation_returns_404_for_missing_generation(monkeypatch):
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Generation not found"
+
+
+def test_get_generation_or_404_allows_public_rows(monkeypatch):
+    row = {"id": "generation-1", "is_community": True}
+    monkeypatch.setattr(authorization, "generation_storage", FakeGenerationStorage(row))
+    result = asyncio.run(authorization.get_generation_or_404("generation-1", {"user_id": "reader"}))
+    assert result == row
+
+
+def test_get_generation_or_404_allows_private_rows_with_stable_identity(monkeypatch):
+    row = {"id": "generation-1", "is_community": False, "user_id": "owner"}
+    monkeypatch.setattr(authorization, "generation_storage", FakeGenerationStorage(row))
+    result = asyncio.run(authorization.get_generation_or_404("generation-1", {"user_id": "other"}))
+    assert result == row
+
+
+def test_get_generation_or_404_requires_stable_identity(monkeypatch):
+    monkeypatch.setattr(authorization, "generation_storage", FakeGenerationStorage({"id": "generation-1"}))
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(authorization.get_generation_or_404("generation-1", {}))
+    assert exc_info.value.status_code == 401

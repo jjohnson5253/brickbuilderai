@@ -48,4 +48,8 @@ build-backend = "hatchling.build"
 packages = ["src/mesh2brick"]
 
 [dependency-groups]
-dev = ["pytest>=8.3.5"]
+dev = ["pytest>=8.3.5", "pytest-cov>=6.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
