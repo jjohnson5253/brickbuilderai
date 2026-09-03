@@ -30,6 +30,7 @@ import { ResizeModelApiService } from "../services/resizeModelApi";
 import { PromptEditModelApiService } from "../services/promptEditModelApi";
 import { LlmRenderApiService } from "../services/llmRenderApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
+import { GetGenerationsByImageApiService, GenerationIteration } from "../services/getGenerationsByImageApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
@@ -61,6 +62,11 @@ import {
   ShoppingCart,
   X,
   LayoutDashboard,
+  History,
+  ChevronUp,
+  Calendar,
+  Clock,
+  Eye,
 } from "lucide-react";
 
 interface HeaderProps {
@@ -318,6 +324,11 @@ export default function GeneratedModel() {
   const [isExportingVideo, setIsExportingVideo] = React.useState(false);
   const exportCaptureApiRef = React.useRef<ExportCaptureApi | null>(null);
   const exportMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const [editHistoryOpen, setEditHistoryOpen] = React.useState(false);
+  const [editHistory, setEditHistory] = React.useState<GenerationIteration[]>([]);
+  const [editHistoryLoading, setEditHistoryLoading] = React.useState(false);
+  const [editHistoryError, setEditHistoryError] = React.useState<string | null>(null);
+  const editHistoryMenuRef = React.useRef<HTMLDivElement | null>(null);
 
   const handleExportCaptureReady = React.useCallback((api: ExportCaptureApi | null) => {
     exportCaptureApiRef.current = api;
@@ -431,6 +442,9 @@ export default function GeneratedModel() {
                 if (response.external_image_url) {
                   setEditPreviewImageUrl(response.external_image_url);
                 }
+                if (response.processed_image_url) {
+                  setProcessedImageUrl(response.processed_image_url);
+                }
               }
             );
             
@@ -494,6 +508,9 @@ export default function GeneratedModel() {
           const statusResponse = await GetGenerationApiService.getGeneration(stateGenerationId);
           
           if (statusResponse.status === 'completed' && statusResponse.ldr_content) {
+            if (statusResponse.processed_image_url) {
+              setProcessedImageUrl(statusResponse.processed_image_url);
+            }
             await processCompletedGeneration(stateGenerationId, {
               generation_id: statusResponse.generation_id,
               prompt: statusResponse.prompt || stateData?.modelName || 'Your Model',
@@ -956,6 +973,56 @@ export default function GeneratedModel() {
     document.addEventListener('mousedown', handleDocumentClick);
     return () => document.removeEventListener('mousedown', handleDocumentClick);
   }, [exportMenuOpen]);
+
+  React.useEffect(() => {
+    setEditHistoryOpen(false);
+    setEditHistory([]);
+    setEditHistoryError(null);
+  }, [processedImageUrl]);
+
+  React.useEffect(() => {
+    if (!editHistoryOpen) return;
+
+    const handleDismiss = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
+      if (event instanceof MouseEvent && editHistoryMenuRef.current?.contains(event.target as Node)) return;
+      setEditHistoryOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleDismiss);
+    document.addEventListener('keydown', handleDismiss);
+    return () => {
+      document.removeEventListener('mousedown', handleDismiss);
+      document.removeEventListener('keydown', handleDismiss);
+    };
+  }, [editHistoryOpen]);
+
+  const handleToggleEditHistory = React.useCallback(async () => {
+    if (editHistoryOpen) {
+      setEditHistoryOpen(false);
+      return;
+    }
+
+    setEditHistoryOpen(true);
+    if (!processedImageUrl) return;
+
+    setEditHistoryLoading(true);
+    setEditHistoryError(null);
+    try {
+      const response = await GetGenerationsByImageApiService.getGenerationsByImage(
+        accessToken || undefined,
+        processedImageUrl,
+      );
+      setEditHistory([...response.generations].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ));
+    } catch (error) {
+      console.error('Failed to load edit history:', error);
+      setEditHistoryError('Could not load edit history. Please try again.');
+    } finally {
+      setEditHistoryLoading(false);
+    }
+  }, [accessToken, editHistoryOpen, processedImageUrl]);
 
   const handleToggleCommunity = async () => {
     if (!currentGenerationId || communityToggleLoading) return;
@@ -2006,6 +2073,137 @@ export default function GeneratedModel() {
                 </button>
               </div>
             )}
+          </div>
+          <div ref={editHistoryMenuRef} className="absolute bottom-3 right-3 z-30">
+            {editHistoryOpen && (
+              <div
+                id="edit-history-menu"
+                role="dialog"
+                aria-label="Previous model edits"
+                className="absolute bottom-full right-0 mb-2 flex w-[calc(100vw-3rem)] max-w-sm flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white/95 text-left shadow-2xl shadow-black/25 backdrop-blur-md sm:w-96"
+                style={{
+                  maxHeight: 'max(7rem, min(22rem, calc((100vw - 2rem) * 0.6667 - 4.5rem), calc(50vh - 4.5rem)))',
+                }}
+              >
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-3.5 py-2.5 sm:px-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">Previous edits</h3>
+                    {!editHistoryLoading && !editHistoryError && (
+                      <p className="text-[11px] text-slate-500">
+                        {editHistory.length} {editHistory.length === 1 ? 'version' : 'versions'} · newest first
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditHistoryOpen(false)}
+                    aria-label="Close previous edits"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2.5 sm:p-3">
+                  {editHistoryLoading ? (
+                    <div className="flex items-center justify-center gap-2 py-6 text-xs text-slate-500">
+                      <Loader2 size={16} className="animate-spin text-[#f44336]" />
+                      Loading edits...
+                    </div>
+                  ) : editHistoryError ? (
+                    <div className="rounded-xl bg-red-50 px-3 py-4 text-center text-xs text-red-700">
+                      {editHistoryError}
+                    </div>
+                  ) : editHistory.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-slate-500">
+                      No previous edits yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {editHistory.map((edit, index) => {
+                        const isCurrentGeneration = edit.id === currentGenerationId;
+                        const isCompleted = edit.status === 'completed';
+
+                        return (
+                          <div
+                            key={edit.id}
+                            className={`rounded-xl border p-2.5 sm:p-3 ${
+                              isCurrentGeneration
+                                ? 'border-[#f44336]/60 bg-red-50'
+                                : 'border-slate-200 bg-white'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2.5">
+                              <div className="min-w-0 flex-1">
+                                <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                    Version {editHistory.length - index}
+                                  </span>
+                                  {isCurrentGeneration && (
+                                    <span className="rounded-full bg-[#f44336] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
+                                      Current
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="truncate font-mono text-[10px] text-slate-600 sm:text-[11px]" title={edit.id}>
+                                  {edit.id}
+                                </p>
+                                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-500">
+                                  <span className="inline-flex items-center gap-1">
+                                    <Calendar size={11} />
+                                    {new Date(edit.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  </span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <Clock size={11} />
+                                    {new Date(edit.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {isCompleted ? (
+                                <button
+                                  type="button"
+                                  disabled={isCurrentGeneration}
+                                  onClick={() => {
+                                    setEditHistoryOpen(false);
+                                    navigate(`/generated-model?id=${edit.id}`);
+                                  }}
+                                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700 transition-colors hover:border-[#f44336]/60 hover:text-[#f44336] disabled:cursor-default disabled:border-transparent disabled:bg-transparent disabled:px-0 disabled:text-slate-400"
+                                >
+                                  {!isCurrentGeneration && <Eye size={13} />}
+                                  {isCurrentGeneration ? 'Viewing' : 'View'}
+                                </button>
+                              ) : (
+                                <span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[9px] font-semibold uppercase text-amber-700">
+                                  {edit.status}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              aria-controls="edit-history-menu"
+              aria-expanded={editHistoryOpen}
+              disabled={!processedImageUrl || isSavePolling}
+              onClick={() => { void handleToggleEditHistory(); }}
+              title={!processedImageUrl ? 'No edit history is available for this model' : 'View previous edits'}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-700/40 bg-slate-900/85 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-black/30 backdrop-blur-sm transition-all duration-150 hover:scale-[1.03] hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100 sm:px-4"
+            >
+              <History size={14} />
+              <span>Previous edits</span>
+              <ChevronUp
+                size={13}
+                className={`transition-transform duration-200 ${editHistoryOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
           </div>
           <div className="absolute inset-0">
             {isSavePolling ? (
