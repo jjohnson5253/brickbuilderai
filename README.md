@@ -116,6 +116,22 @@ The SAM3D worker image is published publicly on Docker Hub as `jjohnson5253/mani
 
 See `serverless/README.md` if you want to build and push your own image instead.
 
+## Testing
+
+Pull requests run isolated backend and frontend test jobs in GitHub Actions. The
+tests mock external APIs and storage, so no production credentials are needed.
+
+```bash
+# Backend
+cd backend
+uv run --group dev pytest
+
+# Frontend (unit tests and coverage gate)
+cd frontend
+npm ci
+npm run test:coverage
+```
+
 ## Attributes
 - Legolization: https://github.com/AvaLovelace1/BrickGPT/
 - Image-to-3D Streaming: https://github.com/rehan-remade/Manifold
