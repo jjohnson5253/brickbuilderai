@@ -1,13 +1,19 @@
+import base64
+import heapq
 import json
 import logging
 import os
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
+from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
+import numpy as np
 from fastapi import HTTPException
+from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, validator
+from scipy import ndimage
 
 from ..utils.posthog_client import track_api_call, track_error
 
@@ -15,7 +21,38 @@ logger = logging.getLogger(__name__)
 
 MAX_XYZRGB_BYTES = 8 * 1024 * 1024
 MAX_VOXELS = 350_000
-DEFAULT_MODEL = os.getenv("OPENAI_LLM_RENDER_MODEL", "gpt-5.5")
+MAX_GRID_CELLS = 60_000_000
+DEFAULT_MODEL = os.getenv("OPENAI_LLM_RENDER_MODEL", "gpt-5.6-sol")
+DEFAULT_REASONING_EFFORT = os.getenv("OPENAI_LLM_RENDER_REASONING_EFFORT", "medium")
+OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_LLM_RENDER_TIMEOUT_SECONDS", "240"))
+
+DEFAULT_MAX_SEGMENTS = 16
+MAX_SEGMENTS_LIMIT = 24
+COLOR_CLUSTERS = 10
+# Segments smaller than this share of the model are merged into a neighbour.
+MIN_SEGMENT_FRACTION = 0.005
+PREVIEW_TILE_SIZE = 320
+
+# Distinct ID colors used only to label segments in the preview sent to the LLM.
+SEGMENT_PALETTE: List[Tuple[int, int, int]] = [
+    (230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200),
+    (245, 130, 48), (145, 30, 180), (70, 240, 240), (240, 50, 230),
+    (210, 245, 60), (250, 190, 212), (0, 128, 128), (220, 190, 255),
+    (170, 110, 40), (255, 250, 200), (128, 0, 0), (170, 255, 195),
+    (128, 128, 0), (255, 215, 180), (0, 0, 128), (128, 128, 128),
+    (255, 105, 180), (0, 200, 120), (180, 60, 0), (90, 90, 255),
+]
+
+# Camera placements. The brick pipeline is Z-up and rotates the Y-up GLB +90 deg
+# about X, so the GLB front (+Z) ends up facing -Y. Each view is defined by
+# (horizontal axis, flip horizontal, vertical axis, depth axis, depth sign).
+VIEWS: List[Dict[str, Any]] = [
+    {"name": "front", "camera": "-Y", "h": "x", "flip_h": False, "v": "z", "d": "y", "d_sign": -1},
+    {"name": "back", "camera": "+Y", "h": "x", "flip_h": True, "v": "z", "d": "y", "d_sign": 1},
+    {"name": "left side", "camera": "+X", "h": "y", "flip_h": False, "v": "z", "d": "x", "d_sign": 1},
+    {"name": "top", "camera": "+Z", "h": "x", "flip_h": False, "v": "y", "d": "z", "d_sign": 1},
+]
+AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
 class LlmRenderRequest(BaseModel):
@@ -23,7 +60,8 @@ class LlmRenderRequest(BaseModel):
     reference_image_url: str
     prompt: Optional[str] = None
     model: Optional[str] = None
-    grid_size: Optional[int] = 4
+    max_segments: Optional[int] = DEFAULT_MAX_SEGMENTS
+    include_preview: bool = False
 
     @validator("xyzrgb_url", "reference_image_url")
     def validate_url(cls, value: str) -> str:
@@ -50,20 +88,22 @@ class LlmRenderRequest(BaseModel):
         value = value.strip()
         return value or None
 
-    @validator("grid_size")
-    def validate_grid_size(cls, value: Optional[int]) -> int:
+    @validator("max_segments")
+    def validate_max_segments(cls, value: Optional[int]) -> int:
         if value is None:
-            return 4
-        if value < 2 or value > 8:
-            raise ValueError("grid_size must be between 2 and 8")
+            return DEFAULT_MAX_SEGMENTS
+        if value < 2 or value > MAX_SEGMENTS_LIMIT:
+            raise ValueError(f"max_segments must be between 2 and {MAX_SEGMENTS_LIMIT}")
         return value
 
 
 class LlmRenderResponse(BaseModel):
     xyzrgb_content: str
     voxel_count: int
+    segment_count: int
     model: str
     applied_rules: List[Dict[str, Any]]
+    preview_image: Optional[str] = None
     message: str = "Successfully recolored xyzrgb"
 
 
@@ -133,88 +173,446 @@ def _parse_xyzrgb(content: str) -> List[Dict[str, int]]:
     return voxels
 
 
-def _bounds(voxels: List[Dict[str, int]]) -> Dict[str, Tuple[int, int]]:
-    return {
-        axis: (min(v[axis] for v in voxels), max(v[axis] for v in voxels))
-        for axis in ("x", "y", "z")
-    }
+def _voxel_arrays(voxels: List[Dict[str, int]]) -> Tuple[np.ndarray, np.ndarray]:
+    coords = np.array([(v["x"], v["y"], v["z"]) for v in voxels], dtype=np.int64)
+    colors = np.array([(v["r"], v["g"], v["b"]) for v in voxels], dtype=np.float32)
+    return coords, colors
 
 
-def _quantize_color(r: int, g: int, b: int, step: int = 32) -> Tuple[int, int, int]:
-    return tuple(min(255, int(round(channel / step) * step)) for channel in (r, g, b))
+# ---------------------------------------------------------------------------
+# Segmentation
+#
+# The existing voxel colors are usually wrong in hue but right in *structure*:
+# neighbouring voxels with similar colors almost always belong to the same
+# semantic part. We exploit that to pre-split the model into a small number of
+# contiguous segments, and then ask the LLM to label each segment rather than
+# guess coordinates.
+# ---------------------------------------------------------------------------
 
 
-def _dominant_colors(voxels: List[Dict[str, int]], limit: int = 18) -> List[Dict[str, Any]]:
-    counter = Counter(_quantize_color(v["r"], v["g"], v["b"]) for v in voxels)
-    return [
-        {"rgb": list(color), "count": count}
-        for color, count in counter.most_common(limit)
-    ]
+def _two_means(points: np.ndarray, weights: np.ndarray, iterations: int = 10) -> Optional[np.ndarray]:
+    """Deterministic weighted 2-means. Initialised by splitting along the principal
+    axis at the weighted mean, which avoids seeding a cluster on a lone outlier.
+    Returns 0/1 labels, or None if the points cannot be split."""
+    if len(points) < 2:
+        return None
+    points = points.astype(np.float64)
+    weights = weights.astype(np.float64)
+    mean = np.average(points, axis=0, weights=weights)
+    centered = points - mean
+    covariance = (centered * weights[:, None]).T @ centered
+    principal_axis = np.linalg.eigh(covariance)[1][:, -1]
+    projection = centered @ principal_axis
+    labels = (projection > 0).astype(np.int32)
+    if labels.min() == labels.max():
+        return None
 
-
-def _axis_value_to_cell(value: int, low: int, high: int, grid_size: int) -> int:
-    if high == low:
-        return 0
-    normalized = (value - low) / (high - low)
-    return min(grid_size - 1, max(0, int(normalized * grid_size)))
-
-
-def _spatial_cells(
-    voxels: List[Dict[str, int]],
-    bounds: Dict[str, Tuple[int, int]],
-    grid_size: int,
-    limit: int = 96,
-) -> List[Dict[str, Any]]:
-    cells: Dict[Tuple[int, int, int], Dict[str, Any]] = defaultdict(
-        lambda: {"count": 0, "colors": Counter()}
+    centers = np.stack(
+        [np.average(points[labels == k], axis=0, weights=weights[labels == k]) for k in (0, 1)]
     )
+    for _ in range(iterations):
+        distances = ((points[:, None, :] - centers[None, :, :]) ** 2).sum(2)
+        new_labels = distances.argmin(1).astype(np.int32)
+        if new_labels.min() == new_labels.max():
+            break
+        if np.array_equal(new_labels, labels):
+            break
+        labels = new_labels
+        for k in (0, 1):
+            members = labels == k
+            centers[k] = np.average(points[members], axis=0, weights=weights[members])
+    return labels
 
-    for voxel in voxels:
-        cell = (
-            _axis_value_to_cell(voxel["x"], *bounds["x"], grid_size),
-            _axis_value_to_cell(voxel["y"], *bounds["y"], grid_size),
-            _axis_value_to_cell(voxel["z"], *bounds["z"], grid_size),
+
+def _quantize_colors(colors: np.ndarray, clusters: int) -> np.ndarray:
+    """Bisecting k-means over RGB, weighted by how many voxels share each color.
+    Always splits the cluster with the most colour variance, so clusters are spent
+    on real colour regions rather than isolated outlier voxels."""
+    unique_colors, inverse, counts = np.unique(
+        colors, axis=0, return_inverse=True, return_counts=True
+    )
+    inverse = inverse.reshape(-1)
+    counts = counts.astype(np.float64)
+    labels = np.zeros(len(unique_colors), dtype=np.int32)
+    cluster_count = 1
+
+    while cluster_count < min(clusters, len(unique_colors)):
+        best_cluster, best_sse = -1, 0.0
+        for cluster in range(cluster_count):
+            members = labels == cluster
+            if members.sum() < 2:
+                continue
+            center = np.average(unique_colors[members], axis=0, weights=counts[members])
+            sse = float((counts[members] * ((unique_colors[members] - center) ** 2).sum(1)).sum())
+            if sse > best_sse:
+                best_cluster, best_sse = cluster, sse
+        if best_cluster < 0:
+            break
+        member_indices = np.nonzero(labels == best_cluster)[0]
+        split = _two_means(unique_colors[member_indices], counts[member_indices])
+        if split is None:
+            break
+        labels[member_indices[split == 1]] = cluster_count
+        cluster_count += 1
+
+    return labels[inverse]
+
+
+def _connected_components(
+    coords: np.ndarray, color_labels: np.ndarray
+) -> Tuple[np.ndarray, int, np.ndarray]:
+    """6-connected components of voxels that share a color cluster."""
+    origin = coords.min(0)
+    shape = tuple(int(s) for s in (coords.max(0) - origin + 1))
+    if int(np.prod(shape)) > MAX_GRID_CELLS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Voxel bounding box is too large ({shape}); cannot segment.",
         )
-        cells[cell]["count"] += 1
-        cells[cell]["colors"][_quantize_color(voxel["r"], voxel["g"], voxel["b"])] += 1
 
-    summarized = []
-    for (x, y, z), data in sorted(
-        cells.items(), key=lambda item: item[1]["count"], reverse=True
-    )[:limit]:
-        color, color_count = data["colors"].most_common(1)[0]
-        summarized.append(
+    local = coords - origin
+    idx = (local[:, 0], local[:, 1], local[:, 2])
+    component = np.zeros(len(coords), dtype=np.int32)
+    structure = ndimage.generate_binary_structure(3, 1)
+    next_id = 0
+    for label in np.unique(color_labels):
+        members = color_labels == label
+        mask = np.zeros(shape, dtype=bool)
+        mask[idx[0][members], idx[1][members], idx[2][members]] = True
+        labeled, count = ndimage.label(mask, structure=structure)
+        component[members] = labeled[idx[0][members], idx[1][members], idx[2][members]] - 1 + next_id
+        next_id += int(count)
+
+    grid = np.full(shape, -1, dtype=np.int32)
+    grid[idx] = component
+    return component, next_id, grid
+
+
+def _component_adjacency(grid: np.ndarray) -> Dict[int, Dict[int, int]]:
+    """Number of shared faces between each pair of adjacent components."""
+    adjacency: Dict[int, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    for axis in range(3):
+        rolled = np.moveaxis(grid, axis, 0)
+        a = rolled[:-1].reshape(-1)
+        b = rolled[1:].reshape(-1)
+        mask = (a >= 0) & (b >= 0) & (a != b)
+        if not mask.any():
+            continue
+        pairs = np.stack([np.minimum(a[mask], b[mask]), np.maximum(a[mask], b[mask])], axis=1)
+        unique_pairs, counts = np.unique(pairs, axis=0, return_counts=True)
+        for (p, q), count in zip(unique_pairs.tolist(), counts.tolist()):
+            adjacency[p][q] += count
+            adjacency[q][p] += count
+    return adjacency
+
+
+def _merge_components(
+    component: np.ndarray,
+    component_count: int,
+    colors: np.ndarray,
+    adjacency: Dict[int, Dict[int, int]],
+    max_segments: int,
+    min_size: int,
+) -> np.ndarray:
+    """Merge components in two phases and return 1-based segment ids ordered by
+    descending size.
+
+    Phase 1 absorbs speckle: every component smaller than min_size joins the
+    neighbour it shares the most boundary with (favouring similar colours).
+    Phase 2 enforces max_segments by repeatedly merging the *most similar* pair of
+    adjacent components, so the budget is spent on genuinely different-coloured
+    parts (eyes, cheeks, trim) rather than on shading variations of one part.
+    """
+    sizes = np.bincount(component, minlength=component_count).astype(np.int64)
+    color_sums = np.zeros((component_count, 3), dtype=np.float64)
+    np.add.at(color_sums, component, colors)
+    parent = np.arange(component_count)
+    alive = set(range(component_count))
+    version = [0] * component_count
+
+    def mean_color(cid: int) -> np.ndarray:
+        return color_sums[cid] / max(1, sizes[cid])
+
+    def color_distance(a: int, b: int) -> float:
+        return float(np.linalg.norm(mean_color(a) - mean_color(b)))
+
+    def nearest_by_color(cid: int) -> Optional[int]:
+        candidates = [other for other in alive if other != cid]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda other: color_distance(cid, other))
+
+    def merge(cid: int, target: int) -> None:
+        parent[cid] = target
+        alive.remove(cid)
+        sizes[target] += sizes[cid]
+        color_sums[target] += color_sums[cid]
+        for neighbour, shared in adjacency.pop(cid, {}).items():
+            if neighbour == target:
+                continue
+            adjacency[neighbour].pop(cid, None)
+            adjacency[target][neighbour] += shared
+            adjacency[neighbour][target] += shared
+        adjacency[target].pop(cid, None)
+        version[target] += 1
+
+    # Phase 1: speckle removal.
+    size_heap = [(int(sizes[i]), i) for i in range(component_count)]
+    heapq.heapify(size_heap)
+    while size_heap and len(alive) > 1:
+        size, cid = heapq.heappop(size_heap)
+        if cid not in alive or sizes[cid] != size:
+            continue
+        if size >= min_size:
+            break
+        best, best_score = None, -1.0
+        for neighbour, shared in adjacency.get(cid, {}).items():
+            if neighbour not in alive:
+                continue
+            score = shared / (1.0 + color_distance(cid, neighbour) / 48.0)
+            if score > best_score:
+                best, best_score = neighbour, score
+        target = best if best is not None else nearest_by_color(cid)
+        if target is None:
+            break
+        merge(cid, target)
+        heapq.heappush(size_heap, (int(sizes[target]), target))
+
+    # Phase 2: enforce the segment cap by merging the most similar adjacent pair.
+    pair_heap: List[Tuple[float, int, int, int, int]] = []
+    for a in alive:
+        for b in adjacency.get(a, {}):
+            if a < b and b in alive:
+                pair_heap.append((color_distance(a, b), version[a], version[b], a, b))
+    heapq.heapify(pair_heap)
+    while len(alive) > max_segments and pair_heap:
+        _, version_a, version_b, a, b = heapq.heappop(pair_heap)
+        if a not in alive or b not in alive or version[a] != version_a or version[b] != version_b:
+            continue
+        target, cid = (a, b) if sizes[a] >= sizes[b] else (b, a)
+        merge(cid, target)
+        for neighbour in adjacency.get(target, {}):
+            if neighbour in alive:
+                heapq.heappush(
+                    pair_heap,
+                    (color_distance(target, neighbour), version[target], version[neighbour], target, neighbour),
+                )
+
+    # Anything still over the cap consists of disconnected islands; merge by colour.
+    while len(alive) > max_segments:
+        cid = min(alive, key=lambda c: int(sizes[c]))
+        target = nearest_by_color(cid)
+        if target is None:
+            break
+        merge(cid, target)
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return int(i)
+
+    roots = np.array([find(i) for i in range(component_count)])
+    root_of_voxel = roots[component]
+    ordered_roots = sorted(alive, key=lambda cid: -int(sizes[cid]))
+    remap = {root: index + 1 for index, root in enumerate(ordered_roots)}
+    return np.vectorize(remap.__getitem__)(root_of_voxel).astype(np.int32)
+
+
+def _segment_voxels(voxels: List[Dict[str, int]], max_segments: int) -> np.ndarray:
+    coords, colors = _voxel_arrays(voxels)
+    color_labels = _quantize_colors(colors, COLOR_CLUSTERS)
+    component, count, grid = _connected_components(coords, color_labels)
+    adjacency = _component_adjacency(grid)
+    min_size = max(3, int(round(len(voxels) * MIN_SEGMENT_FRACTION)))
+    return _merge_components(component, count, colors, adjacency, max_segments, min_size)
+
+
+def _normalized(values: np.ndarray, low: int, high: int) -> np.ndarray:
+    if high == low:
+        return np.zeros(len(values), dtype=np.float64)
+    return (values - low) / (high - low)
+
+
+def _build_scene_summary(
+    voxels: List[Dict[str, int]], segment_ids: np.ndarray
+) -> Dict[str, Any]:
+    coords, _ = _voxel_arrays(voxels)
+    low = coords.min(0)
+    high = coords.max(0)
+    segments = []
+    for segment_id in np.unique(segment_ids):
+        members = coords[segment_ids == segment_id]
+        center = {}
+        extent = {}
+        for axis, index in AXIS_INDEX.items():
+            normalized = _normalized(members[:, index], int(low[index]), int(high[index]))
+            center[axis] = round(float(normalized.mean()), 2)
+            extent[axis] = [round(float(normalized.min()), 2), round(float(normalized.max()), 2)]
+        segments.append(
             {
-                "cell": [x, y, z],
-                "normalized_bounds": [
-                    [round(x / grid_size, 3), round((x + 1) / grid_size, 3)],
-                    [round(y / grid_size, 3), round((y + 1) / grid_size, 3)],
-                    [round(z / grid_size, 3), round((z + 1) / grid_size, 3)],
-                ],
-                "count": data["count"],
-                "dominant_rgb": list(color),
-                "dominant_rgb_count": color_count,
+                "id": int(segment_id),
+                "voxel_count": int(len(members)),
+                "share": round(len(members) / len(voxels), 3),
+                "center": center,
+                "extent": extent,
             }
         )
-    return summarized
-
-
-def _build_scene_summary(voxels: List[Dict[str, int]], grid_size: int) -> Dict[str, Any]:
-    bounds = _bounds(voxels)
     return {
-        "format": "xyzrgb rows are x y z r g b integer voxels",
+        "axes": (
+            "Z is up. X is the model's left-right axis, Y is depth. The model most "
+            "likely faces -Y, so the 'front' view is usually the one that matches the "
+            "reference photo; confirm this from the silhouette."
+        ),
+        "normalized_coordinates": "center/extent are 0..1 across the voxel bounds (0=min, 1=max)",
         "voxel_count": len(voxels),
-        "bounds": {axis: list(values) for axis, values in bounds.items()},
-        "dimensions": {
-            axis: values[1] - values[0] + 1 for axis, values in bounds.items()
-        },
-        "dominant_colors": _dominant_colors(voxels),
-        "spatial_grid": {
-            "grid_size_per_axis": grid_size,
-            "cell_coordinates": "0 is low/min on an axis; grid_size-1 is high/max",
-            "occupied_cells": _spatial_cells(voxels, bounds, grid_size),
-        },
+        "dimensions": {axis: int(high[i] - low[i] + 1) for axis, i in AXIS_INDEX.items()},
+        "segment_count": len(segments),
+        "segments": segments,
     }
+
+
+# ---------------------------------------------------------------------------
+# Preview rendering
+# ---------------------------------------------------------------------------
+
+
+def _load_font(size: int) -> ImageFont.ImageFont:
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def _project_segments(
+    coords: np.ndarray, segment_ids: np.ndarray, view: Dict[str, Any]
+) -> np.ndarray:
+    """Return a 2D array (rows, cols) of segment ids for the visible voxel per pixel (0 = empty)."""
+    low = coords.min(0)
+    high = coords.max(0)
+    h, v, d = AXIS_INDEX[view["h"]], AXIS_INDEX[view["v"]], AXIS_INDEX[view["d"]]
+    width = int(high[h] - low[h] + 1)
+    height = int(high[v] - low[v] + 1)
+
+    px = coords[:, h] - low[h]
+    if view["flip_h"]:
+        px = (width - 1) - px
+    py = high[v] - coords[:, v]
+    depth = coords[:, d] * view["d_sign"]
+
+    pixel_key = py * width + px
+    order = np.lexsort((-depth, pixel_key))
+    _, first = np.unique(pixel_key[order], return_index=True)
+    visible = order[first]
+
+    image = np.zeros((height, width), dtype=np.int32)
+    image[py[visible], px[visible]] = segment_ids[visible]
+    return image
+
+
+def _render_view_tile(
+    coords: np.ndarray,
+    segment_ids: np.ndarray,
+    view: Dict[str, Any],
+    tile: int,
+    font: ImageFont.ImageFont,
+) -> Image.Image:
+    projection = _project_segments(coords, segment_ids, view)
+    height, width = projection.shape
+    scale = max(1, min(tile // width, tile // height))
+
+    palette = np.array([(255, 255, 255)] + SEGMENT_PALETTE, dtype=np.uint8)
+    rgb = palette[np.clip(projection, 0, len(SEGMENT_PALETTE))]
+    image = Image.fromarray(rgb, "RGB")
+    if scale > 1:
+        image = image.resize((width * scale, height * scale), Image.NEAREST)
+    if image.width > tile or image.height > tile:
+        ratio = min(tile / image.width, tile / image.height)
+        image = image.resize(
+            (max(1, int(image.width * ratio)), max(1, int(image.height * ratio))), Image.NEAREST
+        )
+        scale = ratio
+
+    canvas = Image.new("RGB", (tile, tile), "white")
+    offset = ((tile - image.width) // 2, (tile - image.height) // 2)
+    canvas.paste(image, offset)
+    draw = ImageDraw.Draw(canvas)
+
+    for segment_id in np.unique(projection):
+        if segment_id == 0:
+            continue
+        rows, cols = np.nonzero(projection == segment_id)
+        if len(rows) < 3:
+            continue
+        # Anchor the label on a visible pixel closest to the segment's centroid so
+        # it lands on the segment even for concave shapes.
+        centroid = np.array([rows.mean(), cols.mean()])
+        nearest = np.argmin(((np.stack([rows, cols], 1) - centroid) ** 2).sum(1))
+        cx = offset[0] + (cols[nearest] + 0.5) * scale
+        cy = offset[1] + (rows[nearest] + 0.5) * scale
+        text = str(int(segment_id))
+        left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+        text_width, text_height = right - left, bottom - top
+        box = [cx - text_width / 2 - 3, cy - text_height / 2 - 2, cx + text_width / 2 + 3, cy + text_height / 2 + 2]
+        draw.rectangle(box, fill=(255, 255, 255), outline=(0, 0, 0))
+        draw.text((box[0] + 3 - left, box[1] + 2 - top), text, fill=(0, 0, 0), font=font)
+
+    return canvas
+
+
+def _build_voxel_preview_data_url(
+    voxels: List[Dict[str, int]], segment_ids: np.ndarray
+) -> str:
+    coords, _ = _voxel_arrays(voxels)
+    tile = PREVIEW_TILE_SIZE
+    title_height = 26
+    gap = 10
+    columns = 2
+    rows = (len(VIEWS) + columns - 1) // columns
+    label_font = _load_font(15)
+    title_font = _load_font(16)
+
+    width = columns * tile + (columns - 1) * gap
+    unique_segments = [int(s) for s in np.unique(segment_ids)]
+    swatch = 18
+    legend_item_width = swatch + 30
+    legend_per_row = max(1, (width - 8) // legend_item_width)
+    legend_rows = (len(unique_segments) + legend_per_row - 1) // legend_per_row
+    legend_height = 8 + legend_rows * (swatch + 8)
+
+    composite = Image.new(
+        "RGB",
+        (width, rows * (tile + title_height) + (rows - 1) * gap + legend_height),
+        "white",
+    )
+    draw = ImageDraw.Draw(composite)
+
+    for index, view in enumerate(VIEWS):
+        col, row = index % columns, index // columns
+        x = col * (tile + gap)
+        y = row * (tile + title_height + gap)
+        draw.text((x + 4, y + 4), f"{view['name']} (camera at {view['camera']})", fill=(0, 0, 0), font=title_font)
+        composite.paste(
+            _render_view_tile(coords, segment_ids, view, tile, label_font), (x, y + title_height)
+        )
+
+    legend_top = composite.height - legend_height + 8
+    for index, segment_id in enumerate(unique_segments):
+        x = 4 + (index % legend_per_row) * legend_item_width
+        y = legend_top + (index // legend_per_row) * (swatch + 8)
+        color = SEGMENT_PALETTE[(segment_id - 1) % len(SEGMENT_PALETTE)]
+        draw.rectangle([x, y, x + swatch, y + swatch], fill=color, outline=(0, 0, 0))
+        draw.text((x + swatch + 3, y), str(segment_id), fill=(0, 0, 0), font=label_font)
+
+    buffer = BytesIO()
+    composite.save(buffer, format="PNG", optimize=True)
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+# ---------------------------------------------------------------------------
+# OpenAI call
+# ---------------------------------------------------------------------------
 
 
 def _extract_response_text(response_json: Dict[str, Any]) -> str:
@@ -247,12 +645,45 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     return parsed
 
 
-async def _call_openai_for_rules(
+def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "subject": {"type": "string"},
+            "assignments": {
+                "type": "array",
+                "minItems": len(segment_ids),
+                "maxItems": len(segment_ids),
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "segment_id": {"type": "integer", "enum": segment_ids},
+                        "part": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "color": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {"type": "integer", "minimum": 0, "maximum": 255},
+                        },
+                    },
+                    "required": ["segment_id", "part", "reason", "color"],
+                },
+            },
+        },
+        "required": ["subject", "assignments"],
+    }
+
+
+async def _call_openai_for_assignments(
     scene_summary: Dict[str, Any],
     reference_image_url: str,
+    voxel_preview_image_url: str,
     prompt: Optional[str],
     model: str,
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], str]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -260,39 +691,34 @@ async def _call_openai_for_rules(
             detail="OPENAI_API_KEY not configured. Set OPENAI_API_KEY and restart the backend server.",
         )
 
+    segment_ids = [segment["id"] for segment in scene_summary["segments"]]
+
     system_prompt = (
-        "You recolor voxel xyzrgb models to match a reference image semantically. "
-        "Do not change geometry. Return only JSON."
+        "You recolor voxel models so they match a reference image. The model has been "
+        "pre-split into numbered segments; your job is to decide which part of the "
+        "reference object each segment is, and give it that part's color. "
+        "The reference image is the ONLY source of colors. The colors in the voxel "
+        "preview are arbitrary segment IDs, not real colors. Never change geometry. "
+        "Return only JSON."
     )
     user_prompt = {
         "task": (
-            "Inspect the reference image and the compact voxel scene summary. "
-            "Create recoloring rules that make the voxel object look more like the "
-            "reference image while preserving shape."
+            "Image 1 is the reference. Image 2 shows the voxel model from four cameras "
+            "with every segment drawn in a flat ID color and labelled with its number "
+            "(legend at the bottom). Steps: (1) identify the subject and its major "
+            "colored parts in the reference image; (2) work out which preview view "
+            "corresponds to the reference photo; (3) for every segment id, decide which "
+            "part of the subject it is, using its position, size and shape; (4) assign "
+            "it the real-world color of that part as seen in the reference image."
         ),
+        "rules": [
+            "Return exactly one assignment for every segment id listed in scene_summary.segments.",
+            "Segments belonging to the same part must receive the exact same color.",
+            "Pick saturated, representative colors as they appear in the reference; do not average shadows into grey.",
+            "If a segment cannot be identified, give it the color of the adjacent part it most likely belongs to.",
+            "Small segments are usually details (eyes, buttons, logos, trim); look for matching details in the reference.",
+        ],
         "optional_user_prompt": prompt,
-        "rule_schema": {
-            "rules": [
-                {
-                    "name": "short semantic region name",
-                    "selector": {
-                        "x": [0.0, 1.0],
-                        "y": [0.0, 1.0],
-                        "z": [0.0, 1.0],
-                        "source_colors": [[0, 0, 0]],
-                        "color_tolerance": 60,
-                    },
-                    "color": [255, 0, 0],
-                    "strength": 1.0,
-                }
-            ]
-        },
-        "selector_notes": (
-            "x/y/z selector ranges are normalized 0..1 over the voxel bounds. "
-            "Use [0, 1] for axes that should not be spatially constrained. "
-            "Use source_colors=[] when the rule should not target existing approximate colors. "
-            "Use broad semantic regions, not per-voxel edits. Keep rules under 40."
-        ),
         "scene_summary": scene_summary,
     }
 
@@ -307,81 +733,24 @@ async def _call_openai_for_rules(
                 "role": "user",
                 "content": [
                     {"type": "input_text", "text": json.dumps(user_prompt)},
-                    {"type": "input_image", "image_url": reference_image_url},
+                    {"type": "input_image", "image_url": reference_image_url, "detail": "high"},
+                    {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
                 ],
             },
         ],
+        "reasoning": {"effort": DEFAULT_REASONING_EFFORT},
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "voxel_recolor_rules",
-                "schema": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "rules": {
-                            "type": "array",
-                            "maxItems": 40,
-                            "items": {
-                                "type": "object",
-                                "additionalProperties": False,
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "selector": {
-                                        "type": "object",
-                                        "additionalProperties": False,
-                                        "properties": {
-                                            "x": {
-                                                "type": "array",
-                                                "minItems": 2,
-                                                "maxItems": 2,
-                                                "items": {"type": "number", "minimum": 0, "maximum": 1},
-                                            },
-                                            "y": {
-                                                "type": "array",
-                                                "minItems": 2,
-                                                "maxItems": 2,
-                                                "items": {"type": "number", "minimum": 0, "maximum": 1},
-                                            },
-                                            "z": {
-                                                "type": "array",
-                                                "minItems": 2,
-                                                "maxItems": 2,
-                                                "items": {"type": "number", "minimum": 0, "maximum": 1},
-                                            },
-                                            "source_colors": {
-                                                "type": "array",
-                                                "items": {
-                                                    "type": "array",
-                                                    "minItems": 3,
-                                                    "maxItems": 3,
-                                                    "items": {"type": "integer", "minimum": 0, "maximum": 255},
-                                                },
-                                            },
-                                            "color_tolerance": {"type": "number", "minimum": 0, "maximum": 442},
-                                        },
-                                        "required": ["x", "y", "z", "source_colors", "color_tolerance"],
-                                    },
-                                    "color": {
-                                        "type": "array",
-                                        "minItems": 3,
-                                        "maxItems": 3,
-                                        "items": {"type": "integer", "minimum": 0, "maximum": 255},
-                                    },
-                                    "strength": {"type": "number", "minimum": 0, "maximum": 1},
-                                },
-                                "required": ["name", "selector", "color", "strength"],
-                            },
-                        }
-                    },
-                    "required": ["rules"],
-                },
+                "name": "voxel_segment_colors",
+                "schema": _assignment_schema(segment_ids),
             }
         },
     }
 
+    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS, connect=15.0)
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 "https://api.openai.com/v1/responses",
                 headers={
@@ -397,124 +766,91 @@ async def _call_openai_for_rules(
             status_code=502,
             detail=f"OpenAI request failed: HTTP {e.response.status_code}",
         )
+    except httpx.TimeoutException as e:
+        logger.error(
+            "OpenAI llmRender request timed out after %ss (%s)",
+            OPENAI_TIMEOUT_SECONDS,
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"OpenAI request timed out after {OPENAI_TIMEOUT_SECONDS:.0f}s "
+                f"(model={model}, reasoning={DEFAULT_REASONING_EFFORT}). "
+                "Lower OPENAI_LLM_RENDER_REASONING_EFFORT or raise OPENAI_LLM_RENDER_TIMEOUT_SECONDS."
+            ),
+        )
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"OpenAI request failed: {e}")
+        # httpx transport errors often stringify to "", so include the type name.
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI request failed: {type(e).__name__}: {e}".rstrip(": "),
+        )
 
-    parsed = _extract_json_object(_extract_response_text(response.json()))
-    rules = parsed.get("rules", [])
-    if not isinstance(rules, list):
-        raise HTTPException(status_code=502, detail="OpenAI rules must be an array")
-    return rules
+    response_json = response.json()
+    if response_json.get("status") == "incomplete":
+        reason = (response_json.get("incomplete_details") or {}).get("reason", "unknown")
+        raise HTTPException(status_code=502, detail=f"OpenAI response was incomplete: {reason}")
+
+    parsed = _extract_json_object(_extract_response_text(response_json))
+    assignments = parsed.get("assignments", [])
+    if not isinstance(assignments, list):
+        raise HTTPException(status_code=502, detail="OpenAI assignments must be an array")
+    subject = parsed.get("subject") if isinstance(parsed.get("subject"), str) else ""
+    return assignments, subject
+
+
+# ---------------------------------------------------------------------------
+# Apply
+# ---------------------------------------------------------------------------
 
 
 def _coerce_rgb(value: Any) -> Optional[Tuple[int, int, int]]:
     if not isinstance(value, list) or len(value) != 3:
         return None
     try:
-        rgb = tuple(max(0, min(255, int(channel))) for channel in value)
+        r, g, b = (max(0, min(255, int(channel))) for channel in value)
     except (TypeError, ValueError):
         return None
-    return rgb
+    return (r, g, b)
 
 
-def _in_normalized_range(
-    voxel_value: int,
-    axis_bounds: Tuple[int, int],
-    selector_range: Any,
-) -> bool:
-    if selector_range is None:
-        return True
-    if not isinstance(selector_range, list) or len(selector_range) != 2:
-        return True
-    low, high = axis_bounds
-    if high == low:
-        normalized = 0.0
-    else:
-        normalized = (voxel_value - low) / (high - low)
-    try:
-        selected_low = float(selector_range[0])
-        selected_high = float(selector_range[1])
-    except (TypeError, ValueError):
-        return True
-    if selected_low > selected_high:
-        selected_low, selected_high = selected_high, selected_low
-    return selected_low <= normalized <= selected_high
-
-
-def _matches_source_color(voxel: Dict[str, int], selector: Dict[str, Any]) -> bool:
-    source_colors = selector.get("source_colors")
-    if not source_colors:
-        return True
-    if not isinstance(source_colors, list):
-        return True
-
-    try:
-        tolerance = float(selector.get("color_tolerance", 60))
-    except (TypeError, ValueError):
-        tolerance = 60.0
-
-    for source_color in source_colors:
-        rgb = _coerce_rgb(source_color)
-        if rgb is None:
-            continue
-        distance = (
-            (voxel["r"] - rgb[0]) ** 2
-            + (voxel["g"] - rgb[1]) ** 2
-            + (voxel["b"] - rgb[2]) ** 2
-        ) ** 0.5
-        if distance <= tolerance:
-            return True
-    return False
-
-
-def _apply_rules(
+def _apply_assignments(
     voxels: List[Dict[str, int]],
-    rules: List[Dict[str, Any]],
+    segment_ids: np.ndarray,
+    assignments: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, int]], List[Dict[str, Any]]]:
-    bounds = _bounds(voxels)
     recolored = [voxel.copy() for voxel in voxels]
-    applied_rules: List[Dict[str, Any]] = []
+    applied: List[Dict[str, Any]] = []
+    seen: set = set()
 
-    for raw_rule in rules[:40]:
-        if not isinstance(raw_rule, dict):
+    for raw in assignments:
+        if not isinstance(raw, dict):
             continue
-        color = _coerce_rgb(raw_rule.get("color"))
-        selector = raw_rule.get("selector")
-        if color is None or not isinstance(selector, dict):
-            continue
-
         try:
-            strength = float(raw_rule.get("strength", 1.0))
+            segment_id = int(raw.get("segment_id"))
         except (TypeError, ValueError):
-            strength = 1.0
-        strength = max(0.0, min(1.0, strength))
+            continue
+        color = _coerce_rgb(raw.get("color"))
+        if color is None or segment_id in seen:
+            continue
+        seen.add(segment_id)
 
-        changed = 0
-        for voxel in recolored:
-            if not all(
-                _in_normalized_range(voxel[axis], bounds[axis], selector.get(axis))
-                for axis in ("x", "y", "z")
-            ):
-                continue
-            if not _matches_source_color(voxel, selector):
-                continue
+        member_indices = np.nonzero(segment_ids == segment_id)[0]
+        for index in member_indices.tolist():
+            recolored[index]["r"], recolored[index]["g"], recolored[index]["b"] = color
 
-            voxel["r"] = round(voxel["r"] * (1 - strength) + color[0] * strength)
-            voxel["g"] = round(voxel["g"] * (1 - strength) + color[1] * strength)
-            voxel["b"] = round(voxel["b"] * (1 - strength) + color[2] * strength)
-            changed += 1
-
-        applied_rules.append(
+        applied.append(
             {
-                "name": raw_rule.get("name", "unnamed rule"),
-                "selector": selector,
+                "segment_id": segment_id,
+                "name": raw.get("part", f"segment {segment_id}"),
+                "reason": raw.get("reason"),
                 "color": list(color),
-                "strength": strength,
-                "changed_voxels": changed,
+                "changed_voxels": int(len(member_indices)),
             }
         )
 
-    return recolored, applied_rules
+    return recolored, applied
 
 
 def _serialize_xyzrgb(voxels: List[Dict[str, int]]) -> str:
@@ -527,18 +863,30 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
     endpoint = "/llmRender"
     user_id = auth_info.get("user_email") or auth_info.get("user_id") or "anonymous"
     model = request.model or DEFAULT_MODEL
+    max_segments = request.max_segments or DEFAULT_MAX_SEGMENTS
 
     try:
         xyzrgb_content = await _fetch_text_url(request.xyzrgb_url, MAX_XYZRGB_BYTES)
         voxels = _parse_xyzrgb(xyzrgb_content)
-        scene_summary = _build_scene_summary(voxels, request.grid_size or 4)
-        rules = await _call_openai_for_rules(
+        segment_ids = _segment_voxels(voxels, max_segments)
+        scene_summary = _build_scene_summary(voxels, segment_ids)
+        voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
+        assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
             reference_image_url=request.reference_image_url,
+            voxel_preview_image_url=voxel_preview_image_url,
             prompt=request.prompt,
             model=model,
         )
-        recolored, applied_rules = _apply_rules(voxels, rules)
+        recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+
+        segment_count = int(segment_ids.max())
+        if len(applied) < segment_count:
+            logger.warning(
+                "llmRender: LLM returned %d assignments for %d segments",
+                len(applied),
+                segment_count,
+            )
 
         track_api_call(
             endpoint=endpoint,
@@ -546,14 +894,19 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             success=True,
             model=model,
             voxel_count=len(voxels),
-            rules_count=len(applied_rules),
+            segment_count=segment_count,
+            assignments_count=len(applied),
         )
 
         return LlmRenderResponse(
             xyzrgb_content=_serialize_xyzrgb(recolored),
             voxel_count=len(recolored),
+            segment_count=segment_count,
             model=model,
-            applied_rules=applied_rules,
+            applied_rules=applied,
+            preview_image=voxel_preview_image_url if request.include_preview else None,
+            message=f"Recolored {len(applied)} of {segment_count} segments"
+            + (f" as '{subject}'" if subject else ""),
         )
     except HTTPException:
         raise
