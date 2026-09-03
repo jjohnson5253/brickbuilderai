@@ -20,13 +20,24 @@ export interface LlmRenderRequest {
   xyzrgb_url: string;
   reference_image_url: string;
   prompt?: string;
+  max_segments?: number;
+}
+
+export interface LlmRenderAppliedRule {
+  segment_id: number;
+  name: string;
+  reason: string | null;
+  color: [number, number, number];
+  changed_voxels: number;
 }
 
 export interface LlmRenderResponse {
   xyzrgb_content: string;
   voxel_count: number;
+  segment_count: number;
   model: string;
-  applied_rules: Array<Record<string, unknown>>;
+  applied_rules: LlmRenderAppliedRule[];
+  preview_image?: string | null;
   message: string;
 }
 
