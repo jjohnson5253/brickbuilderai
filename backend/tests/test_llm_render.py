@@ -1,4 +1,5 @@
 import base64
+import json
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -13,13 +14,19 @@ from src.requests.llmRender import (
     VIEWS,
     _apply_assignments,
     _assignment_schema,
+    _build_few_shot_example,
     _build_scene_summary,
     _build_voxel_preview_data_url,
+    _example_mushroom,
+    _example_robot,
+    _few_shot_enabled,
+    _few_shot_messages,
     _geometric_regions,
     _load_font,
     _perceptual_colors,
     _project_segments,
     _quantize_colors,
+    _render_reference_data_url,
     _render_view_tile,
     _rgb_to_lab,
     _segment_voxels,
@@ -423,3 +430,72 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def test_render_reference_data_url_shows_true_colors():
+    _, voxels, _ = _example_robot()
+    data_url = _render_reference_data_url(voxels)
+
+    assert data_url.startswith("data:image/png;base64,")
+    image = Image.open(BytesIO(base64.b64decode(data_url.split(",", 1)[1])))
+    assert image.format == "PNG"
+    colors = {color for _, color in image.getcolors(maxcolors=image.width * image.height)}
+    # Unlike the segment preview, the reference render uses the model's real colors.
+    assert (40, 90, 200) in colors
+    assert (170, 170, 170) in colors
+    assert (20, 20, 20) in colors
+
+
+def test_few_shot_examples_answer_every_segment_with_valid_colors():
+    for builder in (_example_robot, _example_mushroom):
+        example = _build_few_shot_example(*builder())
+        segment_ids = [segment["id"] for segment in example["scene_summary"]["segments"]]
+        assignments = example["answer"]["assignments"]
+
+        assert sorted(a["segment_id"] for a in assignments) == sorted(segment_ids)
+        for assignment in assignments:
+            assert assignment["part"] and assignment["reason"]
+            assert len(assignment["color"]) == 3
+            assert all(0 <= channel <= 255 for channel in assignment["color"])
+        assert example["answer"]["subject"]
+        assert example["reference_image_url"].startswith("data:image/png;base64,")
+        assert example["voxel_preview_image_url"].startswith("data:image/png;base64,")
+
+
+def test_few_shot_robot_example_demonstrates_details():
+    example = _build_few_shot_example(*_example_robot())
+    by_part = {assignment["part"]: assignment for assignment in example["answer"]["assignments"]}
+    assert {"body", "head", "eyes", "buttons"} <= set(by_part)
+
+    by_id = {segment["id"]: segment for segment in example["scene_summary"]["segments"]}
+    eyes = by_id[by_part["eyes"]["segment_id"]]
+    buttons = by_id[by_part["buttons"]["segment_id"]]
+    assert eyes["is_detail"] and eyes["island_count"] == 2
+    assert buttons["is_detail"] and buttons["island_count"] == 2
+
+
+def test_few_shot_messages_are_cached_user_assistant_pairs():
+    messages = _few_shot_messages()
+
+    assert len(messages) == 4
+    assert [message["role"] for message in messages] == ["user", "assistant", "user", "assistant"]
+    for user, assistant in zip(messages[::2], messages[1::2]):
+        types = [part["type"] for part in user["content"]]
+        assert types == ["input_text", "input_image", "input_image"]
+        prompt = json.loads(user["content"][0]["text"])
+        answer = json.loads(assistant["content"][0]["text"])
+        assert assistant["content"][0]["type"] == "output_text"
+        segment_ids = [segment["id"] for segment in prompt["scene_summary"]["segments"]]
+        assert sorted(a["segment_id"] for a in answer["assignments"]) == sorted(segment_ids)
+    # Built once, reused on later calls.
+    assert _few_shot_messages() is messages
+
+
+def test_few_shot_enabled_env_toggle(monkeypatch):
+    monkeypatch.delenv("OPENAI_LLM_RENDER_FEW_SHOT", raising=False)
+    assert _few_shot_enabled()
+    for value in ("0", "false", "no", "off", "FALSE"):
+        monkeypatch.setenv("OPENAI_LLM_RENDER_FEW_SHOT", value)
+        assert not _few_shot_enabled()
+    monkeypatch.setenv("OPENAI_LLM_RENDER_FEW_SHOT", "true")
+    assert _few_shot_enabled()

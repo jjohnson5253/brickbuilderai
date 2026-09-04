@@ -96,10 +96,14 @@ jewelry, shirt patterns) are protected from speckle removal, and same-coloured p
 one feature (both eyes, all buttons) share a single segment; the scene summary flags these
 with `is_detail` and `island_count`. A labelled multi-view preview of those
 segments plus the reference image is sent to OpenAI, which returns one colour per segment.
+The request includes two built-in few-shot examples (a toy robot and a mushroom), each a
+reference image, labelled segment preview and scene summary paired with the correct
+answer, so the LLM sees the task worked end to end before the real request.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
-(default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
+(default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`),
+`OPENAI_LLM_RENDER_FEW_SHOT` (default `true`; set `false` to omit the few-shot examples).
 ```bash
 curl -X POST http://localhost:8002/llmRender \
   -H "Content-Type: application/json" \
