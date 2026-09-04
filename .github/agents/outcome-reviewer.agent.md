@@ -31,8 +31,15 @@ Use this review cycle:
 1. Translate every stated desired outcome into an observable verification step.
    Run the changed code when practical and do not accept the author's reported
    commands as proof.
-2. Run the relevant unit tests before editing. Inspect whether the tests genuinely
-   cover the desired behavior, regressions, error cases, and security boundaries.
+2. Before running the full test suite yourself, check whether the `Test suite`
+   CI workflow already completed for the exact head SHA under review (for
+   example `gh pr checks <PR_URL>` or `gh api
+   repos/{owner}/{repo}/commits/{sha}/check-runs`). If it passed, treat that as
+   the authoritative full-suite result and only run the specific
+   changed/relevant test files yourself to inspect whether they genuinely
+   cover the desired behavior, regressions, error cases, and security
+   boundaries. If CI is still pending, still running, failed, or unavailable,
+   run the relevant unit tests yourself before editing.
 3. Review the changed design against SOLID principles, applied idiomatically. Look
    for mixed responsibilities, excessive coupling, leaky abstractions, closed
    extension points, and dependencies that are difficult to substitute in tests.
