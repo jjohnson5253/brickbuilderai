@@ -27,6 +27,7 @@ describe('JSON API service contracts', () => {
     ['claim', () => ClaimGenerationApiService.claimGeneration('g1', 'tok'), '/claimGeneration', { generation_id: 'g1' }, { generation_id: 'g1', claimed: true }],
     ['checkout', () => CreateCheckoutSessionApiService.createCheckoutSession({ quantity: 2 }, 'tok'), '/createCheckoutSession', { quantity: 2 }, { session_id: 's1', checkout_url: 'url' }],
     ['community', () => GetCommunityGenerationsApiService.getCommunityGenerations('tok', 10, 2, true), '/getCommunityGenerations', { limit: 10, offset: 2, processing: true }, { generations: [], total_count: 0, has_more: false }],
+    ['highlighted community', () => GetCommunityGenerationsApiService.getCommunityGenerations('tok', 12, 0, undefined, true), '/getCommunityGenerations', { limit: 12, offset: 0, highlighted: true }, { generations: [], total_count: 0, has_more: false }],
     ['by image', () => GetGenerationsByImageApiService.getGenerationsByImage('tok', 'img'), '/getGenerationsByImage', { processed_image_url: 'img' }, { generations: [], total_count: 0 }],
     ['user generations', () => GetUserGenerationsApiService.getUserGenerations('tok', 10, 3, false), '/getUserGenerations', { limit: 10, offset: 3, processing: false }, { generations: [], total_count: 0, has_more: false }],
     ['prompt edit', () => PromptEditModelApiService.promptEditModel('g1', 'blue', 'tok', 'a'), '/promptEditModel', { generation_id: 'g1', edit_prompt: 'blue', model_option: 'a' }, { generation_id: 'g2', message: 'ok' }],
