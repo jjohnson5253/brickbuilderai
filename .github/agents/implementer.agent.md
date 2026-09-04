@@ -8,7 +8,7 @@ target: github-copilot
 # Versatile: grok-4.5, gpt-5.6-terra, claude-sonnet-5
 # Most powerful: kimi-k3, gpt-5.6-sol, gpt-5.5, gpt-5.4, gpt-5.3-codex,
 #   claude-opus-5, claude-opus-4.8, claude-opus-4.7, claude-fable-5
-model: claude-fable-5
+# model: claude-fable-5
 tools:
   - read
   - search

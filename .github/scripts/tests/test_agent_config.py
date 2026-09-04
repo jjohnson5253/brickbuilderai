@@ -41,6 +41,26 @@ class AgentConfigTests(unittest.TestCase):
                 {"agent": "implementer", "model": "gpt-5.6-terra"},
             )
 
+    def test_resolves_empty_model_when_profile_has_no_pinned_model(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profiles = root / ".github" / "agents"
+            profiles.mkdir(parents=True)
+            (profiles / "implementer.agent.md").write_text(
+                "---\ntarget: github-copilot\n# model: gpt-5.6-terra\n---\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                agent_config.resolve("implementer", root),
+                {"agent": "implementer", "model": ""},
+            )
+
+    def test_repository_implementer_profile_has_no_pinned_model(self) -> None:
+        repository_root = Path(__file__).parents[3]
+        resolved = agent_config.resolve("implementer", repository_root)
+        self.assertEqual(resolved["agent"], "implementer")
+        self.assertEqual(resolved["model"], "")
+
     def test_repository_reviewer_profile_has_a_pinned_model(self) -> None:
         repository_root = Path(__file__).parents[3]
         resolved = agent_config.resolve("outcome-reviewer", repository_root)
