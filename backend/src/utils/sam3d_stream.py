@@ -14,6 +14,7 @@ import httpx
 from .conversions.glb2brick import glb2brick
 from .conversions.voxel_utils import downsample_xyzrgb
 from .color_conversions import convert_xyzrgb_to_ldr_colors
+from .llm_segmentation import apply_llm_segmentation, get_llm_segmentation_mode
 from .pack_ldraw_model import LDrawPacker
 from .generation_storage import generation_storage
 from .auth import deduct_credits
@@ -457,6 +458,24 @@ async def _pipeline_worker(
             xyzrgb_content,
             target_resolution,
         )
+
+        # --- Experimental (issue #43): LLM segmentation / verification ---
+        # Depending on LLM_SEGMENTATION_MODE, a vision LLM either performs
+        # the voxel segmentation itself or checks the deterministic result
+        # against the source image and multiple reference images.
+        llm_mode = get_llm_segmentation_mode()
+        if llm_mode != "off":
+            await queue.put(f"data: {json.dumps({'type': 'pipeline', 'stage': 'llm_segmentation', 'message': 'Verifying segmentation...', 'progress': 0})}\n\n")
+            xyzrgb_content, llm_info = await loop.run_in_executor(
+                None,
+                lambda: apply_llm_segmentation(
+                    xyzrgb_content,
+                    source_image_url=image_url,
+                    grid_resolution=target_resolution,
+                    mode=llm_mode,
+                ),
+            )
+            await queue.put(f"data: {json.dumps({'type': 'pipeline', 'stage': 'llm_segmentation', 'message': 'Segmentation verification complete', 'progress': 100, 'llm_segmentation': llm_info})}\n\n")
 
         # Save unconverted xyzrgb for deferred upload during storage phase
         unconverted_xyzrgb_content = xyzrgb_content
