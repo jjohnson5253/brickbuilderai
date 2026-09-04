@@ -2,7 +2,13 @@
 name: Outcome Reviewer
 description: Tests a PR, improves its design, and updates the PR when fixes are needed.
 target: github-copilot
-model: gpt-5.6-sol
+# Model options shown in GitHub (availability depends on plan and policy):
+# Fast/cost-effective: mai-code-1.1-flash, mai-code-1-flash, kimi-k2.7-code,
+#   gpt-5.6-luna, gpt-5.4-mini, gemini-3.5-flash, claude-haiku-4.5
+# Versatile: grok-4.5, gpt-5.6-terra, claude-sonnet-5
+# Most powerful: kimi-k3, gpt-5.6-sol, gpt-5.5, gpt-5.4, gpt-5.3-codex,
+#   claude-opus-5, claude-opus-4.8, claude-opus-4.7, claude-fable-5
+model: claude-fable-5
 tools:
   - read
   - search
