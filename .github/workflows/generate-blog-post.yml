@@ -1,0 +1,40 @@
+name: Generate SEO blog post
+
+on:
+  schedule:
+    - cron: "17 9 */3 * *"
+  workflow_dispatch:
+
+concurrency:
+  group: generate-seo-blog-post
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  models: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate a validated blog post
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/generate_blog_post.py
+
+      - name: Commit the new post
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "The generator made no changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/content/blog-posts.json frontend/public/sitemap.xml
+          git commit -m "Publish automated BrickBuilder AI blog post"
+          git push

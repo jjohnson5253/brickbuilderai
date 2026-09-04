@@ -1,0 +1,82 @@
+[
+  {
+    "slug": "how-to-turn-a-picture-into-a-lego-model-with-ai",
+    "title": "How to turn a picture into a LEGO model with AI",
+    "description": "Learn how BrickBuilder AI converts a photo or generated image into an editable LEGO-compatible brick model, parts data, and building files.",
+    "date": "2026-09-04",
+    "dateDisplay": "September 4, 2026",
+    "keywords": [
+      "turn picture into LEGO",
+      "image to LEGO converter",
+      "AI LEGO generator",
+      "BrickBuilder AI",
+      "LEGO model from photo"
+    ],
+    "category": "Image to LEGO guide",
+    "intro": "BrickBuilder AI is a browser-based design tool for turning an image into a LEGO-compatible 3D brick model. This guide explains what the app does, how the conversion workflow works, and how to get a result that is easier to recognize and build.",
+    "image": "/assets/blog/brickworld26/brickbuilderai-models.jpg",
+    "imageAlt": "LEGO-compatible models created with BrickBuilder AI",
+    "sections": [
+      {
+        "heading": "What is BrickBuilder AI?",
+        "paragraphs": [
+          "BrickBuilder AI helps people create brick models from images, text prompts, and 3D files. It produces a model that can be previewed and refined instead of stopping at a flat picture of a brick-built object.",
+          "The app is useful when you have an idea but do not want to place every brick manually. It provides a fast starting point for custom display models, gifts, prototypes, mosaics, characters, and other brick-building projects."
+        ]
+      },
+      {
+        "heading": "How image-to-LEGO conversion works",
+        "paragraphs": [
+          "An image does not contain complete 3D geometry, so an AI image-to-brick workflow has to estimate shape and depth before arranging discrete bricks. BrickBuilder AI processes the source, creates a 3D representation, converts that shape into a brick-friendly grid, and maps the result to LEGO-compatible colors and parts.",
+          "The output is a practical design draft rather than a photograph with a LEGO filter. You can inspect the model from different angles and continue editing details that need human judgment, such as scale, color, recognizable features, or unsupported regions."
+        ]
+      },
+      {
+        "heading": "Step-by-step: create a brick model from a photo",
+        "paragraphs": [
+          "Choose a clear source image with one main subject. Upload it to BrickBuilder AI, start the image conversion, and wait for the generated model preview. Review the silhouette from several angles, then adjust the model if small features or colors need correction.",
+          "When the design is ready, use the available model data and building outputs for the next stage of your project. Starting with a simple subject and a moderate level of detail usually makes the first result easier to edit and physically reproduce."
+        ]
+      },
+      {
+        "heading": "How to choose a better source image",
+        "paragraphs": [
+          "Use an image with strong contrast between the subject and background. A centered subject, even lighting, and a visible outline give the conversion process clearer information than a crowded scene or a heavily cropped photo.",
+          "Avoid very thin details, transparent objects, motion blur, and complicated overlapping shapes when possible. If an important feature disappears at small scale, simplify or exaggerate it in the source image before conversion."
+        ]
+      },
+      {
+        "heading": "What you can do after generation",
+        "paragraphs": [
+          "AI generation is most effective as the beginning of an iterative design process. Check whether colors correspond to parts you can obtain, make sure important sections connect, and simplify areas that would be fragile at the chosen scale.",
+          "BrickBuilder AI also supports a GLB-to-LEGO workflow for users who already have a 3D model. A 3D source can offer more control over every side of the object than a single photograph because the geometry is already defined."
+        ]
+      },
+      {
+        "heading": "When to use BrickBuilder AI",
+        "paragraphs": [
+          "Use BrickBuilder AI when you want a quick, editable brick interpretation of a visual idea. It is designed for creators who value a usable model and building data, not only an AI-generated image that looks as though it were made from bricks.",
+          "For best results, treat the generated design as a draft and verify it before buying parts or building. Part availability, connections, stability, and fine detail can vary with the source and scale."
+        ]
+      }
+    ],
+    "faq": [
+      {
+        "question": "Can AI turn a picture into a LEGO model?",
+        "answer": "Yes. BrickBuilder AI can use an image as the starting point for a LEGO-compatible 3D brick model that you can preview and refine."
+      },
+      {
+        "question": "What image works best for an image-to-LEGO converter?",
+        "answer": "A clear, well-lit image with one centered subject, a simple background, and a strong silhouette generally provides the best starting point."
+      },
+      {
+        "question": "Can BrickBuilder AI convert a 3D file into bricks?",
+        "answer": "Yes. BrickBuilder AI includes a GLB-to-LEGO workflow for converting an existing 3D model into a brick-based design."
+      },
+      {
+        "question": "Are generated brick models guaranteed to be physically stable?",
+        "answer": "No. Always inspect connections, stability, scale, colors, and part availability before purchasing pieces or beginning a physical build."
+      }
+    ]
+  }
+]

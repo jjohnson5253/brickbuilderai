@@ -4,8 +4,17 @@ import { ArrowRight, LayoutDashboard } from "lucide-react";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { SEO } from "../components/SEO";
 import { SiteFooter } from "../components/SiteFooter";
+import { blogPosts } from "../content/blogPosts";
 
 const posts = [
+  ...blogPosts.map((post) => ({
+    title: post.title,
+    href: `/blog/${post.slug}`,
+    description: post.description,
+    date: post.dateDisplay,
+    image: post.image,
+    imageAlt: post.imageAlt,
+  })),
   {
     title: "Using AI to design LEGO in 2026",
     href: "/blog/using-ai-to-design-lego-in-2026",
@@ -13,6 +22,7 @@ const posts = [
       "A practical overview of the current AI LEGO design landscape, from image-to-3D pipelines to native brick generation models.",
     date: "June 25, 2026",
     image: "/assets/blog/brickworld26/brickbuilderai-models.jpg",
+    imageAlt: "BrickBuilderAI models displayed at BrickWorld 2026",
   },
 ];
 
@@ -86,7 +96,7 @@ export default function BlogIndexPage() {
                   <Link to={post.href} aria-label={post.title}>
                     <img
                       src={post.image}
-                      alt="BrickBuilderAI models displayed at BrickWorld 2026"
+                      alt={post.imageAlt}
                       className="aspect-[4/3] w-full rounded-lg border border-slate-200 object-cover"
                     />
                   </Link>
