@@ -112,7 +112,14 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logger.warning(
         "OPENAI_API_KEY environment variable is not set. /llmRender will return "
-        "errors until OPENAI_API_KEY is configured."
+        "errors for OpenAI models until OPENAI_API_KEY is configured."
+    )
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    logger.warning(
+        "ANTHROPIC_API_KEY environment variable is not set. /llmRender will return "
+        "errors for Claude models until ANTHROPIC_API_KEY is configured."
     )
 
 
