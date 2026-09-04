@@ -50,6 +50,9 @@ PREVIEW_TILE_SIZE = 320
 # Segments covering fewer pixels than this in a view get their label drawn
 # beside them with a leader line instead of on top of them.
 LABEL_OFFSET_AREA = 900
+# Extra reference images (front/top/bottom/side shots from the initial AI image
+# creation) that callers may attach on top of the main reference image.
+MAX_EXTRA_REFERENCE_IMAGES = 4
 
 # Colour comparisons happen in CIELAB with lightness down-weighted, so the lit
 # and shadowed sides of one part read as similar while real hue changes do not.
@@ -86,7 +89,9 @@ VIEWS: List[Dict[str, Any]] = [
     {"name": "front", "camera": "-Y", "h": "x", "flip_h": False, "v": "z", "d": "y", "d_sign": -1},
     {"name": "back", "camera": "+Y", "h": "x", "flip_h": True, "v": "z", "d": "y", "d_sign": 1},
     {"name": "left side", "camera": "+X", "h": "y", "flip_h": False, "v": "z", "d": "x", "d_sign": 1},
+    {"name": "right side", "camera": "-X", "h": "y", "flip_h": True, "v": "z", "d": "x", "d_sign": -1},
     {"name": "top", "camera": "+Z", "h": "x", "flip_h": False, "v": "y", "d": "z", "d_sign": 1},
+    {"name": "bottom", "camera": "-Z", "h": "x", "flip_h": True, "v": "y", "d": "z", "d_sign": -1},
 ]
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
@@ -94,6 +99,7 @@ AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 class LlmRenderRequest(BaseModel):
     xyzrgb_url: str
     reference_image_url: str
+    reference_image_urls: Optional[List[str]] = None
     prompt: Optional[str] = None
     model: Optional[str] = None
     max_segments: Optional[int] = DEFAULT_MAX_SEGMENTS
@@ -107,6 +113,22 @@ class LlmRenderRequest(BaseModel):
         if not value.startswith(("http://", "https://")):
             raise ValueError("URL must start with http:// or https://")
         return value
+
+    @validator("reference_image_urls", always=True)
+    def validate_reference_image_urls(cls, value: Optional[List[str]]) -> List[str]:
+        urls = []
+        for url in value or []:
+            url = (url or "").strip()
+            if not url:
+                continue
+            if not url.startswith(("http://", "https://")):
+                raise ValueError("Each reference image URL must start with http:// or https://")
+            urls.append(url)
+        if len(urls) > MAX_EXTRA_REFERENCE_IMAGES:
+            raise ValueError(
+                f"reference_image_urls supports at most {MAX_EXTRA_REFERENCE_IMAGES} extra images"
+            )
+        return urls
 
     @validator("prompt")
     def validate_prompt(cls, value: Optional[str]) -> Optional[str]:
@@ -818,22 +840,16 @@ def _project_segments(
     return image
 
 
-def _render_view_tile(
-    coords: np.ndarray,
-    segment_ids: np.ndarray,
-    view: Dict[str, Any],
-    tile: int,
-    font: ImageFont.ImageFont,
-) -> Image.Image:
-    projection = _project_segments(coords, segment_ids, view)
-    height, width = projection.shape
-    scale = max(1, min(tile // width, tile // height))
+def _fit_tile(image: Image.Image, tile: int) -> Tuple[Image.Image, Tuple[int, int], float]:
+    """Scale a projection to fill a square tile and centre it on a white canvas.
 
-    palette = np.array([(255, 255, 255)] + SEGMENT_PALETTE, dtype=np.uint8)
-    rgb = palette[np.clip(projection, 0, len(SEGMENT_PALETTE))]
-    image = Image.fromarray(rgb, "RGB")
+    Returns the canvas plus the paste offset and the applied scale so callers
+    can map projection pixels back to canvas coordinates.
+    """
+    width, height = image.size
+    scale: float = max(1, min(tile // width, tile // height))
     if scale > 1:
-        image = image.resize((width * scale, height * scale), Image.NEAREST)
+        image = image.resize((int(width * scale), int(height * scale)), Image.NEAREST)
     if image.width > tile or image.height > tile:
         ratio = min(tile / image.width, tile / image.height)
         image = image.resize(
@@ -844,6 +860,21 @@ def _render_view_tile(
     canvas = Image.new("RGB", (tile, tile), "white")
     offset = ((tile - image.width) // 2, (tile - image.height) // 2)
     canvas.paste(image, offset)
+    return canvas, offset, scale
+
+
+def _render_view_tile(
+    coords: np.ndarray,
+    segment_ids: np.ndarray,
+    view: Dict[str, Any],
+    tile: int,
+    font: ImageFont.ImageFont,
+) -> Image.Image:
+    projection = _project_segments(coords, segment_ids, view)
+
+    palette = np.array([(255, 255, 255)] + SEGMENT_PALETTE, dtype=np.uint8)
+    rgb = palette[np.clip(projection, 0, len(SEGMENT_PALETTE))]
+    canvas, offset, scale = _fit_tile(Image.fromarray(rgb, "RGB"), tile)
     draw = ImageDraw.Draw(canvas)
 
     tile_center = np.array([tile / 2.0, tile / 2.0])
@@ -927,8 +958,51 @@ def _build_voxel_preview_data_url(
         draw.rectangle([x, y, x + swatch, y + swatch], fill=color, outline=(0, 0, 0))
         draw.text((x + swatch + 3, y), str(segment_id), fill=(0, 0, 0), font=label_font)
 
+    return _encode_png_data_url(composite)
+
+
+def _render_color_view_tile(
+    coords: np.ndarray, colors: np.ndarray, view: Dict[str, Any], tile: int
+) -> Image.Image:
+    indices = np.arange(1, len(coords) + 1, dtype=np.int32)
+    projection = _project_segments(coords, indices, view)
+    lookup = np.vstack(
+        [np.array([[255, 255, 255]], dtype=np.uint8), colors.astype(np.uint8)]
+    )
+    canvas, _, _ = _fit_tile(Image.fromarray(lookup[projection], "RGB"), tile)
+    return canvas
+
+
+def _build_model_views_data_url(voxels: List[Dict[str, int]]) -> str:
+    """Render the model's original captured colors from every camera, i.e. the
+    front/back/side/top/bottom shots you would get by spinning the 3D output."""
+    coords, colors = _voxel_arrays(voxels)
+    tile = PREVIEW_TILE_SIZE
+    title_height = 26
+    gap = 10
+    columns = 2
+    rows = (len(VIEWS) + columns - 1) // columns
+    title_font = _load_font(16)
+
+    width = columns * tile + (columns - 1) * gap
+    composite = Image.new(
+        "RGB", (width, rows * (tile + title_height) + (rows - 1) * gap), "white"
+    )
+    draw = ImageDraw.Draw(composite)
+
+    for index, view in enumerate(VIEWS):
+        col, row = index % columns, index // columns
+        x = col * (tile + gap)
+        y = row * (tile + title_height + gap)
+        draw.text((x + 4, y + 4), f"{view['name']} (camera at {view['camera']})", fill=(0, 0, 0), font=title_font)
+        composite.paste(_render_color_view_tile(coords, colors, view, tile), (x, y + title_height))
+
+    return _encode_png_data_url(composite)
+
+
+def _encode_png_data_url(image: Image.Image) -> str:
     buffer = BytesIO()
-    composite.save(buffer, format="PNG", optimize=True)
+    image.save(buffer, format="PNG", optimize=True)
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 
@@ -1000,45 +1074,51 @@ def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
     }
 
 
-async def _call_openai_for_assignments(
+def _build_openai_payload(
     scene_summary: Dict[str, Any],
-    reference_image_url: str,
+    reference_image_urls: List[str],
+    model_views_image_url: str,
     voxel_preview_image_url: str,
     prompt: Optional[str],
     model: str,
-) -> Tuple[List[Dict[str, Any]], str]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENAI_API_KEY not configured. Set OPENAI_API_KEY and restart the backend server.",
-        )
-
+) -> Dict[str, Any]:
     segment_ids = [segment["id"] for segment in scene_summary["segments"]]
+    ref_count = len(reference_image_urls)
 
     system_prompt = (
         "You recolor voxel models so they match a reference image. The model has been "
         "pre-split into numbered segments; your job is to decide which part of the "
         "reference object each segment is, and give it that part's color. "
-        "The reference image is the ONLY source of colors. The colors in the voxel "
-        "preview are arbitrary segment IDs, not real colors. Never change geometry. "
-        "Return only JSON."
+        "The reference images are the ONLY source of final colors. The model's "
+        "captured-color views are approximate and only help you match segments to "
+        "parts. The colors in the segment-ID preview are arbitrary segment IDs, not "
+        "real colors. Never change geometry. Return only JSON."
+    )
+    reference_label = (
+        "Image 1 is the reference"
+        if ref_count == 1
+        else f"Images 1-{ref_count} are reference views of the same object from different angles"
     )
     user_prompt = {
         "task": (
-            "Image 1 is the reference. Image 2 shows the voxel model from four cameras "
-            "with every segment drawn in a flat ID color and labelled with its number "
-            "(legend at the bottom). Steps: (1) identify the subject and its major "
-            "colored parts in the reference image; (2) work out which preview view "
-            "corresponds to the reference photo; (3) for every segment id, decide which "
-            "part of the subject it is, using its position, size and shape; (4) assign "
-            "it the real-world color of that part as seen in the reference image."
+            f"{reference_label}. Image {ref_count + 1} shows the voxel model's own "
+            "captured colors from six cameras (front, back, left side, right side, top, "
+            "bottom); these colors are approximate and noisy but reveal sides the "
+            f"reference may not show. Image {ref_count + 2} shows the same voxel model "
+            "from the same cameras with every segment drawn in a flat ID color and "
+            "labelled with its number (legend at the bottom). Steps: (1) identify the "
+            "subject and its major colored parts in the reference image(s); (2) work out "
+            "which preview view corresponds to each reference image; (3) for every "
+            "segment id, decide which part of the subject it is, using its position, "
+            "size, shape and captured colors; (4) assign it the real-world color of that "
+            "part as seen in the reference images."
         ),
         "rules": [
             "Return exactly one assignment for every segment id listed in scene_summary.segments.",
             "Segments belonging to the same part must receive the exact same color.",
             "Pick saturated, representative colors as they appear in the reference; do not average shadows into grey.",
             "If a segment cannot be identified, give it the color of the adjacent part it most likely belongs to.",
+            "If a part is not visible in any reference image, use the captured-color views to infer which reference part it matches; only fall back to its captured color when nothing in the reference fits.",
             "Small segments are usually details (eyes, buttons, logos, trim); look for matching details in the reference.",
             "Segments with is_detail=true are small high-contrast features (eyes, mouth, jewelry, buttons, logos, shirt patterns) that were kept on purpose; give them the colour of the matching detail in the reference, not the colour of the part they sit on.",
             "A segment with island_count > 1 is several matching pieces (e.g. both eyes, all buttons); colour it as that repeated feature.",
@@ -1047,7 +1127,13 @@ async def _call_openai_for_assignments(
         "scene_summary": scene_summary,
     }
 
-    payload = {
+    user_content: List[Dict[str, Any]] = [{"type": "input_text", "text": json.dumps(user_prompt)}]
+    for url in reference_image_urls:
+        user_content.append({"type": "input_image", "image_url": url, "detail": "high"})
+    user_content.append({"type": "input_image", "image_url": model_views_image_url, "detail": "high"})
+    user_content.append({"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"})
+
+    return {
         "model": model,
         "input": [
             {
@@ -1056,11 +1142,7 @@ async def _call_openai_for_assignments(
             },
             {
                 "role": "user",
-                "content": [
-                    {"type": "input_text", "text": json.dumps(user_prompt)},
-                    {"type": "input_image", "image_url": reference_image_url, "detail": "high"},
-                    {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
-                ],
+                "content": user_content,
             },
         ],
         "reasoning": {"effort": DEFAULT_REASONING_EFFORT},
@@ -1072,6 +1154,31 @@ async def _call_openai_for_assignments(
             }
         },
     }
+
+
+async def _call_openai_for_assignments(
+    scene_summary: Dict[str, Any],
+    reference_image_urls: List[str],
+    model_views_image_url: str,
+    voxel_preview_image_url: str,
+    prompt: Optional[str],
+    model: str,
+) -> Tuple[List[Dict[str, Any]], str]:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY not configured. Set OPENAI_API_KEY and restart the backend server.",
+        )
+
+    payload = _build_openai_payload(
+        scene_summary=scene_summary,
+        reference_image_urls=reference_image_urls,
+        model_views_image_url=model_views_image_url,
+        voxel_preview_image_url=voxel_preview_image_url,
+        prompt=prompt,
+        model=model,
+    )
 
     timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS, connect=15.0)
     try:
@@ -1195,10 +1302,12 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
         voxels = _parse_xyzrgb(xyzrgb_content)
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
+        model_views_image_url = _build_model_views_data_url(voxels)
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
-            reference_image_url=request.reference_image_url,
+            reference_image_urls=[request.reference_image_url] + (request.reference_image_urls or []),
+            model_views_image_url=model_views_image_url,
             voxel_preview_image_url=voxel_preview_image_url,
             prompt=request.prompt,
             model=model,

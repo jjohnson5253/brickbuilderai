@@ -286,8 +286,10 @@ async def llm_render_endpoint(
     Recolor an xyzrgb voxel model to better match a reference image.
 
     The endpoint fetches xyzrgb_url, summarizes the voxel shape for spatial
-    reasoning, sends that summary plus reference_image_url to OpenAI, applies
-    the returned semantic recoloring rules, and returns updated xyzrgb content.
+    reasoning, renders the model's captured colors from front/back/side/top/
+    bottom cameras, sends that summary plus reference_image_url (and any extra
+    reference_image_urls) to OpenAI, applies the returned semantic recoloring
+    rules, and returns updated xyzrgb content.
     """
     return await llm_render(request, auth_info)
 

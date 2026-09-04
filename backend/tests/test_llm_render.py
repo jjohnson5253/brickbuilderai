@@ -4,15 +4,20 @@ from io import BytesIO
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.requests.llmRender import (
+    MAX_EXTRA_REFERENCE_IMAGES,
     SEGMENT_PALETTE,
     VIEWS,
+    LlmRenderRequest,
     _apply_assignments,
     _assignment_schema,
+    _build_model_views_data_url,
+    _build_openai_payload,
     _build_scene_summary,
     _build_voxel_preview_data_url,
     _geometric_regions,
@@ -423,3 +428,136 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def test_views_cover_front_back_sides_top_and_bottom():
+    cameras = {view["camera"] for view in VIEWS}
+    assert cameras == {"-Y", "+Y", "+X", "-X", "+Z", "-Z"}
+    names = {view["name"] for view in VIEWS}
+    assert {"front", "back", "left side", "right side", "top", "bottom"} <= names
+
+
+def test_project_segments_bottom_view_shows_only_body():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    coords, _ = _voxel_arrays(voxels)
+    top = next(view for view in VIEWS if view["name"] == "top")
+    bottom = next(view for view in VIEWS if view["name"] == "bottom")
+
+    # From above, the head (2) sits on top of the body (1); from below, the
+    # body occludes the head entirely.
+    assert set(np.unique(_project_segments(coords, segment_ids, top)).tolist()) == {1, 2}
+    assert set(np.unique(_project_segments(coords, segment_ids, bottom)).tolist()) == {1}
+
+
+def test_project_segments_right_side_mirrors_left_side():
+    # Body with a differently coloured stripe on its front (-Y) face, so the
+    # left/right views are asymmetric.
+    voxels = _block((0, 5), (1, 7), (0, 5), (120, 60, 20))
+    voxels += _block((0, 5), (0, 1), (0, 5), (140, 200, 90))
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    coords, _ = _voxel_arrays(voxels)
+    left = next(view for view in VIEWS if view["name"] == "left side")
+    right = next(view for view in VIEWS if view["name"] == "right side")
+
+    left_projection = _project_segments(coords, segment_ids, left)
+    right_projection = _project_segments(coords, segment_ids, right)
+
+    # The front stripe is at the viewer's left from the left side and at the
+    # viewer's right from the right side.
+    assert np.array_equal(right_projection, left_projection[:, ::-1])
+    front_segment = next(iter(_segments_with_color(voxels, segment_ids, (140, 200, 90))))
+    assert set(np.unique(left_projection[:, 0]).tolist()) == {front_segment}
+    assert set(np.unique(right_projection[:, -1]).tolist()) == {front_segment}
+
+
+def test_build_model_views_data_url_returns_png_with_original_colors():
+    voxels = _two_part_model()
+
+    data_url = _build_model_views_data_url(voxels)
+
+    assert data_url.startswith("data:image/png;base64,")
+    image = Image.open(BytesIO(base64.b64decode(data_url.split(",", 1)[1])))
+    assert image.format == "PNG"
+    colors = {color for _, color in image.getcolors(maxcolors=image.width * image.height)}
+    # The model's real captured colours are shown, not segment ID colours.
+    assert (120, 60, 20) in colors
+    assert (140, 200, 90) in colors
+
+
+def test_request_validates_extra_reference_image_urls():
+    base = {"xyzrgb_url": "https://example.com/m.xyzrgb", "reference_image_url": "https://example.com/ref.png"}
+
+    request = LlmRenderRequest(**base)
+    assert request.reference_image_urls == []
+
+    request = LlmRenderRequest(
+        **base,
+        reference_image_urls=[" https://example.com/top.png ", "", "https://example.com/side.png"],
+    )
+    assert request.reference_image_urls == [
+        "https://example.com/top.png",
+        "https://example.com/side.png",
+    ]
+
+    with pytest.raises(ValueError):
+        LlmRenderRequest(**base, reference_image_urls=["ftp://example.com/top.png"])
+    with pytest.raises(ValueError):
+        LlmRenderRequest(
+            **base,
+            reference_image_urls=[
+                f"https://example.com/{index}.png"
+                for index in range(MAX_EXTRA_REFERENCE_IMAGES + 1)
+            ],
+        )
+
+
+def test_build_openai_payload_orders_reference_model_and_preview_images():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    scene_summary = _build_scene_summary(voxels, segment_ids)
+
+    payload = _build_openai_payload(
+        scene_summary=scene_summary,
+        reference_image_urls=["https://example.com/ref.png", "https://example.com/back.png"],
+        model_views_image_url="data:image/png;base64,model",
+        voxel_preview_image_url="data:image/png;base64,preview",
+        prompt=None,
+        model="gpt-test",
+    )
+
+    user_content = payload["input"][1]["content"]
+    images = [part["image_url"] for part in user_content if part["type"] == "input_image"]
+    assert images == [
+        "https://example.com/ref.png",
+        "https://example.com/back.png",
+        "data:image/png;base64,model",
+        "data:image/png;base64,preview",
+    ]
+    task = next(part["text"] for part in user_content if part["type"] == "input_text")
+    assert "Images 1-2 are reference views" in task
+    assert "Image 3" in task
+    assert "Image 4" in task
+    assert payload["model"] == "gpt-test"
+
+
+def test_build_openai_payload_single_reference_keeps_image_numbering():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    scene_summary = _build_scene_summary(voxels, segment_ids)
+
+    payload = _build_openai_payload(
+        scene_summary=scene_summary,
+        reference_image_urls=["https://example.com/ref.png"],
+        model_views_image_url="data:image/png;base64,model",
+        voxel_preview_image_url="data:image/png;base64,preview",
+        prompt="match the reference",
+        model="gpt-test",
+    )
+
+    user_content = payload["input"][1]["content"]
+    task = next(part["text"] for part in user_content if part["type"] == "input_text")
+    assert "Image 1 is the reference" in task
+    assert "Image 2 shows the voxel model's own captured colors" in task
+    assert "Image 3 shows the same voxel model" in task
+    assert '"optional_user_prompt": "match the reference"' in task
