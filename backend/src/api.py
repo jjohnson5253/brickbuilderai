@@ -84,15 +84,19 @@ ALLOWED_ORIGINS = [
     "https://brickbuilder.ai",
     "https://brickai-frontend.vercel.app",  # New UI domain
     "https://brickbuilderai-staging.vercel.app",
-    "https://brickbuilderai-git-staging-jjohnson3700team.vercel.app",
     "https://trybrickbuilder.com",
 ]
+
+ALLOWED_ORIGIN_REGEX = (
+    r"https://(?:.*\.ngrok-free\.app|"
+    r"brickbuilderai-git-[a-z0-9-]+-jjohnson3700team\.vercel\.app)"
+)
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.ngrok-free\.app",
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
