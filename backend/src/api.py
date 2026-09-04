@@ -60,35 +60,38 @@ app = FastAPI(
     version="1.0.0"
 )
 
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",  # Vite dev server
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",  # Vite dev server (fallback port)
+    "http://127.0.0.1:5174",
+    "http://localhost:4173",  # Vite preview
+    "http://127.0.0.1:4173",
+    "https://brickai.frlabs.dev",  # Production Vercel domain
+    "https://brickai-backend-production.up.railway.app",  # Railway production domain
+    "https://brickai-backend-staging.up.railway.app",  # Railway staging domain
+    "https://image2brick.com",  # New domain
+    "https://img2brick.com",  # New domain
+    "https://imagetobrick.com",  # New domain
+    "https://prompt2brick.com",  # New domain
+    "https://brickai-generations-viewer.vercel.app",  # Vercel viewer app
+    "https://prompt2bricks.com",  # New domain
+    "https://brickai-new-ui.vercel.app",  # New UI domain
+    "https://brickbuilder.ai",
+    "https://brickai-frontend.vercel.app",  # New UI domain
+    "https://brickbuilderai-staging.vercel.app",
+    "https://brickbuilderai-git-staging-jjohnson3700team.vercel.app",
+    "https://trybrickbuilder.com",
+]
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:5173",  # Vite dev server
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",  # Vite dev server (fallback port)
-        "http://127.0.0.1:5174",
-        "http://localhost:4173",  # Vite preview
-        "http://127.0.0.1:4173",
-        "https://brickai.frlabs.dev",  # Production Vercel domain
-        "https://brickai-backend-production.up.railway.app",  # Railway production domain
-        "https://brickai-backend-staging.up.railway.app",  # Railway staging domain
-        "https://image2brick.com",  # New domain
-        "https://img2brick.com",  # New domain
-        "https://imagetobrick.com",  # New domain
-        "https://prompt2brick.com",  # New domain
-        "https://brickai-generations-viewer.vercel.app",  # Vercel viewer app
-        "https://prompt2bricks.com",  # New domain
-        "https://brickai-new-ui.vercel.app",  # New UI domain
-        "https://brickbuilder.ai",
-        "https://brickai-frontend.vercel.app",  # New UI domain
-        "https://brickbuilderai-staging.vercel.app",
-        "https://trybrickbuilder.com",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=r"https://.*\.ngrok-free\.app",
     allow_credentials=True,
     allow_methods=["*"],

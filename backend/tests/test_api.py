@@ -10,6 +10,10 @@ from src import api
 AUTH = {"user_id": "user"}
 
 
+def test_staging_vercel_deployment_is_allowed_by_cors():
+    assert "https://brickbuilderai-git-staging-jjohnson3700team.vercel.app" in api.ALLOWED_ORIGINS
+
+
 @pytest.mark.parametrize(
     ("endpoint_name", "handler_name", "call_args", "forwarded_args"),
     [
