@@ -45,7 +45,7 @@ Generation time is typically under 30 seconds when SAM3D is used.
 | Folder | What it is | Stack |
 | --- | --- | --- |
 | `frontend/` | Web app: upload, 3D viewer, instructions, checkout | React, Vite, TypeScript, Three.js, Tailwind, Supabase, Stripe |
-| `backend/` | API that converts images/text into brick models | fal.ai Python, FastAPI, Open3D, Trimesh |
+| `backend/` | API that converts images/text into brick models | fal.ai Python, FastAPI, Trimesh |
 | `serverless/` | Image-to-3D voxel generation worker | SAM-3D, Docker, RunPod |
 
 ## Running locally

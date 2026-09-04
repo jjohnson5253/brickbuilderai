@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 from typing import Dict, Tuple
 import numpy as np
-import open3d as o3d
 
 # Path to the LDR color CSV file
 _CSV_PATH = Path(__file__).parent.parent.parent / "gobrick_colors.csv"

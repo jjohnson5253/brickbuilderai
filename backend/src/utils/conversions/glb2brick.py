@@ -3,7 +3,6 @@
 import sys
 import argparse
 import numpy as np
-import open3d as o3d
 from pathlib import Path
 from typing import Tuple, Dict, Any, List
 from scipy.spatial import cKDTree
