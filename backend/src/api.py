@@ -1,11 +1,6 @@
 import os
 import logging
 
-# Configure headless mode for Open3D before any imports
-os.environ["DISPLAY"] = ":99"
-os.environ["OPEN3D_HEADLESS"] = "1" 
-os.environ["PYOPENGL_PLATFORM"] = "egl"
-
 from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
