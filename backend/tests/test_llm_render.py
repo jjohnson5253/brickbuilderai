@@ -17,9 +17,12 @@ from src.requests.llmRender import (
     _build_voxel_preview_data_url,
     _geometric_regions,
     _load_font,
+    _majority_color,
     _perceptual_colors,
+    _project_reference_colors,
     _project_segments,
     _quantize_colors,
+    _reference_foreground,
     _render_view_tile,
     _rgb_to_lab,
     _segment_voxels,
@@ -423,3 +426,156 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+BODY_REF = (210, 40, 30)
+HEAD_REF = (40, 180, 60)
+
+
+def _front_reference(cells, scale=8, margin=10):
+    """RGBA reference image: `cells` is a (rows, cols) grid of colour tuples or
+    None for background, upscaled with a transparent margin around it."""
+    rows, cols = len(cells), len(cells[0])
+    canvas = np.zeros((rows * scale + 2 * margin, cols * scale + 2 * margin, 4), dtype=np.uint8)
+    for row, line in enumerate(cells):
+        for col, color in enumerate(line):
+            if color is None:
+                continue
+            canvas[
+                margin + row * scale : margin + (row + 1) * scale,
+                margin + col * scale : margin + (col + 1) * scale,
+            ] = (*color, 255)
+    return Image.fromarray(canvas, "RGBA")
+
+
+def _front_facing_model():
+    """Body with a head on top, both facing -Y, plus a block hidden behind the
+    body that is invisible from the front."""
+    body = _block((0, 6), (0, 6), (0, 6), (120, 60, 20))
+    head = _block((1, 5), (1, 5), (6, 10), (140, 200, 90))
+    back = _block((0, 6), (6, 12), (0, 6), (30, 90, 200))
+    return body + head + back
+
+
+def _front_reference_cells():
+    """Cells matching the front silhouette of _front_facing_model: 4 head rows
+    on top of 6 body rows."""
+    cells = [[HEAD_REF if 1 <= col <= 4 else None for col in range(6)] for _ in range(4)]
+    cells += [[BODY_REF] * 6 for _ in range(6)]
+    return cells
+
+
+def test_reference_foreground_from_alpha_and_from_background_color():
+    reference = _front_reference(_front_reference_cells())
+    alpha_mask = _reference_foreground(reference)
+    assert alpha_mask is not None
+    assert alpha_mask.any()
+
+    array = np.asarray(reference).copy()
+    background = array[..., 3] == 0
+    array[..., :3][background] = 240
+    array[..., 3] = 255
+    color_mask = _reference_foreground(Image.fromarray(array, "RGBA"))
+    assert color_mask is not None
+    assert np.array_equal(color_mask, alpha_mask)
+
+
+def test_reference_foreground_rejects_unseparable_images():
+    flat = Image.new("RGB", (64, 64), (200, 200, 200))
+    assert _reference_foreground(flat) is None
+
+
+def test_majority_color_ignores_minority_samples():
+    samples = np.array([BODY_REF] * 30 + [(30, 90, 200)] * 8, dtype=np.float64)
+    assert _majority_color(samples) == BODY_REF
+
+
+def test_project_reference_colors_samples_front_visible_segments():
+    voxels = _front_facing_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    body = next(iter(_segments_of(voxels, segment_ids, lambda x, y, z: y < 6 and z < 6)))
+    head = next(iter(_segments_of(voxels, segment_ids, lambda x, y, z: z >= 6)))
+    back = next(iter(_segments_of(voxels, segment_ids, lambda x, y, z: y >= 6)))
+    reference = _front_reference(_front_reference_cells())
+
+    projected = _project_reference_colors(voxels, segment_ids, reference)
+
+    # Front-visible segments get photo-accurate colours; the hidden back
+    # segment is left for the LLM.
+    assert set(projected) == {body, head}
+    assert tuple(projected[body]["color"]) == BODY_REF
+    assert tuple(projected[head]["color"]) == HEAD_REF
+    assert projected[body]["front_coverage"] == 1.0
+    assert back not in projected
+
+
+def test_project_reference_colors_skips_when_silhouettes_disagree():
+    voxels = _front_facing_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    cells = [[None] * 6 for _ in range(10)]
+    cells[0][0] = BODY_REF
+    cells[9][5] = BODY_REF
+    reference = _front_reference(cells)
+
+    assert _project_reference_colors(voxels, segment_ids, reference) == {}
+
+
+def test_project_reference_colors_without_reference_returns_nothing():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    assert _project_reference_colors(voxels, segment_ids, None) == {}
+
+
+def test_build_scene_summary_includes_projected_colors():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    projected = {2: {"color": (5, 6, 7), "front_coverage": 0.9}}
+
+    summary = _build_scene_summary(voxels, segment_ids, projected)
+
+    head = next(s for s in summary["segments"] if s["id"] == 2)
+    assert head["projected_color"] == [5, 6, 7]
+    assert head["front_coverage"] == 0.9
+    body = next(s for s in summary["segments"] if s["id"] == 1)
+    assert "projected_color" not in body
+    assert "projection" in summary
+    assert "projection" not in _build_scene_summary(voxels, segment_ids)
+
+
+def test_apply_assignments_prefers_projected_colors_over_llm_colors():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    projected = {1: {"color": (10, 20, 30), "front_coverage": 1.0}}
+    assignments = [
+        {"segment_id": 1, "part": "body", "reason": "large block", "color": [200, 150, 100]},
+        {"segment_id": 2, "part": "head", "reason": "top block", "color": [50, 60, 70]},
+    ]
+
+    recolored, applied = _apply_assignments(voxels, segment_ids, assignments, projected)
+
+    by_id = {rule["segment_id"]: rule for rule in applied}
+    assert by_id[1]["color"] == [10, 20, 30]
+    assert by_id[1]["source"] == "projection"
+    assert by_id[2]["color"] == [50, 60, 70]
+    assert by_id[2]["source"] == "llm"
+    body = [v for v in recolored if v["z"] < 6]
+    assert all((v["r"], v["g"], v["b"]) == (10, 20, 30) for v in body)
+
+
+def test_apply_assignments_applies_projected_segments_missing_from_llm():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    projected = {2: {"color": (1, 2, 3), "front_coverage": 0.8}}
+    assignments = [
+        {"segment_id": 1, "part": "body", "reason": "large block", "color": [200, 150, 100]},
+    ]
+
+    recolored, applied = _apply_assignments(voxels, segment_ids, assignments, projected)
+
+    assert {rule["segment_id"] for rule in applied} == {1, 2}
+    head_rule = next(rule for rule in applied if rule["segment_id"] == 2)
+    assert head_rule["source"] == "projection"
+    assert head_rule["color"] == [1, 2, 3]
+    assert head_rule["changed_voxels"] == int((segment_ids == 2).sum())
+    head = [v for v in recolored if v["z"] >= 6]
+    assert all((v["r"], v["g"], v["b"]) == (1, 2, 3) for v in head)

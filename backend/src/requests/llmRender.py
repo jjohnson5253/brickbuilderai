@@ -51,6 +51,29 @@ PREVIEW_TILE_SIZE = 320
 # beside them with a leader line instead of on top of them.
 LABEL_OFFSET_AREA = 900
 
+# Reference projection: the model faces -Y, so front-visible voxels can take
+# their colours straight from the reference photo instead of the LLM.
+MAX_REFERENCE_IMAGE_BYTES = 12 * 1024 * 1024
+# Very large references are downscaled to this maximum dimension before use.
+REFERENCE_MAX_DIMENSION = 1024
+# Alpha below this counts as transparent background in the reference image.
+ALPHA_FOREGROUND_THRESHOLD = 128
+# Sum of per-channel distances from the border colour above which a pixel
+# counts as subject rather than background.
+BACKGROUND_COLOR_TOLERANCE = 60
+# The subject must cover this share of the reference for the mask to be trusted.
+FOREGROUND_FRACTION_RANGE = (0.01, 0.95)
+# The aligned reference silhouette must overlap the front-view voxel silhouette
+# at least this much (intersection over union) for the projection to be trusted.
+SILHOUETTE_IOU_THRESHOLD = 0.5
+# A segment only takes its colour from the projection when it has at least this
+# many pixels sampled from the subject...
+PROJECTION_MIN_SAMPLES = 6
+# ...at least this fraction of its own silhouette visible from the front...
+PROJECTION_MIN_VISIBLE_FRACTION = 0.3
+# ...and at least this fraction of its visible pixels landing on the subject.
+PROJECTION_MIN_FOREGROUND_FRACTION = 0.5
+
 # Colour comparisons happen in CIELAB with lightness down-weighted, so the lit
 # and shadowed sides of one part read as similar while real hue changes do not.
 LIGHTNESS_WEIGHT = 0.5
@@ -733,7 +756,9 @@ def _island_counts(coords: np.ndarray, segment_ids: np.ndarray) -> Dict[int, int
 
 
 def _build_scene_summary(
-    voxels: List[Dict[str, int]], segment_ids: np.ndarray
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    projected: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     coords, _ = _voxel_arrays(voxels)
     low = coords.min(0)
@@ -749,18 +774,21 @@ def _build_scene_summary(
             normalized = _normalized(members[:, index], int(low[index]), int(high[index]))
             center[axis] = round(float(normalized.mean()), 2)
             extent[axis] = [round(float(normalized.min()), 2), round(float(normalized.max()), 2)]
-        segments.append(
-            {
-                "id": int(segment_id),
-                "voxel_count": int(len(members)),
-                "share": round(len(members) / len(voxels), 3),
-                "is_detail": bool(len(members) < detail_threshold),
-                "island_count": islands[int(segment_id)],
-                "center": center,
-                "extent": extent,
-            }
-        )
-    return {
+        segment: Dict[str, Any] = {
+            "id": int(segment_id),
+            "voxel_count": int(len(members)),
+            "share": round(len(members) / len(voxels), 3),
+            "is_detail": bool(len(members) < detail_threshold),
+            "island_count": islands[int(segment_id)],
+            "center": center,
+            "extent": extent,
+        }
+        info = (projected or {}).get(int(segment_id))
+        if info is not None:
+            segment["projected_color"] = list(info["color"])
+            segment["front_coverage"] = info["front_coverage"]
+        segments.append(segment)
+    summary = {
         "axes": (
             "Z is up. X is the model's left-right axis, Y is depth. The model most "
             "likely faces -Y, so the 'front' view is usually the one that matches the "
@@ -778,6 +806,15 @@ def _build_scene_summary(
         "segment_count": len(segments),
         "segments": segments,
     }
+    if projected:
+        summary["projection"] = (
+            "projected_color is the colour sampled directly from the reference photo "
+            "through the front view (majority vote over the segment's front-visible "
+            "voxels; front_coverage is the visible share of its silhouette). These "
+            "segments will keep their projected colour; focus your reasoning on the "
+            "segments without projected_color, which are hidden from the front."
+        )
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -934,6 +971,160 @@ def _build_voxel_preview_data_url(
 
 
 # ---------------------------------------------------------------------------
+# Reference projection
+#
+# The brick pipeline orients models facing -Y, which is exactly the "front"
+# preview view. When the reference photo's subject silhouette lines up with
+# the front-view voxel silhouette, every front-visible voxel can sample its
+# colour straight from the photo; a majority vote per segment then gives the
+# visible segments photo-accurate colours and leaves the LLM to reason only
+# about the back/hidden segments. The silhouette IoU acts as validation of the
+# projection: when it fails (model not facing -Y, mismatched reference) the
+# projection is skipped and the LLM colours everything as before.
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_reference_image(url: str) -> Optional[Image.Image]:
+    """Best-effort download of the reference image; None disables projection."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+        content = response.content
+        if len(content) > MAX_REFERENCE_IMAGE_BYTES:
+            logger.warning("llmRender: reference image too large for projection")
+            return None
+        image = Image.open(BytesIO(content))
+        image.load()
+    except Exception as e:
+        # Projection is an enhancement on top of the LLM flow; never fail the request.
+        logger.warning("llmRender: could not fetch reference image for projection: %s", e)
+        return None
+    if max(image.size) > REFERENCE_MAX_DIMENSION:
+        ratio = REFERENCE_MAX_DIMENSION / max(image.size)
+        image = image.resize(
+            (max(1, round(image.width * ratio)), max(1, round(image.height * ratio))),
+            Image.BILINEAR,
+        )
+    return image.convert("RGBA")
+
+
+def _reference_foreground(image: Image.Image) -> Optional[np.ndarray]:
+    """Boolean subject mask for the reference image: the alpha channel when the
+    image has real transparency, otherwise pixels that differ from the border
+    (background) colour. None when the subject cannot be isolated reliably."""
+    array = np.asarray(image.convert("RGBA"))
+    alpha = array[..., 3]
+    if int(alpha.min()) < ALPHA_FOREGROUND_THRESHOLD:
+        mask = alpha >= ALPHA_FOREGROUND_THRESHOLD
+    else:
+        rgb = array[..., :3].astype(np.float64)
+        border = np.concatenate([rgb[0], rgb[-1], rgb[:, 0], rgb[:, -1]])
+        background = np.median(border, axis=0)
+        mask = np.abs(rgb - background).sum(axis=2) > BACKGROUND_COLOR_TOLERANCE
+    fraction = float(mask.mean())
+    if not FOREGROUND_FRACTION_RANGE[0] <= fraction <= FOREGROUND_FRACTION_RANGE[1]:
+        return None
+    return mask
+
+
+def _unoccluded_areas(
+    coords: np.ndarray, segment_ids: np.ndarray, view: Dict[str, Any]
+) -> Dict[int, int]:
+    """Pixels each segment would cover in the view if nothing occluded it."""
+    low = coords.min(0)
+    high = coords.max(0)
+    h, v = AXIS_INDEX[view["h"]], AXIS_INDEX[view["v"]]
+    width = int(high[h] - low[h] + 1)
+    pixel_key = (high[v] - coords[:, v]) * width + (coords[:, h] - low[h])
+    return {
+        int(segment_id): int(np.unique(pixel_key[segment_ids == segment_id]).size)
+        for segment_id in np.unique(segment_ids)
+    }
+
+
+def _majority_color(samples: np.ndarray) -> Tuple[int, int, int]:
+    """Colour of the dominant colour cluster among the sampled pixels, so stray
+    background or neighbouring-part pixels do not skew the vote."""
+    labels = _quantize_colors(_perceptual_colors(samples.astype(np.float64)), clusters=4)
+    values, counts = np.unique(labels, return_counts=True)
+    dominant = samples[labels == values[np.argmax(counts)]]
+    return tuple(int(round(float(channel))) for channel in np.median(dominant, axis=0))
+
+
+def _project_reference_colors(
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    reference: Optional[Image.Image],
+) -> Dict[int, Dict[str, Any]]:
+    """Sample the reference photo through the front (-Y) view and majority-vote a
+    colour per segment. The silhouettes are aligned by their bounding boxes and
+    the projection is only trusted when they actually agree. Returns
+    {segment_id: {"color", "front_coverage"}} for confidently coloured segments;
+    {} when the projection cannot be validated."""
+    if reference is None:
+        return {}
+    mask = _reference_foreground(reference)
+    if mask is None:
+        return {}
+    rows = np.nonzero(mask.any(axis=1))[0]
+    cols = np.nonzero(mask.any(axis=0))[0]
+    top, bottom = int(rows[0]), int(rows[-1]) + 1
+    left, right = int(cols[0]), int(cols[-1]) + 1
+
+    coords, _ = _voxel_arrays(voxels)
+    front = VIEWS[0]
+    projection = _project_segments(coords, segment_ids, front)
+    height, width = projection.shape
+    silhouette = projection != 0
+
+    resized = np.asarray(
+        Image.fromarray(mask[top:bottom, left:right]).resize((width, height), Image.NEAREST)
+    )
+    union = int(np.logical_or(resized, silhouette).sum())
+    iou = float(np.logical_and(resized, silhouette).sum()) / union if union else 0.0
+    if iou < SILHOUETTE_IOU_THRESHOLD:
+        logger.info(
+            "llmRender: silhouette IoU %.2f below %.2f; skipping reference projection",
+            iou,
+            SILHOUETTE_IOU_THRESHOLD,
+        )
+        return {}
+
+    reference_rgb = np.asarray(reference.convert("RGB"))
+    areas = _unoccluded_areas(coords, segment_ids, front)
+
+    projected: Dict[int, Dict[str, Any]] = {}
+    for segment_id, area in areas.items():
+        pixel_rows, pixel_cols = np.nonzero(projection == segment_id)
+        visible = int(len(pixel_rows))
+        if visible < PROJECTION_MIN_SAMPLES or visible < area * PROJECTION_MIN_VISIBLE_FRACTION:
+            continue
+        ref_rows = np.clip(
+            top + ((pixel_rows + 0.5) * (bottom - top) / height).astype(np.int64),
+            0,
+            mask.shape[0] - 1,
+        )
+        ref_cols = np.clip(
+            left + ((pixel_cols + 0.5) * (right - left) / width).astype(np.int64),
+            0,
+            mask.shape[1] - 1,
+        )
+        on_subject = mask[ref_rows, ref_cols]
+        samples = reference_rgb[ref_rows[on_subject], ref_cols[on_subject]]
+        if (
+            len(samples) < PROJECTION_MIN_SAMPLES
+            or len(samples) < visible * PROJECTION_MIN_FOREGROUND_FRACTION
+        ):
+            continue
+        projected[segment_id] = {
+            "color": _majority_color(samples),
+            "front_coverage": round(visible / area, 2),
+        }
+    return projected
+
+
+# ---------------------------------------------------------------------------
 # OpenAI call
 # ---------------------------------------------------------------------------
 
@@ -1015,6 +1206,7 @@ async def _call_openai_for_assignments(
         )
 
     segment_ids = [segment["id"] for segment in scene_summary["segments"]]
+    has_projection = any("projected_color" in segment for segment in scene_summary["segments"])
 
     system_prompt = (
         "You recolor voxel models so they match a reference image. The model has been "
@@ -1042,7 +1234,17 @@ async def _call_openai_for_assignments(
             "Small segments are usually details (eyes, buttons, logos, trim); look for matching details in the reference.",
             "Segments with is_detail=true are small high-contrast features (eyes, mouth, jewelry, buttons, logos, shirt patterns) that were kept on purpose; give them the colour of the matching detail in the reference, not the colour of the part they sit on.",
             "A segment with island_count > 1 is several matching pieces (e.g. both eyes, all buttons); colour it as that repeated feature.",
-        ],
+        ]
+        + (
+            [
+                "Segments with projected_color already had their colour sampled directly "
+                "from the reference photo through the front view and will keep it; return "
+                "projected_color as their color, still name the part, and give hidden "
+                "segments that belong to the same part a matching colour."
+            ]
+            if has_projection
+            else []
+        ),
         "optional_user_prompt": prompt,
         "scene_summary": scene_summary,
     }
@@ -1144,10 +1346,18 @@ def _apply_assignments(
     voxels: List[Dict[str, int]],
     segment_ids: np.ndarray,
     assignments: List[Dict[str, Any]],
+    projected: Optional[Dict[int, Dict[str, Any]]] = None,
 ) -> Tuple[List[Dict[str, int]], List[Dict[str, Any]]]:
+    projected = projected or {}
     recolored = [voxel.copy() for voxel in voxels]
     applied: List[Dict[str, Any]] = []
     seen: set = set()
+
+    def recolor(segment_id: int, color: Tuple[int, int, int]) -> int:
+        member_indices = np.nonzero(segment_ids == segment_id)[0]
+        for index in member_indices.tolist():
+            recolored[index]["r"], recolored[index]["g"], recolored[index]["b"] = color
+        return int(len(member_indices))
 
     for raw in assignments:
         if not isinstance(raw, dict):
@@ -1156,14 +1366,16 @@ def _apply_assignments(
             segment_id = int(raw.get("segment_id"))
         except (TypeError, ValueError):
             continue
-        color = _coerce_rgb(raw.get("color"))
+        override = projected.get(segment_id)
+        if override is not None:
+            # Front-visible segments keep the colour sampled from the reference
+            # photo; the LLM only decides colours for back/hidden segments.
+            color = tuple(override["color"])
+        else:
+            color = _coerce_rgb(raw.get("color"))
         if color is None or segment_id in seen:
             continue
         seen.add(segment_id)
-
-        member_indices = np.nonzero(segment_ids == segment_id)[0]
-        for index in member_indices.tolist():
-            recolored[index]["r"], recolored[index]["g"], recolored[index]["b"] = color
 
         applied.append(
             {
@@ -1171,7 +1383,25 @@ def _apply_assignments(
                 "name": raw.get("part", f"segment {segment_id}"),
                 "reason": raw.get("reason"),
                 "color": list(color),
-                "changed_voxels": int(len(member_indices)),
+                "changed_voxels": recolor(segment_id, color),
+                "source": "projection" if override is not None else "llm",
+            }
+        )
+
+    # Projected segments keep their photo colour even if the LLM skipped them.
+    for segment_id, info in sorted(projected.items()):
+        if segment_id in seen:
+            continue
+        seen.add(segment_id)
+        color = tuple(info["color"])
+        applied.append(
+            {
+                "segment_id": segment_id,
+                "name": f"segment {segment_id}",
+                "reason": "sampled from the reference image via front projection",
+                "color": list(color),
+                "changed_voxels": recolor(segment_id, color),
+                "source": "projection",
             }
         )
 
@@ -1194,7 +1424,14 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
         xyzrgb_content = await _fetch_text_url(request.xyzrgb_url, MAX_XYZRGB_BYTES)
         voxels = _parse_xyzrgb(xyzrgb_content)
         segment_ids = _segment_voxels(voxels, max_segments)
-        scene_summary = _build_scene_summary(voxels, segment_ids)
+        reference_image = await _fetch_reference_image(request.reference_image_url)
+        try:
+            projected = _project_reference_colors(voxels, segment_ids, reference_image)
+        except Exception as e:
+            # Projection is an enhancement on top of the LLM flow; never fail the request.
+            logger.warning("llmRender: reference projection failed: %s", e)
+            projected = {}
+        scene_summary = _build_scene_summary(voxels, segment_ids, projected)
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
@@ -1203,7 +1440,7 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             prompt=request.prompt,
             model=model,
         )
-        recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        recolored, applied = _apply_assignments(voxels, segment_ids, assignments, projected)
 
         segment_count = int(segment_ids.max())
         if len(applied) < segment_count:
@@ -1221,6 +1458,7 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             voxel_count=len(voxels),
             segment_count=segment_count,
             assignments_count=len(applied),
+            projected_count=len(projected),
         )
 
         return LlmRenderResponse(
@@ -1231,6 +1469,7 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             applied_rules=applied,
             preview_image=voxel_preview_image_url if request.include_preview else None,
             message=f"Recolored {len(applied)} of {segment_count} segments"
+            + (f" ({len(projected)} sampled from the reference)" if projected else "")
             + (f" as '{subject}'" if subject else ""),
         )
     except HTTPException:

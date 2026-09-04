@@ -98,6 +98,15 @@ with `is_detail` and `island_count`. A labelled multi-view preview of those
 segments plus the reference image is sent to OpenAI, which returns one colour per segment.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
 
+Because the model faces -Y, the reference photo is also projected directly onto the front
+view: the subject silhouette is aligned to the front voxel silhouette (validated by
+intersection-over-union before use), every front-visible voxel samples the photo, and a
+majority vote per segment gives front-visible segments photo-accurate colours. Those
+segments keep their sampled colour (`"source": "projection"` in `applied_rules`) and the
+LLM only reasons about the back/hidden segments. When the reference cannot be fetched, its
+subject cannot be separated from the background, or the silhouettes disagree, the
+projection is skipped and the LLM colours every segment as before.
+
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
 (default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
 ```bash
