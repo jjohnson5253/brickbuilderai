@@ -4,14 +4,20 @@ from io import BytesIO
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
+from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.requests.llmRender import (
+    MAX_REFERENCE_IMAGES,
+    MAX_SPLIT_PIECES,
     SEGMENT_PALETTE,
     VIEWS,
+    LlmRenderRequest,
     _apply_assignments,
+    _apply_segmentation_review,
     _assignment_schema,
     _build_scene_summary,
     _build_voxel_preview_data_url,
@@ -20,9 +26,11 @@ from src.requests.llmRender import (
     _perceptual_colors,
     _project_segments,
     _quantize_colors,
+    _reference_images_description,
     _render_view_tile,
     _rgb_to_lab,
     _segment_voxels,
+    _segmentation_review_schema,
     _voxel_arrays,
 )
 
@@ -423,3 +431,134 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def test_request_accepts_multiple_reference_images_and_dedupes():
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_url="https://example.com/a.png",
+        reference_image_urls=["https://example.com/b.png", "https://example.com/a.png"],
+    )
+    assert request.reference_images() == [
+        "https://example.com/a.png",
+        "https://example.com/b.png",
+    ]
+    assert request.check_segmentation is True
+
+
+def test_request_accepts_reference_image_urls_without_primary():
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_urls=["https://example.com/a.png"],
+    )
+    assert request.reference_images() == ["https://example.com/a.png"]
+
+
+def test_request_requires_at_least_one_reference_image():
+    with pytest.raises(ValidationError):
+        LlmRenderRequest(xyzrgb_url="https://example.com/model.xyzrgb")
+    with pytest.raises(ValidationError):
+        LlmRenderRequest(
+            xyzrgb_url="https://example.com/model.xyzrgb", reference_image_urls=[]
+        )
+
+
+def test_request_rejects_bad_or_too_many_reference_images():
+    with pytest.raises(ValidationError):
+        LlmRenderRequest(
+            xyzrgb_url="https://example.com/model.xyzrgb",
+            reference_image_urls=["ftp://example.com/a.png"],
+        )
+    with pytest.raises(ValidationError):
+        LlmRenderRequest(
+            xyzrgb_url="https://example.com/model.xyzrgb",
+            reference_image_urls=[
+                f"https://example.com/{index}.png"
+                for index in range(MAX_REFERENCE_IMAGES + 1)
+            ],
+        )
+
+
+def test_reference_images_description_counts_images():
+    assert _reference_images_description(["a"]) == "Image 1 is the reference"
+    assert "Images 1-3" in _reference_images_description(["a", "b", "c"])
+
+
+def test_segmentation_review_schema_limits_ids_and_pieces():
+    schema = _segmentation_review_schema([1, 2, 3])
+    merge_items = schema["properties"]["merge_groups"]["items"]
+    assert merge_items["items"]["enum"] == [1, 2, 3]
+    assert merge_items["minItems"] == 2
+    split_items = schema["properties"]["split_segments"]["items"]
+    assert split_items["properties"]["segment_id"]["enum"] == [1, 2, 3]
+    assert split_items["properties"]["pieces"]["maximum"] == MAX_SPLIT_PIECES
+    assert set(schema["required"]) == {"verdict", "merge_groups", "split_segments"}
+
+
+def test_apply_segmentation_review_merges_fragments_and_renumbers():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    assert segment_ids.max() == 2
+
+    review = {"verdict": "adjust", "merge_groups": [[1, 2]], "split_segments": []}
+    merged_ids, adjustments = _apply_segmentation_review(voxels, segment_ids, review)
+
+    assert set(np.unique(merged_ids).tolist()) == {1}
+    assert adjustments == [{"action": "merge", "segment_ids": [1, 2], "into": 1}]
+
+
+def test_apply_segmentation_review_splits_a_segment_deterministically():
+    voxels = _two_part_model()
+    # Force the head and body into one segment, as an over-eager budget would.
+    segment_ids = _segment_voxels(voxels, max_segments=2)
+    review = {
+        "verdict": "adjust",
+        "merge_groups": [[1, 2]],
+        "split_segments": [{"segment_id": 1, "pieces": 2, "reason": "head and body"}],
+    }
+    new_ids, adjustments = _apply_segmentation_review(voxels, segment_ids, review)
+
+    assert [adjustment["action"] for adjustment in adjustments] == ["merge", "split"]
+    assert new_ids.max() == 2
+    body = _segments_of(voxels, new_ids, lambda x, y, z: z < 6)
+    head = _segments_of(voxels, new_ids, lambda x, y, z: z >= 6)
+    assert len(body) == 1 and len(head) == 1 and body != head
+    # Renumbered 1..N by descending size: the body is the larger part.
+    assert body == {1}
+
+
+def test_apply_segmentation_review_ignores_invalid_and_noop_reviews():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+
+    unchanged, adjustments = _apply_segmentation_review(
+        voxels, segment_ids, {"verdict": "good", "merge_groups": [], "split_segments": []}
+    )
+    assert adjustments == []
+    assert np.array_equal(unchanged, segment_ids)
+
+    review = {
+        "verdict": "adjust",
+        "merge_groups": [[1], [1, 99], "not a list", [None, "x"]],
+        "split_segments": [
+            {"segment_id": 99, "pieces": 2, "reason": "missing"},
+            {"segment_id": 1, "pieces": "not a number"},
+            "not a dict",
+        ],
+    }
+    unchanged, adjustments = _apply_segmentation_review(voxels, segment_ids, review)
+    assert adjustments == []
+    assert np.array_equal(unchanged, segment_ids)
+
+
+def test_apply_segmentation_review_skips_unsplittable_segments():
+    voxels = _block((0, 4), (0, 4), (0, 4), (10, 20, 30))
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    review = {
+        "verdict": "adjust",
+        "merge_groups": [],
+        "split_segments": [{"segment_id": 1, "pieces": 2, "reason": "uniform cube"}],
+    }
+    new_ids, adjustments = _apply_segmentation_review(voxels, segment_ids, review)
+    assert adjustments == []
+    assert np.array_equal(new_ids, segment_ids)

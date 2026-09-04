@@ -1581,22 +1581,26 @@ export default function GeneratedModel() {
     setLlmEditError(null);
 
     try {
-      let referenceImageUrl = processedImageUrl;
-      if (!referenceImageUrl) {
-        const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
-        referenceImageUrl = generation.processed_image_url || generation.external_image_url;
-        if (generation.processed_image_url) {
-          setProcessedImageUrl(generation.processed_image_url);
+      // Give the LLM every available reference image (processed + original) so
+      // it can cross-check the segmentation and colors between them.
+      const referenceImageUrls: string[] = processedImageUrl ? [processedImageUrl] : [];
+      const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
+      for (const url of [generation.processed_image_url, generation.external_image_url]) {
+        if (url && !referenceImageUrls.includes(url)) {
+          referenceImageUrls.push(url);
         }
       }
+      if (!processedImageUrl && generation.processed_image_url) {
+        setProcessedImageUrl(generation.processed_image_url);
+      }
 
-      if (!referenceImageUrl) {
+      if (referenceImageUrls.length === 0) {
         throw new Error('No reference image found for this generation');
       }
 
       const llmResponse = await LlmRenderApiService.llmRender(
         xyzrgbUrl,
-        referenceImageUrl,
+        referenceImageUrls,
         'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
         accessToken || undefined
       );
