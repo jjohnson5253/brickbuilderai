@@ -91,7 +91,10 @@ The model is first split server-side into up to `max_segments` (default 16) cont
 segments. Splitting combines colour structure (clustered in CIELAB with lightness
 down-weighted, so shading does not split a part) with geometry (a distance-transform
 watershed that separates thick cores joined by thin necks, so same-coloured parts such as
-a head and torso still split). A labelled multi-view preview of those
+a head and torso still split). Small high-contrast features (eyes, mouth, buttons, logos,
+jewelry, shirt patterns) are protected from speckle removal, and same-coloured pieces of
+one feature (both eyes, all buttons) share a single segment; the scene summary flags these
+with `is_detail` and `island_count`. A labelled multi-view preview of those
 segments plus the reference image is sent to OpenAI, which returns one colour per segment.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
 

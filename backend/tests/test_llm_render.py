@@ -10,12 +10,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.requests.llmRender import (
     SEGMENT_PALETTE,
+    VIEWS,
     _apply_assignments,
     _assignment_schema,
     _build_scene_summary,
     _build_voxel_preview_data_url,
     _geometric_regions,
+    _load_font,
+    _perceptual_colors,
     _project_segments,
+    _quantize_colors,
+    _render_view_tile,
     _rgb_to_lab,
     _segment_voxels,
     _voxel_arrays,
@@ -59,6 +64,61 @@ def _segments_of(voxels, segment_ids, predicate):
     coords, _ = _voxel_arrays(voxels)
     mask = np.array([predicate(x, y, z) for x, y, z in coords.tolist()])
     return set(segment_ids[mask].tolist())
+
+
+def _segments_with_color(voxels, segment_ids, color):
+    _, colors = _voxel_arrays(voxels)
+    return set(segment_ids[np.all(colors == color, axis=1)].tolist())
+
+
+BLACK = (20, 20, 20)
+MOUTH = (120, 20, 30)
+BLUE = (30, 90, 200)
+WHITE = (240, 240, 240)
+RED = (200, 30, 30)
+
+
+def _detailed_shell_figure():
+    """Hollow figure in the style of generated models: a yellow head sphere on a
+    red body, both with smooth baked shading, plus two black 2x2 eyes, a 4-voxel
+    mouth, three 2-voxel blue buttons and a 3x3 white logo. Details are 4-9 voxels
+    in a ~1000-voxel model, i.e. well below the 0.5% speckle threshold."""
+    voxels = {}
+
+    def shade(color, x, z):
+        factor = 0.7 + 0.3 * ((x + 1) / 14.0 * 0.5 + (z + 3) / 30.0 * 0.5)
+        return tuple(int(round(channel * factor)) for channel in color)
+
+    for x in range(12):
+        for y in range(8):
+            for z in range(14):
+                if x in (0, 11) or y in (0, 7) or z in (0, 13):
+                    voxels[(x, y, z)] = shade(RED, x, z)
+    cx, cy, cz, radius = 5.5, 3.5, 20, 6
+    for x in range(-1, 13):
+        for y in range(-3, 11):
+            for z in range(14, 27):
+                distance = ((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) ** 0.5
+                if radius - 1.2 <= distance <= radius:
+                    voxels[(x, y, z)] = shade(YELLOW, x, z)
+
+    def paint_front(x, z, color):
+        for y in range(-3, 11):
+            if (x, y, z) in voxels:
+                voxels[(x, y, z)] = color
+                return
+
+    for x, z in [(3, 21), (4, 21), (3, 22), (4, 22), (7, 21), (8, 21), (7, 22), (8, 22)]:
+        paint_front(x, z, BLACK)
+    for x in range(4, 8):
+        paint_front(x, 18, MOUTH)
+    for z in (4, 7, 10):
+        voxels[(5, 0, z)] = BLUE
+        voxels[(6, 0, z)] = BLUE
+    for x in range(7, 10):
+        for z in range(8, 11):
+            voxels[(x, 0, z)] = WHITE
+    return [{"x": x, "y": y, "z": z, "r": c[0], "g": c[1], "b": c[2]} for (x, y, z), c in voxels.items()]
 
 
 def _two_part_model():
@@ -194,6 +254,98 @@ def test_segment_voxels_prefers_merging_shading_over_crossing_a_neck():
     assert _segments_of(voxels, segment_ids, lambda x, y, z: z >= 11) != _segments_of(
         voxels, segment_ids, lambda x, y, z: z < 10
     )
+
+
+def test_quantize_colors_gives_small_distinct_colors_their_own_cluster():
+    """A handful of black voxels among a thousand shaded-yellow ones carry almost
+    no weight, but must still end up in a cluster of their own."""
+    shades = np.array([(245 - i % 40, 205 - i % 40, 47) for i in range(1000)], dtype=np.float64)
+    black = np.array([BLACK] * 8, dtype=np.float64)
+    labels = _quantize_colors(_perceptual_colors(np.vstack([shades, black])), clusters=10)
+
+    black_labels = set(labels[1000:].tolist())
+    assert len(black_labels) == 1
+    assert not black_labels & set(labels[:1000].tolist())
+
+
+def test_segment_voxels_keeps_small_high_contrast_details():
+    voxels = _detailed_shell_figure()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+
+    eyes = _segments_with_color(voxels, segment_ids, BLACK)
+    mouth = _segments_with_color(voxels, segment_ids, MOUTH)
+    buttons = _segments_with_color(voxels, segment_ids, BLUE)
+    logo = _segments_with_color(voxels, segment_ids, WHITE)
+    # Each detail is exactly one segment, disconnected pieces grouped by colour.
+    assert len(eyes) == len(mouth) == len(buttons) == len(logo) == 1
+    assert len(eyes | mouth | buttons | logo) == 4
+    # ...and that segment contains nothing but the detail.
+    for detail, color in ((eyes, BLACK), (mouth, MOUTH), (buttons, BLUE), (logo, WHITE)):
+        _, colors = _voxel_arrays(voxels)
+        members = colors[segment_ids == next(iter(detail))]
+        assert np.all(members == color)
+
+
+def test_segment_voxels_sacrifices_shading_before_details_under_budget():
+    voxels = _detailed_shell_figure()
+    segment_ids = _segment_voxels(voxels, max_segments=6)
+
+    assert segment_ids.max() == 6
+    details = [
+        _segments_with_color(voxels, segment_ids, color) for color in (BLACK, MOUTH, BLUE, WHITE)
+    ]
+    assert all(len(detail) == 1 for detail in details)
+    assert len(set().union(*details)) == 4
+    head = _segments_of(voxels, segment_ids, lambda x, y, z: z >= 14)
+    body = _segments_of(voxels, segment_ids, lambda x, y, z: z < 14)
+    assert len(head - set().union(*details)) == 1
+    assert len(body - set().union(*details)) == 1
+
+
+def test_segment_voxels_absorbs_isolated_noise_voxels():
+    """Lone off-colour voxels are texture noise, not details, even when several
+    of them share a colour."""
+    voxels = _block((0, 8), (0, 8), (0, 8), YELLOW)
+    for index in (0, 77, 155, 233, 311):
+        voxels[index]["r"], voxels[index]["g"], voxels[index]["b"] = BLACK
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    assert segment_ids.max() == 1
+
+
+def test_build_scene_summary_flags_details_and_island_counts():
+    voxels = _detailed_shell_figure()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    summary = _build_scene_summary(voxels, segment_ids)
+    by_id = {segment["id"]: segment for segment in summary["segments"]}
+
+    eyes = by_id[next(iter(_segments_with_color(voxels, segment_ids, BLACK)))]
+    buttons = by_id[next(iter(_segments_with_color(voxels, segment_ids, BLUE)))]
+    logo = by_id[next(iter(_segments_with_color(voxels, segment_ids, WHITE)))]
+    assert eyes["is_detail"] and eyes["island_count"] == 2
+    assert buttons["is_detail"] and buttons["island_count"] == 3
+    assert logo["is_detail"] and logo["island_count"] == 1
+    assert "details" in summary
+    big = max(summary["segments"], key=lambda s: s["voxel_count"])
+    assert not big["is_detail"]
+
+
+def test_render_view_tile_keeps_small_segments_visible_under_their_labels():
+    voxels = _detailed_shell_figure()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    coords, _ = _voxel_arrays(voxels)
+    front = next(view for view in VIEWS if view["name"] == "front")
+    tile = _render_view_tile(coords, segment_ids, front, 320, _load_font(15))
+    pixels = np.array(tile)
+    projection = _project_segments(coords, segment_ids, front)
+    scale = min(320 // projection.shape[1], 320 // projection.shape[0])
+
+    for detail_color in (BLACK, MOUTH, BLUE, WHITE):
+        segment_id = next(iter(_segments_with_color(voxels, segment_ids, detail_color)))
+        palette_color = np.array(SEGMENT_PALETTE[segment_id - 1])
+        visible = int(np.all(pixels == palette_color, axis=2).sum())
+        projected = int((projection == segment_id).sum())
+        # The label must sit beside the detail, leaving most of it uncovered.
+        assert visible >= projected * scale * scale * 0.75
 
 
 def test_build_scene_summary_describes_segments_without_colors():
