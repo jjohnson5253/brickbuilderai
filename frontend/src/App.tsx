@@ -11,6 +11,8 @@ import UserDashboard from "./pages/UserDashboard"; // NEW
 import CommunityPage from "./pages/CommunityPage";
 import CompetitionsPage from "./pages/CompetitionsPage";
 import GlbToLegoPage from "./pages/GlbToLegoPage";
+import BlogIndexPage from "./pages/BlogIndexPage";
+import UsingAiToDesignLego2026Page from "./pages/UsingAiToDesignLego2026Page";
 import { AnnouncementBanner } from "./components/AnnouncementBanner";
 // import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -42,6 +44,8 @@ export default function App() {
           <Route path="/success" element={<Success />} />
           <Route path="/community" element={<CommunityPage />} />
           <Route path="/competitions" element={<CompetitionsPage />} />
+          <Route path="/blog" element={<BlogIndexPage />} />
+          <Route path="/blog/using-ai-to-design-lego-in-2026" element={<UsingAiToDesignLego2026Page />} />
 
           {/* External redirects */}
           <Route

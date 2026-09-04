@@ -393,6 +393,7 @@ async def _pipeline_worker(
     text_prompt: Optional[str] = None,
     model_option: Optional[str] = None,
     prompt_option: Optional[str] = None,
+    image_prompt: Optional[str] = None,
     edit_image: bool = False,
     stream_3d: bool = True,
 ) -> None:
@@ -453,6 +454,7 @@ async def _pipeline_worker(
                 await generate_image_from_image_streaming(
                     image_url=image_url,
                     queue=queue,
+                    edit_prompt=image_prompt,
                     model_option=model_option or "a",
                     prompt_option=prompt_option or "a",
                 )
@@ -816,6 +818,7 @@ async def run_streaming_pipeline(
     text_prompt: Optional[str] = None,
     model_option: Optional[str] = None,
     prompt_option: Optional[str] = None,
+    image_prompt: Optional[str] = None,
     edit_image: bool = False,
     stream_3d: bool = True,
 ) -> AsyncGenerator[str, None]:
@@ -854,6 +857,7 @@ async def run_streaming_pipeline(
             text_prompt=text_prompt,
             model_option=model_option,
             prompt_option=prompt_option,
+            image_prompt=image_prompt,
             edit_image=edit_image,
             stream_3d=stream_3d,
         )

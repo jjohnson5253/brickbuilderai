@@ -84,6 +84,29 @@ curl -X POST http://localhost:8002/promptEditModel \
   -d '{"generation_id": "your_generation_id_here", "edit_prompt": "make it red and add a hat"}' \
   -o edited_model_response.json
 ```
+#### /llmRender
+Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`.
+
+The model is first split server-side into up to `max_segments` (default 16) contiguous
+segments based on its existing colour structure. A labelled multi-view preview of those
+segments plus the reference image is sent to OpenAI, which returns one colour per segment.
+`applied_rules` in the response lists each segment's inferred part name, reason and colour.
+
+Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
+(default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
+```bash
+curl -X POST http://localhost:8002/llmRender \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <your DEVELOPER_API_KEY>" \
+  -d '{
+    "xyzrgb_url": "https://example.com/model.xyzrgb",
+    "reference_image_url": "https://example.com/reference.png",
+    "prompt": "match the character colors, preserving the model shape",
+    "max_segments": 16,
+    "include_preview": false
+  }' \
+  -o llm_render_response.json
+```
 #### /estimatePrice
 ```bash
 curl -X POST http://localhost:8002/estimatePrice \

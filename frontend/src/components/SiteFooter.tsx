@@ -68,6 +68,9 @@ export function SiteFooter() {
           </a>
         </div> */}
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs">
+          <Link to="/blog" className="hover:text-[#f44336] transition-colors">
+            Blog
+          </Link>
           <Link to="/glb-to-lego" className="hover:text-[#f44336] transition-colors">
             GLB to LEGO Converter
           </Link>

@@ -146,7 +146,7 @@ const LOCAL_DEV_API_KEY = import.meta.env.DEV && API_MODE === 'local'
   : undefined;
 
 export class ImageToBricksApiService {
-  static async generateBricksFromImage(imageBase64: string, voxelSize: number = 0.5, authToken?: string, modelOption: string = 'b', promptOption: string = 'a'): Promise<ImageToBricksResponse> {
+  static async generateBricksFromImage(imageBase64: string, voxelSize: number = 0.5, authToken?: string, modelOption: string = 'b', promptOption: string = 'a', prompt?: string): Promise<ImageToBricksResponse> {
     console.log(`Sending image to bricks request to backend`);
     
     if (!imageBase64) {
@@ -177,6 +177,7 @@ export class ImageToBricksApiService {
           edit_image: true,
           model_option: modelOption,
           prompt_option: promptOption,
+          prompt: prompt?.trim() || undefined,
           use_red_bricks: true
         }),
       });
@@ -241,6 +242,7 @@ export class ImageToBricksApiService {
     onEvent?: (event: StreamEvent) => void,
     stream3d: boolean = true,
     voxelizer: string = 'trimesh',
+    prompt?: string,
   ): Promise<ImageToBricksResponse> {
     console.log('[stream] Sending streaming image-to-bricks request');
 
@@ -268,6 +270,7 @@ export class ImageToBricksApiService {
         edit_image: true,
         model_option: modelOption,
         prompt_option: promptOption,
+        prompt: prompt?.trim() || undefined,
         use_red_bricks: true,
         stream: true,
         stream_3d: stream3d,

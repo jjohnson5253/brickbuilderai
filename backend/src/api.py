@@ -22,9 +22,11 @@ from .requests.partToMpd import part_to_mpd, PartToMpdRequest, PartToMpdResponse
 from .requests.ldrToMpd import ldr_to_mpd, LdrToMpdRequest, LdrToMpdResponse
 from .requests.resizeModel import resize_model, ResizeModelRequest, ResizeModelResponse
 from .requests.promptEditModel import prompt_edit_model, PromptEditModelRequest
+from .requests.llmRender import llm_render, LlmRenderRequest, LlmRenderResponse
 from .requests.createCheckoutSession import create_checkout_session, CreateCheckoutSessionRequest, CreateCheckoutSessionResponse
 from .requests.stripeWebhook import stripe_webhook, StripeWebhookRequest, StripeWebhookResponse
 from .requests.getGeneration import get_generation, GetGenerationRequest, GetGenerationResponse
+from .requests.getGenerationStats import get_generation_stats, GetGenerationStatsResponse
 from .requests.getUserGenerations import get_user_generations, GetUserGenerationsRequest, GetUserGenerationsResponse
 from .requests.getGenerationsByImage import get_generations_by_image, GetGenerationsByImageRequest, GetGenerationsByImageResponse
 from .requests.getCommunityGenerations import get_community_generations, GetCommunityGenerationsRequest, GetCommunityGenerationsResponse
@@ -58,35 +60,39 @@ app = FastAPI(
     version="1.0.0"
 )
 
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",  # Vite dev server
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",  # Vite dev server (fallback port)
+    "http://127.0.0.1:5174",
+    "http://localhost:4173",  # Vite preview
+    "http://127.0.0.1:4173",
+    "https://brickai.frlabs.dev",  # Production Vercel domain
+    "https://brickai-backend-production.up.railway.app",  # Railway production domain
+    "https://brickai-backend-staging.up.railway.app",  # Railway staging domain
+    "https://image2brick.com",  # New domain
+    "https://img2brick.com",  # New domain
+    "https://imagetobrick.com",  # New domain
+    "https://prompt2brick.com",  # New domain
+    "https://brickai-generations-viewer.vercel.app",  # Vercel viewer app
+    "https://prompt2bricks.com",  # New domain
+    "https://brickai-new-ui.vercel.app",  # New UI domain
+    "https://brickbuilder.ai",
+    "https://brickai-frontend.vercel.app",  # New UI domain
+    "https://brickbuilderai-staging.vercel.app",
+    "https://brickbuilderai-git-staging-jjohnson3700team.vercel.app",
+    "https://trybrickbuilder.com",
+]
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", 
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:5173",  # Vite dev server
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",  # Vite dev server (fallback port)
-        "http://127.0.0.1:5174",
-        "http://localhost:4173",  # Vite preview
-        "http://127.0.0.1:4173",
-        "https://brickai.frlabs.dev",  # Production Vercel domain
-        "https://brickai-backend-production.up.railway.app",  # Railway production domain
-        "https://brickai-backend-staging.up.railway.app",  # Railway staging domain
-        "https://image2brick.com",  # New domain
-        "https://img2brick.com",  # New domain
-        "https://imagetobrick.com",  # New domain
-        "https://prompt2brick.com",  # New domain
-        "https://brickai-generations-viewer.vercel.app",  # Vercel viewer app
-        "https://prompt2bricks.com",  # New domain
-        "https://brickai-new-ui.vercel.app",  # New UI domain
-        "https://brickbuilder.ai",
-        "https://brickai-frontend.vercel.app",  # New UI domain
-        "https://brickbuilderai-staging.vercel.app",
-        "https://trybrickbuilder.com",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.ngrok-free\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -101,6 +107,13 @@ if not FAL_KEY:
 else:
     # Set the FAL API key
     os.environ["FAL_KEY"] = FAL_KEY
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    logger.warning(
+        "OPENAI_API_KEY environment variable is not set. /llmRender will return "
+        "errors until OPENAI_API_KEY is configured."
+    )
 
 
 def require_fal_key():
@@ -264,6 +277,21 @@ async def prompt_edit_model_endpoint(
     return await prompt_edit_model(request, auth_info)
 
 
+@app.post("/llmRender", response_model=LlmRenderResponse)
+async def llm_render_endpoint(
+    request: LlmRenderRequest,
+    auth_info: dict = Depends(get_user_with_optional_auth),
+) -> LlmRenderResponse:
+    """
+    Recolor an xyzrgb voxel model to better match a reference image.
+
+    The endpoint fetches xyzrgb_url, summarizes the voxel shape for spatial
+    reasoning, sends that summary plus reference_image_url to OpenAI, applies
+    the returned semantic recoloring rules, and returns updated xyzrgb content.
+    """
+    return await llm_render(request, auth_info)
+
+
 @app.post("/createCheckoutSession", response_model=CreateCheckoutSessionResponse)
 async def create_checkout_session_endpoint(
     request: CreateCheckoutSessionRequest,
@@ -307,6 +335,12 @@ async def get_generation_by_id_endpoint(
     """Get generation status and data by generation ID (GET version for polling)"""
     request = GetGenerationRequest(generation_id=generation_id)
     return await get_generation(request)
+
+
+@app.get("/generation-stats", response_model=GetGenerationStatsResponse)
+async def get_generation_stats_endpoint() -> GetGenerationStatsResponse:
+    """Return aggregate counts for the public landing-page tracker."""
+    return await get_generation_stats()
 
 
 @app.post("/getUserGenerations", response_model=GetUserGenerationsResponse)

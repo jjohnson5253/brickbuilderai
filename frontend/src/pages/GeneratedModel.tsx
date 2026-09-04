@@ -28,11 +28,16 @@ import { GetPriceApiService, GetPriceResponse } from "../services/getPriceApi";
 import { ResizeScaler } from "../components/ResizeScaler";
 import { ResizeModelApiService } from "../services/resizeModelApi";
 import { PromptEditModelApiService } from "../services/promptEditModelApi";
+import { LlmRenderApiService } from "../services/llmRenderApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
+import { GetGenerationsByImageApiService, GenerationIteration } from "../services/getGenerationsByImageApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
+import { UpdateModelApiService, UpdateModelResponse } from "../services/updateModelApi";
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
+import { trackGeneratedModelAiEditClick } from "../utils/generatedModelAnalytics";
+import { getGeneratedModelPath } from "../utils/generationRoutes";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
@@ -47,6 +52,7 @@ import {
   Star,
   Loader2,
   Pencil,
+  Sparkles,
   Users,
   Github,
   ArrowLeft,
@@ -58,6 +64,11 @@ import {
   ShoppingCart,
   X,
   LayoutDashboard,
+  History,
+  ChevronUp,
+  Calendar,
+  Clock,
+  Eye,
 } from "lucide-react";
 
 interface HeaderProps {
@@ -236,6 +247,8 @@ export default function GeneratedModel() {
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
   const [editPreviewImageUrl, setEditPreviewImageUrl] = React.useState<string | null>(null);
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
+  const [isLlmEditing, setIsLlmEditing] = React.useState(false);
+  const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
   
   // Voxel editor state
   const [showVoxelEditor, setShowVoxelEditor] = React.useState(false);
@@ -313,6 +326,11 @@ export default function GeneratedModel() {
   const [isExportingVideo, setIsExportingVideo] = React.useState(false);
   const exportCaptureApiRef = React.useRef<ExportCaptureApi | null>(null);
   const exportMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const [editHistoryOpen, setEditHistoryOpen] = React.useState(false);
+  const [editHistory, setEditHistory] = React.useState<GenerationIteration[]>([]);
+  const [editHistoryLoading, setEditHistoryLoading] = React.useState(false);
+  const [editHistoryError, setEditHistoryError] = React.useState<string | null>(null);
+  const editHistoryMenuRef = React.useRef<HTMLDivElement | null>(null);
 
   const handleExportCaptureReady = React.useCallback((api: ExportCaptureApi | null) => {
     exportCaptureApiRef.current = api;
@@ -426,6 +444,9 @@ export default function GeneratedModel() {
                 if (response.external_image_url) {
                   setEditPreviewImageUrl(response.external_image_url);
                 }
+                if (response.processed_image_url) {
+                  setProcessedImageUrl(response.processed_image_url);
+                }
               }
             );
             
@@ -489,6 +510,9 @@ export default function GeneratedModel() {
           const statusResponse = await GetGenerationApiService.getGeneration(stateGenerationId);
           
           if (statusResponse.status === 'completed' && statusResponse.ldr_content) {
+            if (statusResponse.processed_image_url) {
+              setProcessedImageUrl(statusResponse.processed_image_url);
+            }
             await processCompletedGeneration(stateGenerationId, {
               generation_id: statusResponse.generation_id,
               prompt: statusResponse.prompt || stateData?.modelName || 'Your Model',
@@ -786,6 +810,141 @@ export default function GeneratedModel() {
     previewUploadWaitersRef.current.set(generationId, waiters);
   }), []);
 
+  const handleUpdatedModelStarted = React.useCallback(async (
+    response: UpdateModelResponse,
+    options: { captureVoxelPreview?: boolean; preserveEditorContent?: boolean } = {}
+  ) => {
+    if (!response.generation_id) {
+      throw new Error('No generation ID returned from update');
+    }
+
+    localStorage.setItem('lastGenerationId', response.generation_id);
+    localStorage.setItem('GENERATION_ID', response.generation_id);
+    if (!currentUser) recordAnonymousGeneration(response.generation_id);
+
+    setCurrentGenerationId(response.generation_id);
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.set('id', response.generation_id);
+    window.history.replaceState({}, '', newUrl.toString());
+
+    if (savePollingAbortRef.current) {
+      savePollingAbortRef.current.abort();
+    }
+    const abortController = new AbortController();
+    savePollingAbortRef.current = abortController;
+
+    setIsSavePolling(true);
+    setSavePollingError(null);
+
+    try {
+      const completedGeneration = await GetGenerationApiService.pollUntilComplete(
+        response.generation_id,
+        undefined,
+        undefined,
+        undefined,
+        abortController.signal
+      );
+
+      console.log('[GeneratedModel] Update polling completed:', completedGeneration.generation_id);
+
+      if (completedGeneration.ldr_content) {
+        setLdrContent(completedGeneration.ldr_content);
+        localStorage.setItem('LDR_CONTENT', completedGeneration.ldr_content);
+        localStorage.setItem('lastLdrContent', completedGeneration.ldr_content);
+      }
+
+      let newMpdContent: string | null = null;
+      if (completedGeneration.mpd_url) {
+        try {
+          const mpdResponse = await fetch(completedGeneration.mpd_url);
+          if (mpdResponse.ok) {
+            newMpdContent = await mpdResponse.text();
+          }
+        } catch (mpdError) {
+          console.warn('Failed to fetch MPD from URL:', mpdError);
+        }
+      }
+
+      if (!newMpdContent && completedGeneration.ldr_content) {
+        try {
+          const authToken = (await supabase.auth.getSession()).data.session?.access_token;
+          const mpdData = await LdrToMpdApiService.convertLdrToMpd(
+            completedGeneration.ldr_content,
+            modelName,
+            authToken
+          );
+          newMpdContent = mpdData.mpd_content;
+        } catch (mpdError) {
+          console.warn('Failed to convert LDR to MPD:', mpdError);
+        }
+      }
+
+      if (newMpdContent) {
+        previewUploadedForRef.current.delete(response.generation_id);
+        setNeedsPreviewUpload(true);
+        if (options.captureVoxelPreview) {
+          activeSavePreviewUploadRef.current = waitForPreviewUpload(response.generation_id).finally(() => {
+            activeSavePreviewUploadRef.current = null;
+          });
+          const voxelPreview = voxelCapturePreviewRef.current?.() ?? null;
+          setPreviewPngDataUrl(voxelPreview);
+        }
+        setMpdContent(newMpdContent);
+        localStorage.setItem('MPD_CONTENT', newMpdContent);
+        localStorage.setItem('lastMpdContent', newMpdContent);
+      }
+
+      if (completedGeneration.xyzrgb_url) {
+        setXyzrgbUrl(completedGeneration.xyzrgb_url);
+
+        if (!options.preserveEditorContent || !showVoxelEditor) {
+          try {
+            const xyzrgbResponse = await fetch(completedGeneration.xyzrgb_url);
+            if (xyzrgbResponse.ok) {
+              const content = await xyzrgbResponse.text();
+              setXyzrgbContent(content);
+            }
+          } catch (err) {
+            console.warn('Failed to fetch xyzrgb content:', err);
+          }
+        }
+      }
+
+      if (completedGeneration.problematic_xyzrgb_url) {
+        setProblematicXyzrgbUrl(completedGeneration.problematic_xyzrgb_url);
+
+        try {
+          const problematicResponse = await fetch(completedGeneration.problematic_xyzrgb_url);
+          if (problematicResponse.ok) {
+            const problematicContent = await problematicResponse.text();
+            setProblematicXyzrgbContent(problematicContent);
+          }
+        } catch (problematicErr) {
+          console.warn('Failed to fetch problematic xyzrgb content:', problematicErr);
+        }
+      } else {
+        setProblematicXyzrgbUrl(null);
+        setProblematicXyzrgbContent(null);
+      }
+
+      setScreenshots(null);
+      setPriceRefreshCounter(c => c + 1);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.log('[GeneratedModel] Update polling aborted (superseded by newer save)');
+        return;
+      }
+      console.error('Update polling failed:', error);
+      setSavePollingError(error instanceof Error ? error.message : 'Failed to process model update');
+      throw error;
+    } finally {
+      if (savePollingAbortRef.current === abortController) {
+        setIsSavePolling(false);
+        savePollingAbortRef.current = null;
+      }
+    }
+  }, [currentUser, modelName, showVoxelEditor, waitForPreviewUpload]);
+
   // Upload the captured preview image once every required piece of async state
   // is ready. This effect re-runs whenever any dependency changes, so it
   // correctly handles the race where the 3D viewer fires onPreviewCaptured
@@ -816,6 +975,56 @@ export default function GeneratedModel() {
     document.addEventListener('mousedown', handleDocumentClick);
     return () => document.removeEventListener('mousedown', handleDocumentClick);
   }, [exportMenuOpen]);
+
+  React.useEffect(() => {
+    setEditHistoryOpen(false);
+    setEditHistory([]);
+    setEditHistoryError(null);
+  }, [processedImageUrl]);
+
+  React.useEffect(() => {
+    if (!editHistoryOpen) return;
+
+    const handleDismiss = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
+      if (event instanceof MouseEvent && editHistoryMenuRef.current?.contains(event.target as Node)) return;
+      setEditHistoryOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleDismiss);
+    document.addEventListener('keydown', handleDismiss);
+    return () => {
+      document.removeEventListener('mousedown', handleDismiss);
+      document.removeEventListener('keydown', handleDismiss);
+    };
+  }, [editHistoryOpen]);
+
+  const handleToggleEditHistory = React.useCallback(async () => {
+    if (editHistoryOpen) {
+      setEditHistoryOpen(false);
+      return;
+    }
+
+    setEditHistoryOpen(true);
+    if (!processedImageUrl) return;
+
+    setEditHistoryLoading(true);
+    setEditHistoryError(null);
+    try {
+      const response = await GetGenerationsByImageApiService.getGenerationsByImage(
+        accessToken || undefined,
+        processedImageUrl,
+      );
+      setEditHistory([...response.generations].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      ));
+    } catch (error) {
+      console.error('Failed to load edit history:', error);
+      setEditHistoryError('Could not load edit history. Please try again.');
+    } finally {
+      setEditHistoryLoading(false);
+    }
+  }, [accessToken, editHistoryOpen, processedImageUrl]);
 
   const handleToggleCommunity = async () => {
     if (!currentGenerationId || communityToggleLoading) return;
@@ -1357,6 +1566,66 @@ export default function GeneratedModel() {
     }
   }, [editPrompt, editModelQuality, accessToken, modelName, currentGenerationId]);
 
+  const handleLlmEditModel = React.useCallback(async () => {
+    if (!currentGenerationId) {
+      setLlmEditError('No generation ID found for LLM edit');
+      return;
+    }
+
+    if (!xyzrgbUrl) {
+      setLlmEditError('No xyzrgb file found for this generation');
+      return;
+    }
+
+    setIsLlmEditing(true);
+    setLlmEditError(null);
+
+    try {
+      let referenceImageUrl = processedImageUrl;
+      if (!referenceImageUrl) {
+        const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
+        referenceImageUrl = generation.processed_image_url || generation.external_image_url;
+        if (generation.processed_image_url) {
+          setProcessedImageUrl(generation.processed_image_url);
+        }
+      }
+
+      if (!referenceImageUrl) {
+        throw new Error('No reference image found for this generation');
+      }
+
+      const llmResponse = await LlmRenderApiService.llmRender(
+        xyzrgbUrl,
+        referenceImageUrl,
+        'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
+        accessToken || undefined
+      );
+
+      setXyzrgbContent(llmResponse.xyzrgb_content);
+
+      const updateResponse = await UpdateModelApiService.updateModel(
+        currentGenerationId,
+        llmResponse.xyzrgb_content,
+        accessToken || undefined
+      );
+
+      await handleUpdatedModelStarted(updateResponse, {
+        preserveEditorContent: false,
+      });
+    } catch (error) {
+      console.error('GeneratedModel - LLM edit failed:', error);
+      setLlmEditError(error instanceof Error ? error.message : 'Failed to apply LLM edit');
+    } finally {
+      setIsLlmEditing(false);
+    }
+  }, [
+    accessToken,
+    currentGenerationId,
+    handleUpdatedModelStarted,
+    processedImageUrl,
+    xyzrgbUrl,
+  ]);
+
   // Guard an action (e.g. in-app navigation) behind the unsaved-changes modal.
   // If the voxel editor has unsaved changes, prompt the user; otherwise run immediately.
   const guardUnsavedChanges = (action: PendingExitAction) => {
@@ -1705,156 +1974,10 @@ export default function GeneratedModel() {
             resizeScaler={currentScaler}
             onResizeScalerChange={setCurrentScaler}
             onSaveSuccess={async (response) => {
-            // Store new generation ID in localStorage immediately
-            localStorage.setItem('lastGenerationId', response.generation_id);
-            if (response.generation_id) {
-              localStorage.setItem('GENERATION_ID', response.generation_id);
-              // If created while logged out, remember it so it can be claimed on login.
-              if (!currentUser) recordAnonymousGeneration(response.generation_id);
-            }
-            
-            // Update the displayed generation ID and URL immediately
-            setCurrentGenerationId(response.generation_id);
-            const newUrl = new URL(window.location.href);
-            newUrl.searchParams.set('id', response.generation_id);
-            window.history.replaceState({}, '', newUrl.toString());
-            
-            // Start polling — backend is now processing LDR asynchronously
-            
-            // Cancel any previous save polling
-            if (savePollingAbortRef.current) {
-              savePollingAbortRef.current.abort();
-            }
-            const abortController = new AbortController();
-            savePollingAbortRef.current = abortController;
-            
-            setIsSavePolling(true);
-            setSavePollingError(null);
-            
-            try {
-              // Poll until generation completes (LDR processing finishes)
-              const completedGeneration = await GetGenerationApiService.pollUntilComplete(
-                response.generation_id,
-                undefined,
-                undefined,
-                undefined,
-                abortController.signal
-              );
-              
-              console.log('[GeneratedModel] Save polling completed:', completedGeneration.generation_id);
-              
-              // Update LDR content
-              if (completedGeneration.ldr_content) {
-                setLdrContent(completedGeneration.ldr_content);
-                localStorage.setItem('LDR_CONTENT', completedGeneration.ldr_content);
-                localStorage.setItem('lastLdrContent', completedGeneration.ldr_content);
-              }
-              
-              // Get MPD content from URL or convert LDR to MPD
-              let newMpdContent: string | null = null;
-              if (completedGeneration.mpd_url) {
-                try {
-                  const mpdResponse = await fetch(completedGeneration.mpd_url);
-                  if (mpdResponse.ok) {
-                    newMpdContent = await mpdResponse.text();
-                  }
-                } catch (mpdError) {
-                  console.warn('Failed to fetch MPD from URL:', mpdError);
-                }
-              }
-              
-              if (!newMpdContent && completedGeneration.ldr_content) {
-                try {
-                  const authToken = (await supabase.auth.getSession()).data.session?.access_token;
-                  const mpdData = await LdrToMpdApiService.convertLdrToMpd(
-                    completedGeneration.ldr_content,
-                    modelName,
-                    authToken
-                  );
-                  newMpdContent = mpdData.mpd_content;
-                } catch (mpdError) {
-                  console.warn('Failed to convert LDR to MPD:', mpdError);
-                }
-              }
-              
-              if (newMpdContent) {
-                previewUploadedForRef.current.delete(response.generation_id);
-                setNeedsPreviewUpload(true);
-                activeSavePreviewUploadRef.current = waitForPreviewUpload(response.generation_id).finally(() => {
-                  activeSavePreviewUploadRef.current = null;
-                });
-                // Grab a fresh preview straight from the voxel editor scene so
-                // the user can stay in the editor — no need to exit to the 3D
-                // viewer just to capture one. The upload effect picks this up.
-                const voxelPreview = voxelCapturePreviewRef.current?.() ?? null;
-                setPreviewPngDataUrl(voxelPreview);
-                setMpdContent(newMpdContent);
-                localStorage.setItem('MPD_CONTENT', newMpdContent);
-                localStorage.setItem('lastMpdContent', newMpdContent);
-              }
-              
-              // Update xyzrgb URLs and content
-              if (completedGeneration.xyzrgb_url) {
-                setXyzrgbUrl(completedGeneration.xyzrgb_url);
-                
-                // Only update xyzrgb content if the voxel editor is NOT open.
-                // When the editor is open, it already holds the correct voxel state
-                // (the user's edits). Overwriting it would reset the editor and
-                // lose in-progress work. We still update problematic overlay below.
-                if (!showVoxelEditor) {
-                  try {
-                    const xyzrgbResponse = await fetch(completedGeneration.xyzrgb_url);
-                    if (xyzrgbResponse.ok) {
-                      const content = await xyzrgbResponse.text();
-                      setXyzrgbContent(content);
-                    }
-                  } catch (err) {
-                    console.warn('Failed to fetch xyzrgb content:', err);
-                  }
-                }
-              }
-              
-              // Update problematic xyzrgb URL and content
-              if (completedGeneration.problematic_xyzrgb_url) {
-                setProblematicXyzrgbUrl(completedGeneration.problematic_xyzrgb_url);
-                
-                try {
-                  const problematicResponse = await fetch(completedGeneration.problematic_xyzrgb_url);
-                  if (problematicResponse.ok) {
-                    const problematicContent = await problematicResponse.text();
-                    setProblematicXyzrgbContent(problematicContent);
-                  }
-                } catch (problematicErr) {
-                  console.warn('Failed to fetch problematic xyzrgb content:', problematicErr);
-                }
-              } else {
-                // Clear problematic content if no URL is returned
-                setProblematicXyzrgbUrl(null);
-                setProblematicXyzrgbContent(null);
-              }
-              
-              // Clear screenshots to regenerate with new model
-              setScreenshots(null);
-
-              // Re-trigger price fetch now that the generation is complete
-              setPriceRefreshCounter(c => c + 1);
-              
-              console.log(`Model saved successfully. New generation ID: ${response.generation_id}`);
-            } catch (error) {
-              // Ignore abort errors — means a newer save superseded this one
-              if (error instanceof DOMException && error.name === 'AbortError') {
-                console.log('[GeneratedModel] Save polling aborted (superseded by newer save)');
-                return;
-              }
-              console.error('Save polling failed:', error);
-              setSavePollingError(error instanceof Error ? error.message : 'Failed to process model after save');
-            } finally {
-              // Only clear polling state if this controller wasn't replaced
-              if (savePollingAbortRef.current === abortController) {
-                setIsSavePolling(false);
-                savePollingAbortRef.current = null;
-              }
-            }
+            await handleUpdatedModelStarted(response, {
+              captureVoxelPreview: true,
+              preserveEditorContent: true,
+            });
           }}
           />
         </div>
@@ -1953,6 +2076,140 @@ export default function GeneratedModel() {
               </div>
             )}
           </div>
+          <div ref={editHistoryMenuRef} className="absolute bottom-3 right-3 z-30">
+            {editHistoryOpen && (
+              <div
+                id="edit-history-menu"
+                role="dialog"
+                aria-label="Previous model edits"
+                className="absolute bottom-full right-0 mb-2 flex w-[calc(100vw-3rem)] max-w-sm flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white/95 text-left shadow-2xl shadow-black/25 backdrop-blur-md sm:w-96"
+                style={{
+                  maxHeight: 'max(7rem, min(22rem, calc((100vw - 2rem) * 0.6667 - 4.5rem), calc(50vh - 4.5rem)))',
+                }}
+              >
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-3.5 py-2.5 sm:px-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">Previous edits</h3>
+                    {!editHistoryLoading && !editHistoryError && (
+                      <p className="text-[11px] text-slate-500">
+                        {editHistory.length} {editHistory.length === 1 ? 'version' : 'versions'} · newest first
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditHistoryOpen(false)}
+                    aria-label="Close previous edits"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2.5 sm:p-3">
+                  {editHistoryLoading ? (
+                    <div className="flex items-center justify-center gap-2 py-6 text-xs text-slate-500">
+                      <Loader2 size={16} className="animate-spin text-[#f44336]" />
+                      Loading edits...
+                    </div>
+                  ) : editHistoryError ? (
+                    <div className="rounded-xl bg-red-50 px-3 py-4 text-center text-xs text-red-700">
+                      {editHistoryError}
+                    </div>
+                  ) : editHistory.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-slate-500">
+                      No previous edits yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {editHistory.map((edit, index) => {
+                        const isCurrentGeneration = edit.id === currentGenerationId;
+                        const isCompleted = edit.status === 'completed';
+
+                        return (
+                          <div
+                            key={edit.id}
+                            className={`rounded-xl border p-2.5 sm:p-3 ${
+                              isCurrentGeneration
+                                ? 'border-[#f44336]/60 bg-red-50'
+                                : 'border-slate-200 bg-white'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2.5">
+                              <div className="min-w-0 flex-1">
+                                <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                    Version {editHistory.length - index}
+                                  </span>
+                                  {isCurrentGeneration && (
+                                    <span className="rounded-full bg-[#f44336] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
+                                      Current
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="truncate font-mono text-[10px] text-slate-600 sm:text-[11px]" title={edit.id}>
+                                  {edit.id}
+                                </p>
+                                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-500">
+                                  <span className="inline-flex items-center gap-1">
+                                    <Calendar size={11} />
+                                    {new Date(edit.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  </span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <Clock size={11} />
+                                    {new Date(edit.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {isCompleted && !isCurrentGeneration ? (
+                                <a
+                                  href={getGeneratedModelPath(edit.id)}
+                                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700 transition-colors hover:border-[#f44336]/60 hover:text-[#f44336]"
+                                >
+                                  <Eye size={13} />
+                                  View
+                                </a>
+                              ) : isCompleted ? (
+                                <button
+                                  type="button"
+                                  disabled
+                                  className="inline-flex h-8 shrink-0 cursor-default items-center rounded-lg border border-transparent bg-transparent text-[11px] font-medium text-slate-400"
+                                >
+                                  Viewing
+                                </button>
+                              ) : (
+                                <span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[9px] font-semibold uppercase text-amber-700">
+                                  {edit.status}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              aria-controls="edit-history-menu"
+              aria-expanded={editHistoryOpen}
+              disabled={!processedImageUrl || isSavePolling}
+              onClick={() => { void handleToggleEditHistory(); }}
+              title={!processedImageUrl ? 'No edit history is available for this model' : 'View previous edits'}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-700/40 bg-slate-900/85 px-3 py-2 text-xs font-semibold text-white shadow-lg shadow-black/30 backdrop-blur-sm transition-all duration-150 hover:scale-[1.03] hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100 sm:px-4"
+            >
+              <History size={14} />
+              <span>Previous edits</span>
+              <ChevronUp
+                size={13}
+                className={`transition-transform duration-200 ${editHistoryOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </div>
           <div className="absolute inset-0">
             {isSavePolling ? (
               <div className="flex items-center justify-center h-full bg-slate-50">
@@ -2020,8 +2277,32 @@ export default function GeneratedModel() {
             </p>
           )}
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
-            {/* Edit Model button — white with grey border, turns red on hover */}
-            <button
+            <div className="flex w-full flex-col gap-3 sm:w-auto">
+              <button
+                  type="button"
+                  aria-label="LLM edit model"
+                  onClick={() => {
+                    trackGeneratedModelAiEditClick(currentGenerationId, isDemoModel);
+                    guardUnsavedChanges(() => { void handleLlmEditModel(); });
+                  }}
+                  disabled={isLlmEditing || isSavePolling || xyzrgbLoading || !xyzrgbUrl || !currentGenerationId}
+                  className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                  {isLlmEditing ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      AI editing...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} />
+                      AI edit
+                    </>
+                  )}
+              </button>
+
+              {/* Edit Model button — white with grey border, turns red on hover */}
+              <button
                 type="button"
                 aria-label="Edit model"
                 onClick={handleEditModelClick}
@@ -2047,7 +2328,8 @@ export default function GeneratedModel() {
                     {showVoxelEditor ? 'Exit Block Editor' : 'Edit'}
                   </>
                 )}
-            </button>
+              </button>
+            </div>
 
             {/* Instructions button — white with grey border, turns red on hover */}
             <button
@@ -2147,6 +2429,9 @@ export default function GeneratedModel() {
           )}
           {savePollingError && (
             <p className="text-red-500 text-sm">{savePollingError}</p>
+          )}
+          {llmEditError && (
+            <p className="text-red-500 text-sm">{llmEditError}</p>
           )}
           {communityToggleError && (
             <p className="text-red-500 text-sm">{communityToggleError}</p>
