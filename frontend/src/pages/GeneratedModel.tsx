@@ -36,6 +36,7 @@ import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
 import { UpdateModelApiService, UpdateModelResponse } from "../services/updateModelApi";
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
+import { trackGeneratedModelAiEditClick } from "../utils/generatedModelAnalytics";
 import { getGeneratedModelPath } from "../utils/generationRoutes";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
@@ -2280,19 +2281,22 @@ export default function GeneratedModel() {
               <button
                   type="button"
                   aria-label="LLM edit model"
-                  onClick={() => guardUnsavedChanges(() => { void handleLlmEditModel(); })}
+                  onClick={() => {
+                    trackGeneratedModelAiEditClick(currentGenerationId, isDemoModel);
+                    guardUnsavedChanges(() => { void handleLlmEditModel(); });
+                  }}
                   disabled={isLlmEditing || isSavePolling || xyzrgbLoading || !xyzrgbUrl || !currentGenerationId}
                   className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
               >
                   {isLlmEditing ? (
                     <>
                       <Loader2 size={16} className="animate-spin" />
-                      LLM editing...
+                      AI editing...
                     </>
                   ) : (
                     <>
                       <Sparkles size={16} />
-                      LLM edit
+                      AI edit
                     </>
                   )}
               </button>
