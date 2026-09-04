@@ -1,0 +1,217 @@
+name: Agent PR outcome review
+
+on:
+  pull_request:
+    branches: [staging]
+    types: [opened, reopened, ready_for_review, synchronize]
+
+concurrency:
+  group: agent-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login == 'copilot-swe-agent[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.body || '', '<!-- agent-role: implementer -->')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      checks: read
+      copilot-requests: write
+    outputs:
+      should_run: ${{ steps.budget.outputs.run }}
+      round: ${{ steps.budget.outputs.round }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      MAX_ROUNDS: ${{ vars.AGENT_REVIEW_MAX_ROUNDS || '3' }}
+
+    steps:
+      - name: Check review budget and duplicate SHA
+        id: budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          comments="$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100")"
+          rounds="$(jq '[.[][] | select((.body // "") | contains("<!-- outcome-review:"))] | length' <<<"$comments")"
+          duplicate="$(jq --arg marker "<!-- outcome-review:${HEAD_SHA} -->" \
+            '[.[][] | select((.body // "") | contains($marker))] | length' <<<"$comments")"
+
+          if [[ ! "$MAX_ROUNDS" =~ ^[1-9][0-9]*$ ]]; then
+            echo 'AGENT_REVIEW_MAX_ROUNDS must be a positive integer.' >&2
+            exit 1
+          fi
+
+          if (( duplicate > 0 || rounds >= MAX_ROUNDS )); then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "round=$((rounds + 1))" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the exact PR revision
+        if: steps.budget.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Restore the trusted reviewer profile from the base revision
+        if: steps.budget.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show "${BASE_SHA}:.github/agents/outcome-reviewer.agent.md" \
+            > .github/agents/outcome-reviewer.agent.md
+
+      - name: Set up Node.js
+        if: steps.budget.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Copilot CLI
+        if: steps.budget.outputs.run == 'true'
+        run: npm install --global @github/copilot@1.0.83
+
+      - name: Run the outcome reviewer
+        if: steps.budget.outputs.run == 'true'
+        shell: bash
+        env:
+          REVIEW_ROUND: ${{ steps.budget.outputs.round }}
+        run: |
+          set -euo pipefail
+          copilot --agent=outcome-reviewer --no-ask-user --allow-all-tools -s \
+            -p "Review and, when needed, improve ${PR_URL} at exact head ${HEAD_SHA}. This is review round ${REVIEW_ROUND}. Verify the Desired outcomes, unit tests, and SOLID design; consolidate justified bloat or duplication; edit the working tree; rerun verification; and follow the outcome-reviewer response contract. Do not commit or push because the publishing job handles that." \
+            > "$RUNNER_TEMP/outcome-review.md"
+
+      - name: Capture the reviewer's changes
+        if: steps.budget.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add --intent-to-add --all
+          git diff HEAD --binary --full-index > "$RUNNER_TEMP/outcome-review.patch"
+
+      - name: Save the review result and patch
+        if: steps.budget.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcome-review-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/outcome-review.md
+            ${{ runner.temp }}/outcome-review.patch
+          if-no-files-found: error
+          retention-days: 1
+
+  post-review:
+    needs: review
+    if: needs.review.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.COPILOT_ASSIGNMENT_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      MAX_ROUNDS: ${{ vars.AGENT_REVIEW_MAX_ROUNDS || '3' }}
+
+    steps:
+      - name: Require a user token for the Copilot follow-up mention
+        shell: bash
+        run: |
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo 'Add COPILOT_ASSIGNMENT_TOKEN as an Actions secret. See docs/agent-automation.md.' >&2
+            exit 1
+          fi
+
+      - name: Load the review result and patch
+        uses: actions/download-artifact@v4
+        with:
+          name: outcome-review-${{ github.run_id }}
+          path: ${{ runner.temp }}
+
+      - name: Check out the reviewed PR revision for publishing
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Apply and publish reviewer updates
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          review_file="$RUNNER_TEMP/outcome-review.md"
+          patch_file="$RUNNER_TEMP/outcome-review.patch"
+
+          if grep -q '^VERDICT: UPDATED' "$review_file"; then
+            if [[ ! -s "$patch_file" ]]; then
+              echo 'Reviewer returned UPDATED without producing a patch.' >&2
+              exit 1
+            fi
+            git apply --index "$patch_file"
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Apply automated outcome review fixes'
+            gh auth setup-git
+            git push origin "HEAD:${HEAD_REF}"
+            echo 'updated=true' >> "$GITHUB_OUTPUT"
+          elif [[ -s "$patch_file" ]]; then
+            echo 'Reviewer changed files without returning UPDATED.' >&2
+            exit 1
+          else
+            echo 'updated=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post review and request an implementation pass when needed
+        shell: bash
+        env:
+          REVIEW_ROUND: ${{ needs.review.outputs.round }}
+        run: |
+          set -euo pipefail
+          review_file="$RUNNER_TEMP/outcome-review.md"
+          comment_file="$RUNNER_TEMP/outcome-review-comment.md"
+
+          if grep -q '^VERDICT: UPDATED' "$review_file"; then
+            {
+              printf '<!-- outcome-review:%s -->\n' "$HEAD_SHA"
+              printf 'Automated outcome review updated this PR (round %s/%s). A follow-up review will run on the new commit.\n\n' "$REVIEW_ROUND" "$MAX_ROUNDS"
+              cat "$review_file"
+            } > "$comment_file"
+          elif grep -q '^VERDICT: CHANGES_REQUESTED' "$review_file"; then
+            {
+              printf '<!-- outcome-review:%s -->\n' "$HEAD_SHA"
+              printf 'Automated outcome review (round %s/%s)\n\n' "$REVIEW_ROUND" "$MAX_ROUNDS"
+              cat "$review_file"
+              printf '\n\n@copilot Please address the supported findings above, rerun verification, and update this pull request.\n'
+            } > "$comment_file"
+          elif grep -q '^VERDICT: PASS' "$review_file"; then
+            {
+              printf '<!-- outcome-review:%s -->\n' "$HEAD_SHA"
+              printf 'Automated outcome review (round %s/%s)\n\n' "$REVIEW_ROUND" "$MAX_ROUNDS"
+              cat "$review_file"
+            } > "$comment_file"
+          else
+            echo 'Reviewer did not return a valid verdict.' >&2
+            cat "$review_file" >&2
+            exit 1
+          fi
+
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$comment_file"
