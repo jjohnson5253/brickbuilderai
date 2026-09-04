@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel, validator
 from scipy import ndimage
+from skimage.segmentation import watershed
 
 from ..utils.posthog_client import track_api_call, track_error
 
@@ -32,6 +33,24 @@ COLOR_CLUSTERS = 10
 # Segments smaller than this share of the model are merged into a neighbour.
 MIN_SEGMENT_FRACTION = 0.005
 PREVIEW_TILE_SIZE = 320
+
+# Colour comparisons happen in CIELAB with lightness down-weighted, so the lit
+# and shadowed sides of one part read as similar while real hue changes do not.
+LIGHTNESS_WEIGHT = 0.5
+# Weighted-Lab distance at which two colours stop counting as "the same part".
+COLOR_TOLERANCE = 15.0
+# Geometric splitting: a part needs a core at least this many voxels from the
+# surface to seed its own region (distance-transform units).
+MIN_PART_THICKNESS = 1.5
+# Two adjacent regions merge back together when the join between them is at
+# least this fraction as thick as the thinner region (no real neck)...
+NECK_RATIO = 0.7
+# ...and the thinner region is at least this fraction as thick as the thicker
+# one (a thin limb on a thick body stays separate even without a neck).
+THICKNESS_RATIO = 0.6
+# Extra colour distance charged when merging components from different
+# geometric regions, so same-coloured parts are the last thing to be merged.
+GEOMETRY_SPLIT_PENALTY = 30.0
 
 # Distinct ID colors used only to label segments in the preview sent to the LLM.
 SEGMENT_PALETTE: List[Tuple[int, int, int]] = [
@@ -187,7 +206,155 @@ def _voxel_arrays(voxels: List[Dict[str, int]]) -> Tuple[np.ndarray, np.ndarray]
 # semantic part. We exploit that to pre-split the model into a small number of
 # contiguous segments, and then ask the LLM to label each segment rather than
 # guess coordinates.
+#
+# Colour alone fails when adjacent parts share a colour (hat on hair, arm on
+# torso), so the model is also split geometrically: a distance-transform
+# watershed finds thick "cores" and the thin necks between them. Components
+# are the intersection of colour regions and geometric regions, and the
+# merging phases prefer to merge across shading before merging across a neck.
 # ---------------------------------------------------------------------------
+
+
+def _rgb_to_lab(colors: np.ndarray) -> np.ndarray:
+    """sRGB (0-255) -> CIELAB (D65)."""
+    srgb = np.clip(colors.astype(np.float64) / 255.0, 0.0, 1.0)
+    linear = np.where(srgb <= 0.04045, srgb / 12.92, ((srgb + 0.055) / 1.055) ** 2.4)
+    matrix = np.array(
+        [
+            [0.4124564, 0.3575761, 0.1804375],
+            [0.2126729, 0.7151522, 0.0721750],
+            [0.0193339, 0.1191920, 0.9503041],
+        ]
+    )
+    xyz = linear @ matrix.T / np.array([0.95047, 1.0, 1.08883])
+    epsilon, kappa = 216.0 / 24389.0, 24389.0 / 27.0
+    f = np.where(xyz > epsilon, np.cbrt(xyz), (kappa * xyz + 16.0) / 116.0)
+    lab = np.empty_like(f)
+    lab[:, 0] = 116.0 * f[:, 1] - 16.0
+    lab[:, 1] = 500.0 * (f[:, 0] - f[:, 1])
+    lab[:, 2] = 200.0 * (f[:, 1] - f[:, 2])
+    return lab
+
+
+def _perceptual_colors(colors: np.ndarray) -> np.ndarray:
+    """Colour features used for clustering and merging: Lab with L scaled down."""
+    lab = _rgb_to_lab(colors)
+    lab[:, 0] *= LIGHTNESS_WEIGHT
+    return lab.astype(np.float32)
+
+
+def _grid_geometry(coords: np.ndarray) -> Tuple[np.ndarray, Tuple[int, ...]]:
+    origin = coords.min(0)
+    shape = tuple(int(s) for s in (coords.max(0) - origin + 1))
+    if int(np.prod(shape)) > MAX_GRID_CELLS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Voxel bounding box is too large ({shape}); cannot segment.",
+        )
+    return origin, shape
+
+
+def _basin_saddles(basins: np.ndarray, thickness: np.ndarray) -> Dict[Tuple[int, int], float]:
+    """For each pair of touching basins, the thickness of the thickest point on
+    their shared boundary (the 'saddle')."""
+    saddles: Dict[Tuple[int, int], float] = {}
+    stride = int(basins.max()) + 1
+    for axis in range(3):
+        rolled_b = np.moveaxis(basins, axis, 0)
+        rolled_t = np.moveaxis(thickness, axis, 0)
+        a = rolled_b[:-1].reshape(-1)
+        b = rolled_b[1:].reshape(-1)
+        mask = (a > 0) & (b > 0) & (a != b)
+        if not mask.any():
+            continue
+        depth = np.minimum(rolled_t[:-1].reshape(-1)[mask], rolled_t[1:].reshape(-1)[mask])
+        keys = np.minimum(a[mask], b[mask]).astype(np.int64) * stride + np.maximum(a[mask], b[mask])
+        unique_keys, inverse = np.unique(keys, return_inverse=True)
+        best = np.zeros(len(unique_keys), dtype=np.float64)
+        np.maximum.at(best, inverse.reshape(-1), depth)
+        for key, value in zip(unique_keys.tolist(), best.tolist()):
+            pair = divmod(key, stride)
+            saddles[pair] = max(saddles.get(pair, 0.0), value)
+    return saddles
+
+
+def _merge_shallow_basins(basins: np.ndarray, thickness: np.ndarray) -> np.ndarray:
+    """Undo watershed over-segmentation: repeatedly merge the pair of touching
+    basins with the weakest neck, as long as they are of similar thickness."""
+    count = int(basins.max())
+    if count < 2:
+        return basins
+    peak = {
+        index + 1: float(value)
+        for index, value in enumerate(ndimage.maximum(thickness, basins, index=np.arange(1, count + 1)))
+    }
+    saddles = _basin_saddles(basins, thickness)
+    parent = np.arange(count + 1)
+
+    while True:
+        best_pair, best_score = None, 0.0
+        for (a, b), saddle in saddles.items():
+            thin, thick = sorted((peak[a], peak[b]))
+            if thin <= 0 or saddle < NECK_RATIO * thin or thin < THICKNESS_RATIO * thick:
+                continue
+            score = saddle / thin
+            if score > best_score:
+                best_pair, best_score = (a, b), score
+        if best_pair is None:
+            break
+
+        keep, drop = best_pair
+        parent[drop] = keep
+        peak[keep] = max(peak[keep], peak.pop(drop))
+        merged: Dict[Tuple[int, int], float] = {}
+        for (p, q), saddle in saddles.items():
+            p, q = (keep if p == drop else p), (keep if q == drop else q)
+            if p == q:
+                continue
+            pair = (min(p, q), max(p, q))
+            merged[pair] = max(merged.get(pair, 0.0), saddle)
+        saddles = merged
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return int(i)
+
+    roots = np.array([find(i) for i in range(count + 1)])
+    return roots[basins]
+
+
+def _geometric_regions(coords: np.ndarray) -> np.ndarray:
+    """Split the solid into thick 'core' regions separated by necks, using a
+    watershed on the distance-to-surface field. Returns a 0-based region label
+    per voxel."""
+    origin, shape = _grid_geometry(coords)
+    local = coords - origin
+    idx = (local[:, 0], local[:, 1], local[:, 2])
+    occupancy = np.zeros(shape, dtype=bool)
+    occupancy[idx] = True
+    # Generated models are usually hollow shells; fill them so thickness means
+    # the thickness of the part, not of the shell wall.
+    solid = ndimage.binary_fill_holes(occupancy)
+
+    # Pad so voxels on the bounding-box face are correctly treated as surface.
+    thickness = ndimage.distance_transform_edt(np.pad(solid, 1))[1:-1, 1:-1, 1:-1].astype(np.float32)
+    peaks = (thickness == ndimage.maximum_filter(thickness, size=3)) & (thickness >= MIN_PART_THICKNESS)
+    markers, marker_count = ndimage.label(peaks, structure=ndimage.generate_binary_structure(3, 3))
+    if marker_count == 0:
+        return np.zeros(len(coords), dtype=np.int32)
+
+    basins = watershed(-thickness, markers, mask=solid, connectivity=1).astype(np.int32)
+
+    # Thin pieces with no core of their own (antennae, tails) become regions too.
+    unreached = solid & (basins == 0)
+    if unreached.any():
+        extra, _ = ndimage.label(unreached, structure=ndimage.generate_binary_structure(3, 1))
+        basins[unreached] = extra[unreached] + marker_count
+
+    basins = _merge_shallow_basins(basins, thickness)
+    return np.unique(basins[idx], return_inverse=True)[1].reshape(-1).astype(np.int32)
 
 
 def _two_means(points: np.ndarray, weights: np.ndarray, iterations: int = 10) -> Optional[np.ndarray]:
@@ -225,9 +392,10 @@ def _two_means(points: np.ndarray, weights: np.ndarray, iterations: int = 10) ->
 
 
 def _quantize_colors(colors: np.ndarray, clusters: int) -> np.ndarray:
-    """Bisecting k-means over RGB, weighted by how many voxels share each color.
-    Always splits the cluster with the most colour variance, so clusters are spent
-    on real colour regions rather than isolated outlier voxels."""
+    """Bisecting k-means over colour features (see _perceptual_colors), weighted
+    by how many voxels share each colour. Always splits the cluster with the most
+    variance, so clusters are spent on real colour regions rather than isolated
+    outlier voxels."""
     unique_colors, inverse, counts = np.unique(
         colors, axis=0, return_inverse=True, return_counts=True
     )
@@ -259,24 +427,18 @@ def _quantize_colors(colors: np.ndarray, clusters: int) -> np.ndarray:
 
 
 def _connected_components(
-    coords: np.ndarray, color_labels: np.ndarray
+    coords: np.ndarray, labels: np.ndarray
 ) -> Tuple[np.ndarray, int, np.ndarray]:
-    """6-connected components of voxels that share a color cluster."""
-    origin = coords.min(0)
-    shape = tuple(int(s) for s in (coords.max(0) - origin + 1))
-    if int(np.prod(shape)) > MAX_GRID_CELLS:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Voxel bounding box is too large ({shape}); cannot segment.",
-        )
+    """6-connected components of voxels that share a label."""
+    origin, shape = _grid_geometry(coords)
 
     local = coords - origin
     idx = (local[:, 0], local[:, 1], local[:, 2])
     component = np.zeros(len(coords), dtype=np.int32)
     structure = ndimage.generate_binary_structure(3, 1)
     next_id = 0
-    for label in np.unique(color_labels):
-        members = color_labels == label
+    for label in np.unique(labels):
+        members = labels == label
         mask = np.zeros(shape, dtype=bool)
         mask[idx[0][members], idx[1][members], idx[2][members]] = True
         labeled, count = ndimage.label(mask, structure=structure)
@@ -310,12 +472,17 @@ def _merge_components(
     component: np.ndarray,
     component_count: int,
     colors: np.ndarray,
+    regions: np.ndarray,
     adjacency: Dict[int, Dict[int, int]],
     max_segments: int,
     min_size: int,
 ) -> np.ndarray:
     """Merge components in two phases and return 1-based segment ids ordered by
     descending size.
+
+    `colors` are per-voxel perceptual colour features and `regions` is the
+    geometric region of each component. Merging two components from different
+    regions costs GEOMETRY_SPLIT_PENALTY on top of their colour distance.
 
     Phase 1 absorbs speckle: every component smaller than min_size joins the
     neighbour it shares the most boundary with (favouring similar colours).
@@ -326,6 +493,7 @@ def _merge_components(
     sizes = np.bincount(component, minlength=component_count).astype(np.int64)
     color_sums = np.zeros((component_count, 3), dtype=np.float64)
     np.add.at(color_sums, component, colors)
+    region_of = regions.astype(np.int64).copy()
     parent = np.arange(component_count)
     alive = set(range(component_count))
     version = [0] * component_count
@@ -336,11 +504,15 @@ def _merge_components(
     def color_distance(a: int, b: int) -> float:
         return float(np.linalg.norm(mean_color(a) - mean_color(b)))
 
+    def merge_cost(a: int, b: int) -> float:
+        penalty = 0.0 if region_of[a] == region_of[b] else GEOMETRY_SPLIT_PENALTY
+        return color_distance(a, b) + penalty
+
     def nearest_by_color(cid: int) -> Optional[int]:
         candidates = [other for other in alive if other != cid]
         if not candidates:
             return None
-        return min(candidates, key=lambda other: color_distance(cid, other))
+        return min(candidates, key=lambda other: merge_cost(cid, other))
 
     def merge(cid: int, target: int) -> None:
         parent[cid] = target
@@ -369,7 +541,7 @@ def _merge_components(
         for neighbour, shared in adjacency.get(cid, {}).items():
             if neighbour not in alive:
                 continue
-            score = shared / (1.0 + color_distance(cid, neighbour) / 48.0)
+            score = shared / (1.0 + merge_cost(cid, neighbour) / COLOR_TOLERANCE)
             if score > best_score:
                 best, best_score = neighbour, score
         target = best if best is not None else nearest_by_color(cid)
@@ -383,7 +555,7 @@ def _merge_components(
     for a in alive:
         for b in adjacency.get(a, {}):
             if a < b and b in alive:
-                pair_heap.append((color_distance(a, b), version[a], version[b], a, b))
+                pair_heap.append((merge_cost(a, b), version[a], version[b], a, b))
     heapq.heapify(pair_heap)
     while len(alive) > max_segments and pair_heap:
         _, version_a, version_b, a, b = heapq.heappop(pair_heap)
@@ -395,7 +567,7 @@ def _merge_components(
             if neighbour in alive:
                 heapq.heappush(
                     pair_heap,
-                    (color_distance(target, neighbour), version[target], version[neighbour], target, neighbour),
+                    (merge_cost(target, neighbour), version[target], version[neighbour], target, neighbour),
                 )
 
     # Anything still over the cap consists of disconnected islands; merge by colour.
@@ -421,11 +593,18 @@ def _merge_components(
 
 def _segment_voxels(voxels: List[Dict[str, int]], max_segments: int) -> np.ndarray:
     coords, colors = _voxel_arrays(voxels)
-    color_labels = _quantize_colors(colors, COLOR_CLUSTERS)
-    component, count, grid = _connected_components(coords, color_labels)
+    features = _perceptual_colors(colors)
+    color_labels = _quantize_colors(features, COLOR_CLUSTERS)
+    region_labels = _geometric_regions(coords)
+    combined = color_labels.astype(np.int64) * (int(region_labels.max()) + 1) + region_labels
+    component, count, grid = _connected_components(coords, combined)
+    component_regions = np.zeros(count, dtype=np.int64)
+    component_regions[component] = region_labels
     adjacency = _component_adjacency(grid)
     min_size = max(3, int(round(len(voxels) * MIN_SEGMENT_FRACTION)))
-    return _merge_components(component, count, colors, adjacency, max_segments, min_size)
+    return _merge_components(
+        component, count, features, component_regions, adjacency, max_segments, min_size
+    )
 
 
 def _normalized(values: np.ndarray, low: int, high: int) -> np.ndarray:

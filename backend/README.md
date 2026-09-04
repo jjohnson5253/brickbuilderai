@@ -88,7 +88,10 @@ curl -X POST http://localhost:8002/promptEditModel \
 Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`.
 
 The model is first split server-side into up to `max_segments` (default 16) contiguous
-segments based on its existing colour structure. A labelled multi-view preview of those
+segments. Splitting combines colour structure (clustered in CIELAB with lightness
+down-weighted, so shading does not split a part) with geometry (a distance-transform
+watershed that separates thick cores joined by thin necks, so same-coloured parts such as
+a head and torso still split). A labelled multi-view preview of those
 segments plus the reference image is sent to OpenAI, which returns one colour per segment.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
 
