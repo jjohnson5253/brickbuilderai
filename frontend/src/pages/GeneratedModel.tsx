@@ -36,6 +36,7 @@ import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
 import { UpdateModelApiService, UpdateModelResponse } from "../services/updateModelApi";
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
+import { getGeneratedModelPath } from "../utils/generationRoutes";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
@@ -2160,18 +2161,21 @@ export default function GeneratedModel() {
                                 </div>
                               </div>
 
-                              {isCompleted ? (
+                              {isCompleted && !isCurrentGeneration ? (
+                                <a
+                                  href={getGeneratedModelPath(edit.id)}
+                                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700 transition-colors hover:border-[#f44336]/60 hover:text-[#f44336]"
+                                >
+                                  <Eye size={13} />
+                                  View
+                                </a>
+                              ) : isCompleted ? (
                                 <button
                                   type="button"
-                                  disabled={isCurrentGeneration}
-                                  onClick={() => {
-                                    setEditHistoryOpen(false);
-                                    navigate(`/generated-model?id=${edit.id}`);
-                                  }}
-                                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-[11px] font-medium text-slate-700 transition-colors hover:border-[#f44336]/60 hover:text-[#f44336] disabled:cursor-default disabled:border-transparent disabled:bg-transparent disabled:px-0 disabled:text-slate-400"
+                                  disabled
+                                  className="inline-flex h-8 shrink-0 cursor-default items-center rounded-lg border border-transparent bg-transparent text-[11px] font-medium text-slate-400"
                                 >
-                                  {!isCurrentGeneration && <Eye size={13} />}
-                                  {isCurrentGeneration ? 'Viewing' : 'View'}
+                                  Viewing
                                 </button>
                               ) : (
                                 <span className="shrink-0 rounded-full bg-amber-100 px-2 py-1 text-[9px] font-semibold uppercase text-amber-700">
