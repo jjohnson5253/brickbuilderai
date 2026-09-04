@@ -1,0 +1,71 @@
+name: Assign new issues to a custom agent
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  assign:
+    if: >-
+      !contains(github.event.issue.body || '', '<!-- do-not-auto-assign-agent -->') &&
+      !contains(github.event.issue.assignees.*.login, 'copilot-swe-agent[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.COPILOT_ASSIGNMENT_TOKEN }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      LABELS_JSON: ${{ toJson(github.event.issue.labels) }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require a user token for cloud-agent assignment
+        shell: bash
+        run: |
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo 'Add COPILOT_ASSIGNMENT_TOKEN as an Actions secret. See docs/agent-automation.md.' >&2
+            exit 1
+          fi
+
+      - name: Resolve the labeled agent and its pinned model
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$(python3 .github/scripts/agent_config.py --labels-json "$LABELS_JSON")"
+          echo "agent=$(jq -r .agent <<<"$config")" >> "$GITHUB_OUTPUT"
+          echo "model=$(jq -r .model <<<"$config")" >> "$GITHUB_OUTPUT"
+
+      - name: Assign the issue to Copilot cloud agent
+        shell: bash
+        env:
+          CUSTOM_AGENT: ${{ steps.config.outputs.agent }}
+          AGENT_MODEL: ${{ steps.config.outputs.model }}
+        run: |
+          set -euo pipefail
+          payload="$(jq -n \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg branch "$DEFAULT_BRANCH" \
+            --arg agent "$CUSTOM_AGENT" \
+            --arg model "$AGENT_MODEL" \
+            '{
+              assignees: ["copilot-swe-agent[bot]"],
+              agent_assignment: {
+                target_repo: $repo,
+                base_branch: $branch,
+                custom_instructions: "Follow the selected custom-agent profile exactly.",
+                custom_agent: $agent,
+                model: $model
+              }
+            }')"
+
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/assignees" \
+            --input - <<<"$payload"

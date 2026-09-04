@@ -9,6 +9,12 @@ permissions:
   contents: read
 
 jobs:
+  agent-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s .github/scripts/tests -v
+
   backend:
     runs-on: ubuntu-latest
     defaults:
