@@ -37,6 +37,10 @@ export interface LlmRenderResponse {
   segment_count: number;
   model: string;
   applied_rules: LlmRenderAppliedRule[];
+  geometry_changes: {
+    added: number;
+    removed: number;
+  };
   preview_image?: string | null;
   message: string;
 }

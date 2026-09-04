@@ -2,6 +2,7 @@ import base64
 import heapq
 import json
 import logging
+import math
 import os
 import re
 from collections import defaultdict
@@ -29,6 +30,8 @@ OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_LLM_RENDER_TIMEOUT_SECONDS", "2
 
 DEFAULT_MAX_SEGMENTS = 16
 MAX_SEGMENTS_LIMIT = 24
+MAX_GEOMETRY_EDITS = 512
+MAX_GEOMETRY_EDIT_FRACTION = 0.1
 COLOR_CLUSTERS = 10
 # Ceiling for extra clusters spent on small, distinct detail colours.
 MAX_COLOR_CLUSTERS = 24
@@ -139,8 +142,9 @@ class LlmRenderResponse(BaseModel):
     segment_count: int
     model: str
     applied_rules: List[Dict[str, Any]]
+    geometry_changes: Dict[str, int]
     preview_image: Optional[str] = None
-    message: str = "Successfully recolored xyzrgb"
+    message: str = "Successfully updated xyzrgb"
 
 
 async def _fetch_text_url(url: str, max_bytes: int) -> str:
@@ -775,6 +779,13 @@ def _build_scene_summary(
         ),
         "voxel_count": len(voxels),
         "dimensions": {axis: int(high[i] - low[i] + 1) for axis, i in AXIS_INDEX.items()},
+        "bounds": {
+            axis: [int(low[i]), int(high[i])] for axis, i in AXIS_INDEX.items()
+        },
+        "geometry_edit_budget": min(
+            MAX_GEOMETRY_EDITS,
+            max(1, math.ceil(len(voxels) * MAX_GEOMETRY_EDIT_FRACTION)),
+        ),
         "segment_count": len(segments),
         "segments": segments,
     }
@@ -969,6 +980,16 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
 
 
 def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
+    coordinate = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "x": {"type": "integer"},
+            "y": {"type": "integer"},
+            "z": {"type": "integer"},
+        },
+        "required": ["x", "y", "z"],
+    }
     return {
         "type": "object",
         "additionalProperties": False,
@@ -995,8 +1016,27 @@ def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
                     "required": ["segment_id", "part", "reason", "color"],
                 },
             },
+            "geometry_edits": {
+                "type": "array",
+                "maxItems": MAX_GEOMETRY_EDITS,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "operation": {"type": "string", "enum": ["add", "remove"]},
+                        "position": coordinate,
+                        "color": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {"type": "integer", "minimum": 0, "maximum": 255},
+                        },
+                    },
+                    "required": ["operation", "position", "color"],
+                },
+            },
         },
-        "required": ["subject", "assignments"],
+        "required": ["subject", "assignments", "geometry_edits"],
     }
 
 
@@ -1006,7 +1046,7 @@ async def _call_openai_for_assignments(
     voxel_preview_image_url: str,
     prompt: Optional[str],
     model: str,
-) -> Tuple[List[Dict[str, Any]], str]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -1017,11 +1057,12 @@ async def _call_openai_for_assignments(
     segment_ids = [segment["id"] for segment in scene_summary["segments"]]
 
     system_prompt = (
-        "You recolor voxel models so they match a reference image. The model has been "
+        "You improve voxel models so they match a reference image. The model has been "
         "pre-split into numbered segments; your job is to decide which part of the "
-        "reference object each segment is, and give it that part's color. "
+        "reference object each segment is, give it that part's color, and make small "
+        "voxel-level geometry corrections where the reference clearly supports them. "
         "The reference image is the ONLY source of colors. The colors in the voxel "
-        "preview are arbitrary segment IDs, not real colors. Never change geometry. "
+        "preview are arbitrary segment IDs, not real colors. "
         "Return only JSON."
     )
     user_prompt = {
@@ -1032,7 +1073,9 @@ async def _call_openai_for_assignments(
             "colored parts in the reference image; (2) work out which preview view "
             "corresponds to the reference photo; (3) for every segment id, decide which "
             "part of the subject it is, using its position, size and shape; (4) assign "
-            "it the real-world color of that part as seen in the reference image."
+            "it the real-world color of that part as seen in the reference image; "
+            "(5) add or remove individual voxels only when needed to better match a "
+            "clear shape feature in the reference."
         ),
         "rules": [
             "Return exactly one assignment for every segment id listed in scene_summary.segments.",
@@ -1042,6 +1085,10 @@ async def _call_openai_for_assignments(
             "Small segments are usually details (eyes, buttons, logos, trim); look for matching details in the reference.",
             "Segments with is_detail=true are small high-contrast features (eyes, mouth, jewelry, buttons, logos, shirt patterns) that were kept on purpose; give them the colour of the matching detail in the reference, not the colour of the part they sit on.",
             "A segment with island_count > 1 is several matching pieces (e.g. both eyes, all buttons); colour it as that repeated feature.",
+            "Use geometry_edits for conservative corrections such as moving misplaced facial details, filling small holes, or smoothing a jagged silhouette.",
+            "To move a voxel, remove its old position and add its new position with the appropriate reference color.",
+            "Keep edit positions within one voxel of scene_summary.bounds and do not exceed scene_summary.geometry_edit_budget.",
+            "Return an empty geometry_edits array when the reference does not clearly justify a shape change.",
         ],
         "optional_user_prompt": prompt,
         "scene_summary": scene_summary,
@@ -1067,7 +1114,7 @@ async def _call_openai_for_assignments(
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "voxel_segment_colors",
+                "name": "voxel_model_updates",
                 "schema": _assignment_schema(segment_ids),
             }
         },
@@ -1121,8 +1168,11 @@ async def _call_openai_for_assignments(
     assignments = parsed.get("assignments", [])
     if not isinstance(assignments, list):
         raise HTTPException(status_code=502, detail="OpenAI assignments must be an array")
+    geometry_edits = parsed.get("geometry_edits", [])
+    if not isinstance(geometry_edits, list):
+        raise HTTPException(status_code=502, detail="OpenAI geometry_edits must be an array")
     subject = parsed.get("subject") if isinstance(parsed.get("subject"), str) else ""
-    return assignments, subject
+    return assignments, geometry_edits, subject
 
 
 # ---------------------------------------------------------------------------
@@ -1178,6 +1228,56 @@ def _apply_assignments(
     return recolored, applied
 
 
+def _apply_geometry_edits(
+    voxels: List[Dict[str, int]],
+    edits: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, int]], Dict[str, int]]:
+    by_position = {
+        (voxel["x"], voxel["y"], voxel["z"]): voxel.copy() for voxel in voxels
+    }
+    coordinates = np.array(list(by_position), dtype=np.int64)
+    low = coordinates.min(axis=0) - 1
+    high = coordinates.max(axis=0) + 1
+    budget = min(
+        MAX_GEOMETRY_EDITS,
+        max(1, math.ceil(len(voxels) * MAX_GEOMETRY_EDIT_FRACTION)),
+    )
+    added = removed = 0
+
+    for raw in edits[:budget]:
+        if not isinstance(raw, dict) or raw.get("operation") not in ("add", "remove"):
+            continue
+        position = raw.get("position")
+        if not isinstance(position, dict):
+            continue
+        values = [position.get(axis) for axis in AXIS_INDEX]
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+            continue
+        coordinate = tuple(values)
+        if any(value < low[index] or value > high[index] for index, value in enumerate(coordinate)):
+            continue
+
+        if raw["operation"] == "remove":
+            if by_position.pop(coordinate, None) is not None:
+                removed += 1
+            continue
+
+        color = _coerce_rgb(raw.get("color"))
+        if color is None or coordinate in by_position:
+            continue
+        by_position[coordinate] = {
+            "x": coordinate[0],
+            "y": coordinate[1],
+            "z": coordinate[2],
+            "r": color[0],
+            "g": color[1],
+            "b": color[2],
+        }
+        added += 1
+
+    return list(by_position.values()), {"added": added, "removed": removed}
+
+
 def _serialize_xyzrgb(voxels: List[Dict[str, int]]) -> str:
     return "\n".join(
         f"{v['x']} {v['y']} {v['z']} {v['r']} {v['g']} {v['b']}" for v in voxels
@@ -1196,7 +1296,7 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
-        assignments, subject = await _call_openai_for_assignments(
+        assignments, geometry_edits, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
             reference_image_url=request.reference_image_url,
             voxel_preview_image_url=voxel_preview_image_url,
@@ -1204,6 +1304,9 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             model=model,
         )
         recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        updated_voxels, geometry_changes = _apply_geometry_edits(
+            recolored, geometry_edits
+        )
 
         segment_count = int(segment_ids.max())
         if len(applied) < segment_count:
@@ -1218,19 +1321,24 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             user_id=user_id,
             success=True,
             model=model,
-            voxel_count=len(voxels),
+            voxel_count=len(updated_voxels),
             segment_count=segment_count,
             assignments_count=len(applied),
         )
 
         return LlmRenderResponse(
-            xyzrgb_content=_serialize_xyzrgb(recolored),
-            voxel_count=len(recolored),
+            xyzrgb_content=_serialize_xyzrgb(updated_voxels),
+            voxel_count=len(updated_voxels),
             segment_count=segment_count,
             model=model,
             applied_rules=applied,
+            geometry_changes=geometry_changes,
             preview_image=voxel_preview_image_url if request.include_preview else None,
-            message=f"Recolored {len(applied)} of {segment_count} segments"
+            message=(
+                f"Updated {len(applied)} of {segment_count} segment colors; "
+                f"added {geometry_changes['added']} and removed "
+                f"{geometry_changes['removed']} voxels"
+            )
             + (f" as '{subject}'" if subject else ""),
         )
     except HTTPException:
