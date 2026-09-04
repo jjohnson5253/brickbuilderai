@@ -24,6 +24,7 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
+      checks: read
       copilot-requests: write
     outputs:
       should_run: ${{ steps.budget.outputs.run }}

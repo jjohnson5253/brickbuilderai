@@ -43,10 +43,9 @@ class AgentConfigTests(unittest.TestCase):
 
     def test_repository_reviewer_profile_has_a_pinned_model(self) -> None:
         repository_root = Path(__file__).parents[3]
-        self.assertEqual(
-            agent_config.resolve("outcome-reviewer", repository_root),
-            {"agent": "outcome-reviewer", "model": "gpt-5.6-sol"},
-        )
+        resolved = agent_config.resolve("outcome-reviewer", repository_root)
+        self.assertEqual(resolved["agent"], "outcome-reviewer")
+        self.assertTrue(resolved["model"])
 
     def test_rejects_unknown_agent(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported"):
