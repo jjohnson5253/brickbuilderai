@@ -10,6 +10,8 @@ This repository uses two GitHub Copilot custom agents:
 The model in each `.github/agents/*.agent.md` profile is the source of truth. The
 issue workflow reads that value and also sends it explicitly to the cloud-agent
 assignment API, so an API default cannot silently choose a different model.
+New issue tasks branch from `staging`, and the automated PR review loop only runs
+for pull requests whose base branch is `staging`.
 
 ## One-time repository setup
 
@@ -47,7 +49,7 @@ When an issue is opened, `.github/workflows/assign-issue-agent.yml` selects:
 
 Add `<!-- do-not-auto-assign-agent -->` to an issue body to opt out.
 
-The PR loop only runs for same-repository PRs authored by
+The PR loop only runs for same-repository PRs targeting `staging`, authored by
 `copilot-swe-agent[bot]` whose body contains
 `<!-- agent-role: implementer -->`. That marker is required by the implementer
 profile. Fork PRs and human PRs are deliberately excluded because running an

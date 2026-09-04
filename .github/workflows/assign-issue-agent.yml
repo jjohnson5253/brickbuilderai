@@ -19,7 +19,7 @@ jobs:
       GH_TOKEN: ${{ secrets.COPILOT_ASSIGNMENT_TOKEN }}
       ISSUE_NUMBER: ${{ github.event.issue.number }}
       LABELS_JSON: ${{ toJson(github.event.issue.labels) }}
-      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      AGENT_BASE_BRANCH: staging
 
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +50,7 @@ jobs:
           set -euo pipefail
           payload="$(jq -n \
             --arg repo "$GITHUB_REPOSITORY" \
-            --arg branch "$DEFAULT_BRANCH" \
+            --arg branch "$AGENT_BASE_BRANCH" \
             --arg agent "$CUSTOM_AGENT" \
             --arg model "$AGENT_MODEL" \
             '{
