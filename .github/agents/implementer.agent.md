@@ -43,6 +43,9 @@ During implementation:
   change.
 - Never commit secrets, credentials, tokens, or environment-specific sensitive
   information.
+- Treat every commit as public open-source code. Apply secure defaults, validate
+  untrusted input, preserve authentication and authorization boundaries, and avoid
+  unnecessarily broad permissions, CORS origins, redirects, or data exposure.
 - For new frontend UI, preserve mobile and desktop usability and add PostHog events
   using the repository's existing conventions.
 
@@ -80,5 +83,6 @@ When an automated outcome review comments with `@copilot`, address every support
 finding, explain any finding you reject, run verification again, and update the
 same pull request. Do not weaken or delete tests merely to obtain a passing result.
 
-Create clear, focused commits. Reference the assigned issue in the pull request.
-Do not merge the pull request unless explicitly instructed to do so.
+Create clear, focused, security-conscious commits. Reference the assigned issue in
+the pull request. Do not merge the pull request unless explicitly instructed to do
+so.

@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from src import api
 
@@ -10,8 +11,37 @@ from src import api
 AUTH = {"user_id": "user"}
 
 
-def test_staging_vercel_deployment_is_allowed_by_cors():
-    assert "https://brickbuilderai-git-staging-jjohnson3700team.vercel.app" in api.ALLOWED_ORIGINS
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://brickbuilderai-git-jj-github-agent-workflow-jjohnson3700team.vercel.app",
+        "https://brickbuilderai-git-staging-jjohnson3700team.vercel.app",
+    ],
+)
+def test_vercel_deployments_are_allowed_by_cors(origin):
+    middleware = CORSMiddleware(
+        app=api.app,
+        allow_origins=api.ALLOWED_ORIGINS,
+        allow_origin_regex=api.ALLOWED_ORIGIN_REGEX,
+    )
+    assert middleware.is_allowed_origin(origin)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://brickbuilderai-git-staging-jjohnson3700team.vercel.app",
+        "https://brickbuilderai-git-staging-anotherteam.vercel.app",
+        "https://unrelated-jjohnson3700team.vercel.app",
+    ],
+)
+def test_untrusted_vercel_origins_are_not_allowed_by_cors(origin):
+    middleware = CORSMiddleware(
+        app=api.app,
+        allow_origins=api.ALLOWED_ORIGINS,
+        allow_origin_regex=api.ALLOWED_ORIGIN_REGEX,
+    )
+    assert not middleware.is_allowed_origin(origin)
 
 
 @pytest.mark.parametrize(
