@@ -11,10 +11,17 @@ import { GetGenerationApiService } from '../services/getGenerationApi';
 import { useAuth } from '../contexts/AuthContext';
 import { Loader2, Upload, Coins, X, Palette, ArrowLeft, LayoutDashboard } from 'lucide-react';
 import jsPDF from 'jspdf';
+import QRCode from 'qrcode';
 import posthog from 'posthog-js';
 import { SEO } from '../components/SEO';
 import { SiteFooter } from '../components/SiteFooter';
 import { ProfileMenu } from '../components/ProfileMenu';
+import {
+  buildInteractiveInstructionsUrl,
+  buildHighlightedStepMpd,
+  createInstructionSteps,
+  rebuildInstructionMpd,
+} from '../utils/instructionUtils';
 
 function Header() {
   const navigate = useNavigate();
@@ -180,78 +187,17 @@ const extractPartInfo = (mpdContent: string) => {
   return parts;
 };
 
-// Parsed MPD structure for efficient step extraction
-interface ParsedMpd {
-  lines: string[];           // All lines of the MPD
-  headerEndIndex: number;    // Index after header (where first part begins)
-  stepEndIndices: number[];  // Index after each "0 STEP" line (inclusive)
-  stepStartIndices: number[]; // Index where each step's parts begin
-  subfileStartIndex: number; // Where subfiles begin
-  headerJoined: string;      // Pre-joined header string
-  subfileJoined: string;     // Pre-joined subfile string (huge, so join once)
-}
+const addInteractiveInstructionFooters = async (pdf: jsPDF, instructionsUrl: string) => {
+  const qrCode = await QRCode.toDataURL(instructionsUrl, { margin: 1, width: 160 });
+  const pageCount = pdf.getNumberOfPages();
 
-// Parse MPD once to extract step boundaries
-const parseMpdStructure = (mpdContent: string): ParsedMpd => {
-  const lines = mpdContent.split('\n');
-  let subfileStartIndex = lines.length;
-  let headerEndIndex = 0;
-  const headerLines: string[] = [];
-  const stepEndIndices: number[] = [];
-  const stepStartIndices: number[] = [];
-  let headerComplete = false;
-  let currentStepStart = 0;
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    // Check for subfile start
-    if (line.startsWith('0 FILE') && i > 0) {
-      subfileStartIndex = i;
-      break;
-    }
-    
-    // Collect header
-    if (!headerComplete) {
-      if (line.startsWith('0 ') && !line.startsWith('0 STEP')) {
-        headerLines.push(lines[i]);
-      } else if (line.startsWith('1 ')) {
-        headerComplete = true;
-        headerEndIndex = i;
-        currentStepStart = i;
-      }
-    }
-    
-    // Track step boundaries
-    if (headerComplete && line === '0 STEP') {
-      stepStartIndices.push(currentStepStart);
-      stepEndIndices.push(i + 1); // Include the STEP line
-      currentStepStart = i + 1;
-    }
+  for (let page = 1; page <= pageCount; page++) {
+    pdf.setPage(page);
+    pdf.setFontSize(9);
+    pdf.setTextColor(71, 85, 105);
+    pdf.text('Scan for interactive 3-D instructions', 20, 286);
+    pdf.addImage(qrCode, 'PNG', 174, 274, 16, 16);
   }
-  
-  return {
-    lines,
-    headerEndIndex,
-    stepEndIndices,
-    stepStartIndices,
-    subfileStartIndex,
-    headerJoined: headerLines.join('\n'),
-    subfileJoined: lines.slice(subfileStartIndex).join('\n')
-  };
-};
-
-// Get just one step's parts from MPD (for highlighting new parts) - fast
-const getSingleStepMpd = (parsed: ParsedMpd, stepIndex: number): string => {
-  if (stepIndex >= parsed.stepStartIndices.length) return '';
-  
-  const startIdx = parsed.stepStartIndices[stepIndex];
-  const endIdx = parsed.stepEndIndices[stepIndex];
-  const stepLines = parsed.lines.slice(startIdx, endIdx).filter(line => 
-    line.trim().startsWith('1 ') || line.trim() === '0 STEP'
-  );
-  
-  return parsed.headerJoined + '\n' + stepLines.join('\n') + '\n' + parsed.subfileJoined;
 };
 
 export function InstructionsPage() {
@@ -269,7 +215,6 @@ export function InstructionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [stepInputValue, setStepInputValue] = useState('1'); // Separate state for input field
-  const [parsedMpd, setParsedMpd] = useState<ParsedMpd | null>(null);
   
   // PDF generation state
   const [pdfGenerating, setPdfGenerating] = useState(false);
@@ -338,6 +283,7 @@ export function InstructionsPage() {
           
           // Parse the LDR content
           const parsedModel = LDrawParser.parseLDRContent(ldr_content, prompt || 'Generated Model');
+          parsedModel.steps = createInstructionSteps(parsedModel.parts);
           
           setModel(parsedModel);
           setLdrContent(ldr_content);
@@ -403,6 +349,7 @@ export function InstructionsPage() {
 
       try {
         const parsedModel = LDrawParser.parseLDRContent(ldrContent, modelName);
+        parsedModel.steps = createInstructionSteps(parsedModel.parts);
         
         setModel(parsedModel);
         setLdrContent(ldrContent);
@@ -464,20 +411,15 @@ export function InstructionsPage() {
     return lines.join('\n');
   }
 
-  // Parse MPD structure once when content loads (fast - just finds indices)
-  useEffect(() => {
-    if (!mpdContent) {
-      setParsedMpd(null);
-      return;
-    }
-    setParsedMpd(parseMpdStructure(mpdContent));
-  }, [mpdContent]);
+  const instructionMpdContent = useMemo(() => {
+    if (!mpdContent || !model) return null;
+    return rebuildInstructionMpd(mpdContent, model.steps);
+  }, [mpdContent, model]);
 
-  // Compute single step MPD for parts panel (still needed for parts info display)
   const currentLastStepMpd = useMemo(() => {
-    if (!parsedMpd) return null;
-    return getSingleStepMpd(parsedMpd, currentStepIndex);
-  }, [parsedMpd, currentStepIndex]);
+    if (!mpdContent || !model?.steps[currentStepIndex]) return null;
+    return rebuildInstructionMpd(mpdContent, [model.steps[currentStepIndex]]);
+  }, [mpdContent, model, currentStepIndex]);
 
   // Camera change handler for preserving orientation
   const handleCameraChange = (newCameraState: {
@@ -522,27 +464,13 @@ export function InstructionsPage() {
   //   return () => window.removeEventListener('keydown', handleKeyDown);
   // }, [model, navigate]);
 
-  // Helper function to convert LDrawParts back to LDR format
-  const convertPartsToLdr = (parts: LDrawModel['parts'], modelName: string = 'temp_model'): string => {
-    const ldrLines = [
-      `0 ${modelName}`,
-      `0 Name: ${modelName}.ldr`,
-      `0 Author: BrickAI`,
-      '0',
-    ];
-    
-    parts.forEach(part => {
-      // Convert matrix back to LDraw format
-      const matrix = part.matrix;
-      const ldrLine = `1 ${part.colorCode} ${part.x} ${part.y} ${part.z} ${matrix.join(' ')} ${part.filename}`;
-      ldrLines.push(ldrLine);
-    });
-    
-    return ldrLines.join('\n');
-  };
-
   // Helper function to render MPD content to PNG
-  const renderMpdToPng = async (mpdContent: string, width = 400, height = 300): Promise<string> => {
+  const renderMpdToPng = async (
+    mpdContent: string,
+    width = 400,
+    height = 300,
+    cameraView: 'perspective' | 'top' = 'perspective',
+  ): Promise<string> => {
     return new Promise(async (resolve, reject) => {
       try {
         // Dynamic imports for Three.js
@@ -595,7 +523,12 @@ export function InstructionsPage() {
             // Set camera position based on model size
             const center = bbox.getCenter(new THREE.Vector3());
             controls.target.copy(center);
-            camera.position.set(-2.3, 1, 2).multiplyScalar(radius).add(center);
+            if (cameraView === 'top') {
+              camera.up.set(0, 0, -1);
+              camera.position.copy(center).add(new THREE.Vector3(0, radius * 3.6, 0));
+            } else {
+              camera.position.set(-2.3, 1, 2).multiplyScalar(radius).add(center);
+            }
             controls.update();
 
             // Render the scene
@@ -629,7 +562,7 @@ export function InstructionsPage() {
 
   // PDF Generation function
   const generatePDF = async () => {
-    if (!model) return;
+    if (!model || !instructionMpdContent) return;
 
     const pdf = new jsPDF();
     
@@ -773,51 +706,30 @@ export function InstructionsPage() {
         pdf.text(`Step ${step.stepNumber}`, 20, 30);
         
         try {
-          // Use the same API approach as the main viewer to get MPD content
-          // Generate LDR content for this step and get MPD from API
-          const stepLdrContent = convertPartsToLdr(step.parts, `step_${step.stepNumber}`);
-          const cumulativeLdrContent = convertPartsToLdr(step.cumulativeParts, `model_step_${step.stepNumber}`);
-          
-          // Get auth token
-          const authToken = (await supabase.auth.getSession()).data.session?.access_token;
-          
-          const [stepData, cumulativeData] = await Promise.all([
-            LdrToMpdApiService.convertLdrToMpd(stepLdrContent, `step_${step.stepNumber}`, authToken),
-            LdrToMpdApiService.convertLdrToMpd(cumulativeLdrContent, `model_step_${step.stepNumber}`, authToken)
-          ]);
-          
-          const stepMpdContent = stepData.mpd_content;
-          const cumulativeMpdContent = cumulativeData.mpd_content;
+          const highlightedMpdContent = buildHighlightedStepMpd(
+            instructionMpdContent,
+            model.steps,
+            i,
+          );
           
           // Parse colors from the first MPD response if we haven't already
           if (!colorMap) {
-            colorMap = parseLDrawColors(cumulativeMpdContent);
+            colorMap = parseLDrawColors(highlightedMpdContent);
           }
           
-          // Render both images
-          const [stepImage, cumulativeImage] = await Promise.all([
-            renderMpdToPng(stepMpdContent, 300, 200),
-            renderMpdToPng(cumulativeMpdContent, 300, 200)
+          const [topImage, overviewImage] = await Promise.all([
+            renderMpdToPng(highlightedMpdContent, 400, 300, 'top'),
+            renderMpdToPng(highlightedMpdContent, 400, 300),
           ]);
-          
-          // Add cumulative model image (how it looks after this step) - 25% smaller than before
-          try {
-            pdf.addImage(cumulativeImage, 'PNG', 20, 50, 80, 53); // 300x200 scaled to 80x53 (maintains 3:2 ratio)
-          } catch (imgError) {
-            console.error(`Failed to add cumulative image to PDF:`, imgError);
-            pdf.text('(Cumulative image failed to render)', 20, 90);
-          }
-          
-          // Add step parts image (parts to add in this step) with part names and quantities
-          try {
-            pdf.addImage(stepImage, 'PNG', 20, 160, 32, 21); // 300x200 scaled to 32x21 (2.5x smaller than 80x53)
-          } catch (imgError) {
-            console.error(`Failed to add step image to PDF:`, imgError);
-            pdf.text('(Step image failed to render)', 20, 170);
-          }
+
+          pdf.setFontSize(11);
+          pdf.text('Top-down layer', 20, 43);
+          pdf.text('3-D overview', 110, 43);
+          pdf.addImage(topImage, 'PNG', 20, 48, 80, 60);
+          pdf.addImage(overviewImage, 'PNG', 110, 48, 80, 60);
           
           // Show part names with quantities next to the step parts image
-          let yPos = 170; // Split the difference: (160 + 180) / 2 = 170
+          let yPos = 130;
           pdf.setFontSize(10);
           
           // Count parts in this step for quantities
@@ -842,7 +754,7 @@ export function InstructionsPage() {
               yPos = 40; // Split the difference for new pages too: (30 + 50) / 2 = 40
             }
             
-            pdf.text(`x ${quantity} ${colorName}: ${partName}`, 60, yPos);
+            pdf.text(`x ${quantity} ${colorName}: ${partName}`, 20, yPos);
             yPos += 12;
           });
           
@@ -864,6 +776,11 @@ export function InstructionsPage() {
         }
       }
       
+      await addInteractiveInstructionFooters(
+        pdf,
+        buildInteractiveInstructionsUrl(window.location.origin, generationId),
+      );
+
       // Download the PDF
       updateProgress(totalSteps, 'Finalizing PDF...');
       const modelName = model.filename ? model.filename.replace(/\.[^/.]+$/, '') : 'model';
@@ -1005,6 +922,11 @@ export function InstructionsPage() {
         yPos += 25;
       }
       
+      await addInteractiveInstructionFooters(
+        pdf,
+        buildInteractiveInstructionsUrl(window.location.origin, generationId),
+      );
+
       // Save the PDF
       updateProgress(totalSteps, 'Finalizing parts list PDF...');
       const modelName = model.filename ? model.filename.replace(/\.[^/.]+$/, '') : 'model';
@@ -1068,6 +990,7 @@ export function InstructionsPage() {
 
       // Parse the LDR content
       const parsedModel = LDrawParser.parseLDRContent(content, modelName);
+      parsedModel.steps = createInstructionSteps(parsedModel.parts);
 
       // Update all relevant state
       setModel(parsedModel);
@@ -1225,7 +1148,6 @@ export function InstructionsPage() {
               
         {/* Download and Action Buttons */}
         <div className="flex flex-wrap gap-2 sm:gap-3 mb-8">
-          {/* Download PDF button hidden
           <button
             onClick={() => {
               posthog.capture('instructions_download_full_pdf_clicked', {
@@ -1235,7 +1157,7 @@ export function InstructionsPage() {
               });
               generatePDF();
             }}
-            disabled={pdfGenerating}
+            disabled={pdfGenerating || !instructionMpdContent}
             className="px-4 py-2 rounded-full text-sm font-medium transition-all duration-200 disabled:cursor-not-allowed text-white hover:bg-[#ff6b6b] disabled:bg-slate-300 disabled:text-slate-500"
             style={{ 
               backgroundColor: pdfGenerating ? undefined : '#f44336'
@@ -1243,7 +1165,6 @@ export function InstructionsPage() {
           >
             {pdfGenerating ? 'Generating PDF...' : 'Download PDF'}
           </button>
-          */}
           {/* Download Parts List button hidden
           <button
             onClick={() => {
@@ -1320,27 +1241,51 @@ export function InstructionsPage() {
                 Step {model.steps[currentStepIndex].stepNumber}
                 </h4>
                 <div className="text-sm text-slate-600">
-                Add {model.steps[currentStepIndex].parts.length} part
+                Add {model.steps[currentStepIndex].parts.length} pieces
                 </div>
               </div>
               
               <div className="mb-4 relative">
-                {mpdContent ? (
+                {instructionMpdContent ? (
                   <>
-                    <ThreeLDRViewer 
-                    modelContent={mpdContent}
-                    modelName={``}
-                    autoRotate={false}
-                    initialCameraState={cameraState || undefined}
-                    onCameraChange={handleCameraChange}
-                    preserveOrientation={true}
-                    highlightNewParts={!showAllColors}
-                    newPartsContent={currentLastStepMpd || undefined}
-                    currentStepIndex={currentStepIndex}
-                    totalSteps={model.steps.length}
-                    showBaseplate={true}
-                    softenEdges={false}
-                    />
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                      <div>
+                        <h5 className="mb-2 text-sm font-semibold text-slate-700">Top-down layer</h5>
+                        <div className="h-[280px] overflow-hidden rounded-xl sm:h-[360px]">
+                          <ThreeLDRViewer
+                            modelContent={instructionMpdContent}
+                            modelName=""
+                            autoRotate={false}
+                            highlightNewParts={!showAllColors}
+                            newPartsContent={currentLastStepMpd || undefined}
+                            currentStepIndex={currentStepIndex}
+                            totalSteps={model.steps.length}
+                            showBaseplate={true}
+                            softenEdges={false}
+                            cameraView="top"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <h5 className="mb-2 text-sm font-semibold text-slate-700">3-D overview</h5>
+                        <div className="h-[280px] overflow-hidden rounded-xl sm:h-[360px]">
+                          <ThreeLDRViewer
+                            modelContent={instructionMpdContent}
+                            modelName=""
+                            autoRotate={false}
+                            initialCameraState={cameraState || undefined}
+                            onCameraChange={handleCameraChange}
+                            preserveOrientation={true}
+                            highlightNewParts={!showAllColors}
+                            newPartsContent={currentLastStepMpd || undefined}
+                            currentStepIndex={currentStepIndex}
+                            totalSteps={model.steps.length}
+                            showBaseplate={true}
+                            softenEdges={false}
+                          />
+                        </div>
+                      </div>
+                    </div>
                     <div className="absolute top-3 right-3 flex flex-col items-center gap-1">
                       <button
                         onClick={() => setShowAllColors(!showAllColors)}
