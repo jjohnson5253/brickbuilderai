@@ -1486,6 +1486,12 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             model=model,
         )
         recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        if len(applied) < int(segment_ids.max()):
+            logger.warning(
+                "llmRender: LLM returned %d assignments for %d segments",
+                len(applied),
+                int(segment_ids.max()),
+            )
 
         # Verification loop: show the LLM the recolored model next to the
         # reference and apply its corrections until it reports a match or the
@@ -1533,12 +1539,6 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
                     passes_remaining = 1
 
         segment_count = int(segment_ids.max())
-        if len(applied) < segment_count:
-            logger.warning(
-                "llmRender: LLM returned %d assignments for %d segments",
-                len(applied),
-                segment_count,
-            )
 
         track_api_call(
             endpoint=endpoint,
