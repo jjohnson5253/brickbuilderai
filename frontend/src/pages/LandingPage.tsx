@@ -1242,7 +1242,7 @@ function HowItWorks() {
     },
     {
       icon: Wand2,
-      title: "AI builds your model",
+      title: "BrickBuilder generates your model",
       description: "Our generative pipeline turns your idea into a buildable 3D brick model in seconds.",
     },
     {
