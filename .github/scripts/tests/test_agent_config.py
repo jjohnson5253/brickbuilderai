@@ -67,6 +67,15 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(resolved["agent"], "outcome-reviewer")
         self.assertTrue(resolved["model"])
 
+    def test_repository_agent_profiles_include_open_source_security_guidance(self) -> None:
+        repository_root = Path(__file__).parents[3]
+        profiles = repository_root / ".github" / "agents"
+
+        for agent_name in ("implementer", "outcome-reviewer"):
+            profile = (profiles / f"{agent_name}.agent.md").read_text(encoding="utf-8")
+            self.assertIn("public open-source code", profile)
+            self.assertIn("authorization", profile)
+
     def test_rejects_unknown_agent(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported"):
             agent_config.resolve("../../other", Path.cwd())
