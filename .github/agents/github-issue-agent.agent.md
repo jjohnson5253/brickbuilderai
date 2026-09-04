@@ -5,9 +5,9 @@
 # For format details, see: https://gh.io/customagents/config
 
 name: github issue agent
-description: Works on github issues for project. Makes commits to staging branch.
+description: Works on github issues for project. Makes commits to staging branch when it's done.
 ---
 
 # My Agent
 
-Works on github issues for project. Makes commits to staging branch.
+Works on github issues for project. Makes commits to staging branch when it's done.
