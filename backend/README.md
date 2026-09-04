@@ -98,8 +98,18 @@ with `is_detail` and `island_count`. A labelled multi-view preview of those
 segments plus the reference image is sent to OpenAI, which returns one colour per segment.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
 
+After the first pass the recolored model is re-rendered in its new colours and shown to the
+LLM next to the reference, which reports only the segments that are still wrong (a
+verification pass). Corrections can recolor a segment or split a segment that spans two
+differently coloured parts (split by the original colours in CIELAB, falling back to a
+spatial split); a split earns one extra pass so the new segment can be recolored. The loop
+stops early when the LLM reports a match. `verify_passes` (0 to 3, default 1; 0 disables)
+sets the pass budget and each pass is one extra OpenAI call; the response reports
+`verification_passes` and `verification_corrections`.
+
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
-(default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
+(default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`),
+`OPENAI_LLM_RENDER_VERIFY_PASSES` (default `1`).
 ```bash
 curl -X POST http://localhost:8002/llmRender \
   -H "Content-Type: application/json" \
@@ -109,6 +119,7 @@ curl -X POST http://localhost:8002/llmRender \
     "reference_image_url": "https://example.com/reference.png",
     "prompt": "match the character colors, preserving the model shape",
     "max_segments": 16,
+    "verify_passes": 1,
     "include_preview": false
   }' \
   -o llm_render_response.json

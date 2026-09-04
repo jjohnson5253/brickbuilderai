@@ -37,6 +37,8 @@ export interface LlmRenderResponse {
   segment_count: number;
   model: string;
   applied_rules: LlmRenderAppliedRule[];
+  verification_passes?: number;
+  verification_corrections?: Array<Record<string, unknown>>;
   preview_image?: string | null;
   message: string;
 }
