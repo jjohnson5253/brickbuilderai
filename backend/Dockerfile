@@ -1,12 +1,10 @@
 # Minimal Dockerfile for Railway deployment
 FROM python:3.11-slim
 
-# Install system dependencies for Open3D
+# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libx11-6 \
         libgomp1 \
-        xvfb \
         curl \
         unzip \
         && rm -rf /var/lib/apt/lists/* \
@@ -32,14 +30,8 @@ COPY . .
 # Install Python dependencies
 RUN uv sync --frozen
 
-# Note: Background removal now uses fal.ai BiRefNet v2 (GPU) instead of local rembg.
-# rembg is kept as a fallback dependency but the u2net model is no longer pre-downloaded.
-
-# Set environment variables for headless operation
-ENV DISPLAY=:99
+# Set application environment variables
 ENV PYTHONPATH=/app/src
-ENV OPEN3D_HEADLESS=1
-ENV PYOPENGL_PLATFORM=egl
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Expose port

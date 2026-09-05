@@ -11,31 +11,15 @@ from PIL import Image, ImageOps
 logger = logging.getLogger(__name__)
 
 
-# Background removal backend: "fal" (fal.ai BiRefNet v2, GPU) or "rembg" (local CPU)
-BACKGROUND_REMOVAL_BACKEND = "fal"
-
-# Module-level cache for rembg sessions to avoid reloading the model on every request
-_rembg_sessions: dict = {}
-
-
-def _get_rembg_session(model_name: str = 'u2net'):
-    """Get or create a cached rembg session."""
-    if model_name not in _rembg_sessions:
-        from rembg import new_session
-        logger.info(f"Creating rembg session for model '{model_name}' (first use, will be cached)")
-        _rembg_sessions[model_name] = new_session(model_name)
-    return _rembg_sessions[model_name]
-
-
 def remove_background_from_url(image_url: str, temp_dir: str, model_name: str = 'u2net') -> str:
     """
     Remove background from an image URL.
-    Uses fal.ai BiRefNet v2 (GPU) or local rembg (CPU) based on BACKGROUND_REMOVAL_BACKEND.
+    Uses fal.ai BiRefNet v2.
     
     Args:
         image_url: URL of the image to process
         temp_dir: Temporary directory for processing
-        model_name: rembg model to use when backend is 'rembg'
+        model_name: Retained for compatibility; unused.
     """
     import fal_client
     import numpy as np
@@ -54,28 +38,21 @@ def remove_background_from_url(image_url: str, temp_dir: str, model_name: str = 
 
         input_image = ImageOps.exif_transpose(input_image)
 
-        # --- Remove background ---
-        if BACKGROUND_REMOVAL_BACKEND == "fal":
-            # Upload data: URIs to fal.ai storage so BiRefNet can access them
-            if image_url.startswith("data:"):
-                image_url = fal_client.upload(image_bytes, "image/png")
+        # Upload data: URIs to fal.ai storage so BiRefNet can access them
+        if image_url.startswith("data:"):
+            image_url = fal_client.upload(image_bytes, "image/png")
 
-            logger.info(f"Calling fal.ai BiRefNet v2 for background removal: {image_url[:80]}...")
-            result = fal_client.subscribe(
-                "fal-ai/birefnet/v2",
-                arguments={"image_url": image_url},
-            )
-            result_url = result["image"]["url"]
-            logger.info(f"BiRefNet returned: {result_url[:80]}...")
+        logger.info(f"Calling fal.ai BiRefNet v2 for background removal: {image_url[:80]}...")
+        result = fal_client.subscribe(
+            "fal-ai/birefnet/v2",
+            arguments={"image_url": image_url},
+        )
+        result_url = result["image"]["url"]
+        logger.info(f"BiRefNet returned: {result_url[:80]}...")
 
-            resp = requests.get(result_url, timeout=30)
-            resp.raise_for_status()
-            output_image = Image.open(BytesIO(resp.content)).convert("RGBA")
-        else:
-            # Local rembg (CPU)
-            from rembg import remove
-            session = _get_rembg_session(model_name)
-            output_image = remove(input_image, session=session)
+        resp = requests.get(result_url, timeout=30)
+        resp.raise_for_status()
+        output_image = Image.open(BytesIO(resp.content)).convert("RGBA")
 
         # --- Auto-crop transparent pixels ---
         alpha = output_image.split()[-1]
@@ -109,7 +86,7 @@ def remove_background_from_url(image_url: str, temp_dir: str, model_name: str = 
                 else:
                     raise
 
-        logger.info(f"Background removed ({BACKGROUND_REMOVAL_BACKEND}). Processed: {processed_url[:80]}...")
+        logger.info(f"Background removed. Processed: {processed_url[:80]}...")
 
         try:
             os.unlink(processed_path)
@@ -118,9 +95,6 @@ def remove_background_from_url(image_url: str, temp_dir: str, model_name: str = 
 
         return processed_url
 
-    except ImportError:
-        logger.error("rembg not installed, skipping background removal")
-        return image_url
     except Exception as e:
         err_msg = str(e)
         if len(err_msg) > 200:
