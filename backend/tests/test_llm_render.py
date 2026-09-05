@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import importlib
 import json
 import sys
 from io import BytesIO
@@ -14,6 +16,7 @@ from src.requests.llmRender import (
     VIEWS,
     _apply_assignments,
     _assignment_schema,
+    _call_openai_for_assignments,
     _build_few_shot_example,
     _build_scene_summary,
     _build_voxel_preview_data_url,
@@ -21,8 +24,11 @@ from src.requests.llmRender import (
     _example_robot,
     _few_shot_enabled,
     _few_shot_messages,
+    _extract_thinking_delta,
     _geometric_regions,
     _load_font,
+    LlmRenderResponse,
+    llm_render_stream,
     _perceptual_colors,
     _project_segments,
     _quantize_colors,
@@ -407,6 +413,43 @@ def test_assignment_schema_requires_every_segment():
     assert assignments["items"]["properties"]["segment_id"]["enum"] == [1, 2, 3]
 
 
+def test_extract_thinking_delta_only_returns_reasoning_summaries():
+    assert _extract_thinking_delta(
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "delta": "I notice the torso should use red bricks.",
+        }
+    ) == "I notice the torso should use red bricks."
+    assert _extract_thinking_delta({"type": "response.output_text.delta", "delta": "private output"}) is None
+    assert _extract_thinking_delta({"type": "response.reasoning_summary_text.delta", "delta": 3}) is None
+
+
+def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
+    async def fake_llm_render(_request, _auth_info, on_thinking):
+        await on_thinking("I see separate arms and a torso.")
+        return LlmRenderResponse(
+            xyzrgb_content="0 0 0 255 0 0\n",
+            voxel_count=1,
+            segment_count=1,
+            model="test-model",
+            applied_rules=[],
+        )
+
+    module = importlib.import_module("src.requests.llmRender")
+    monkeypatch.setattr(module, "llm_render", fake_llm_render)
+
+    async def collect_events():
+        return [event async for event in llm_render_stream(object(), {})]
+
+    events = [
+        json.loads(event.removeprefix("data: "))
+        for event in asyncio.run(collect_events())
+    ]
+    assert events[0] == {"type": "thinking", "delta": "I see separate arms and a torso."}
+    assert events[1]["type"] == "result"
+    assert events[1]["data"]["xyzrgb_content"] == "0 0 0 255 0 0\n"
+
+
 def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     voxels = _two_part_model()
     segment_ids = _segment_voxels(voxels, max_segments=16)
@@ -499,3 +542,84 @@ def test_few_shot_enabled_env_toggle(monkeypatch):
         assert not _few_shot_enabled()
     monkeypatch.setenv("OPENAI_LLM_RENDER_FEW_SHOT", "true")
     assert _few_shot_enabled()
+
+
+def test_call_openai_for_assignments_keeps_few_shot_messages_while_streaming(monkeypatch):
+    module = importlib.import_module("src.requests.llmRender")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_LLM_RENDER_FEW_SHOT", "true")
+
+    captured = {}
+
+    class FakeStreamResponse:
+        def raise_for_status(self):
+            return None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def aiter_lines(self):
+            yield json.dumps({"ignored": True})
+            yield 'data: {"type":"response.reasoning_summary_text.delta","delta":"I matched the red torso first."}'
+            yield (
+                'data: {"type":"response.completed","response":{"status":"completed",'
+                '"output_text":"{\\"subject\\":\\"robot\\",\\"assignments\\":[{\\"segment_id\\":7,'
+                '\\"part\\":\\"torso\\",\\"reason\\":\\"largest red block\\",\\"color\\":[255,0,0]}]}",'
+                '"output":[]}}'
+            )
+            yield "data: [DONE]"
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            captured["timeout"] = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def stream(self, method, url, headers, json):
+            captured["method"] = method
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["payload"] = json
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", FakeAsyncClient)
+
+    thinking = []
+
+    async def on_thinking(delta):
+        thinking.append(delta)
+
+    assignments, subject = asyncio.run(
+        _call_openai_for_assignments(
+            scene_summary={"segments": [{"id": 7}]},
+            reference_image_url="https://example.com/reference.png",
+            voxel_preview_image_url="https://example.com/preview.png",
+            prompt="Use the brightest reference colors.",
+            model="test-model",
+            on_thinking=on_thinking,
+        )
+    )
+
+    assert subject == "robot"
+    assert assignments == [
+        {
+            "segment_id": 7,
+            "part": "torso",
+            "reason": "largest red block",
+            "color": [255, 0, 0],
+        }
+    ]
+    assert thinking == ["I matched the red torso first."]
+    assert captured["method"] == "POST"
+    assert captured["url"] == "https://api.openai.com/v1/responses"
+    assert captured["payload"]["stream"] is True
+    assert captured["payload"]["reasoning"]["summary"] == "auto"
+    roles = [message["role"] for message in captured["payload"]["input"]]
+    assert roles == ["system", "user", "assistant", "user", "assistant", "user"]
