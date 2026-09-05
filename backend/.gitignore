@@ -21,3 +21,5 @@ ldr-viewer
 
 # Temporary voxelization build artifacts
 tmp/
+# Coverage artifacts
+.coverage

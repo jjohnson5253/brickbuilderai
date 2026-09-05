@@ -27,6 +27,15 @@ MAX_GRID_CELLS = 60_000_000
 DEFAULT_MODEL = os.getenv("OPENAI_LLM_RENDER_MODEL", "gpt-5.6-sol")
 DEFAULT_REASONING_EFFORT = os.getenv("OPENAI_LLM_RENDER_REASONING_EFFORT", "medium")
 OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_LLM_RENDER_TIMEOUT_SECONDS", "240"))
+# Verification loop: after the first recoloring pass the model is re-rendered in
+# its new colors and shown to the LLM next to the reference, which reports the
+# segments that are still wrong. Each pass is one extra LLM call.
+MAX_VERIFY_PASSES = 3
+DEFAULT_VERIFY_PASSES = min(
+    max(int(os.getenv("OPENAI_LLM_RENDER_VERIFY_PASSES", "1")), 0), MAX_VERIFY_PASSES
+)
+# A verification split must leave at least this many voxels on each side.
+MIN_SPLIT_HALF_VOXELS = 2
 
 DEFAULT_MAX_SEGMENTS = 16
 MAX_SEGMENTS_LIMIT = 24
@@ -99,6 +108,7 @@ class LlmRenderRequest(BaseModel):
     model: Optional[str] = None
     max_segments: Optional[int] = DEFAULT_MAX_SEGMENTS
     include_preview: bool = False
+    verify_passes: Optional[int] = None
 
     @validator("xyzrgb_url", "reference_image_url")
     def validate_url(cls, value: str) -> str:
@@ -133,6 +143,14 @@ class LlmRenderRequest(BaseModel):
             raise ValueError(f"max_segments must be between 2 and {MAX_SEGMENTS_LIMIT}")
         return value
 
+    @validator("verify_passes", always=True)
+    def validate_verify_passes(cls, value: Optional[int]) -> int:
+        if value is None:
+            return DEFAULT_VERIFY_PASSES
+        if value < 0 or value > MAX_VERIFY_PASSES:
+            raise ValueError(f"verify_passes must be between 0 and {MAX_VERIFY_PASSES}")
+        return value
+
 
 class LlmRenderResponse(BaseModel):
     xyzrgb_content: str
@@ -140,6 +158,8 @@ class LlmRenderResponse(BaseModel):
     segment_count: int
     model: str
     applied_rules: List[Dict[str, Any]]
+    verification_passes: int = 0
+    verification_corrections: List[Dict[str, Any]] = []
     preview_image: Optional[str] = None
     message: str = "Successfully recolored xyzrgb"
 
@@ -713,6 +733,35 @@ def _segment_voxels(voxels: List[Dict[str, int]], max_segments: int) -> np.ndarr
     )
 
 
+def _split_segment(
+    coords: np.ndarray, features: np.ndarray, segment_ids: np.ndarray, segment_id: int
+) -> Optional[np.ndarray]:
+    """Split one segment in two so the LLM can fix an under-segmented part.
+    Splits by the original perceptual colours when they form two distinct groups,
+    otherwise falls back to a spatial split along the segment's principal axis.
+    Returns updated segment ids (the split-off piece gets max+1), or None if the
+    segment cannot be split."""
+    members = np.nonzero(segment_ids == segment_id)[0]
+    if len(members) < 2 * MIN_SPLIT_HALF_VOXELS:
+        return None
+    weights = np.ones(len(members), dtype=np.float64)
+
+    split = _two_means(features[members], weights)
+    if split is not None:
+        halves = [features[members][split == k] for k in (0, 1)]
+        contrast = float(np.linalg.norm(halves[0].mean(0) - halves[1].mean(0)))
+        if contrast < COLOR_TOLERANCE:
+            split = None
+    if split is None:
+        split = _two_means(coords[members].astype(np.float64), weights)
+    if split is None or min(int((split == 0).sum()), int((split == 1).sum())) < MIN_SPLIT_HALF_VOXELS:
+        return None
+
+    updated = segment_ids.copy()
+    updated[members[split == 1]] = int(segment_ids.max()) + 1
+    return updated
+
+
 def _normalized(values: np.ndarray, low: int, high: int) -> np.ndarray:
     if high == low:
         return np.zeros(len(values), dtype=np.float64)
@@ -793,10 +842,8 @@ def _load_font(size: int) -> ImageFont.ImageFont:
         return ImageFont.load_default()
 
 
-def _project_segments(
-    coords: np.ndarray, segment_ids: np.ndarray, view: Dict[str, Any]
-) -> np.ndarray:
-    """Return a 2D array (rows, cols) of segment ids for the visible voxel per pixel (0 = empty)."""
+def _project_visible_indices(coords: np.ndarray, view: Dict[str, Any]) -> np.ndarray:
+    """Return a 2D array (rows, cols) of voxel indices for the visible voxel per pixel (-1 = empty)."""
     low = coords.min(0)
     high = coords.max(0)
     h, v, d = AXIS_INDEX[view["h"]], AXIS_INDEX[view["v"]], AXIS_INDEX[view["d"]]
@@ -814,8 +861,19 @@ def _project_segments(
     _, first = np.unique(pixel_key[order], return_index=True)
     visible = order[first]
 
-    image = np.zeros((height, width), dtype=np.int32)
-    image[py[visible], px[visible]] = segment_ids[visible]
+    image = np.full((height, width), -1, dtype=np.int64)
+    image[py[visible], px[visible]] = visible
+    return image
+
+
+def _project_segments(
+    coords: np.ndarray, segment_ids: np.ndarray, view: Dict[str, Any]
+) -> np.ndarray:
+    """Return a 2D array (rows, cols) of segment ids for the visible voxel per pixel (0 = empty)."""
+    indices = _project_visible_indices(coords, view)
+    image = np.zeros(indices.shape, dtype=np.int32)
+    mask = indices >= 0
+    image[mask] = segment_ids[indices[mask]]
     return image
 
 
@@ -825,13 +883,23 @@ def _render_view_tile(
     view: Dict[str, Any],
     tile: int,
     font: ImageFont.ImageFont,
+    voxel_colors: Optional[np.ndarray] = None,
 ) -> Image.Image:
+    """Render one view. Segments are painted with flat ID colors, or with the
+    real per-voxel colors when `voxel_colors` (uint8 RGB per voxel) is given;
+    either way every segment is labelled with its number."""
     projection = _project_segments(coords, segment_ids, view)
     height, width = projection.shape
     scale = max(1, min(tile // width, tile // height))
 
-    palette = np.array([(255, 255, 255)] + SEGMENT_PALETTE, dtype=np.uint8)
-    rgb = palette[np.clip(projection, 0, len(SEGMENT_PALETTE))]
+    if voxel_colors is None:
+        palette = np.array([(255, 255, 255)] + SEGMENT_PALETTE, dtype=np.uint8)
+        rgb = palette[np.clip(projection, 0, len(SEGMENT_PALETTE))]
+    else:
+        indices = _project_visible_indices(coords, view)
+        rgb = np.full((height, width, 3), 255, dtype=np.uint8)
+        mask = indices >= 0
+        rgb[mask] = voxel_colors[indices[mask]]
     image = Image.fromarray(rgb, "RGB")
     if scale > 1:
         image = image.resize((width * scale, height * scale), Image.NEAREST)
@@ -885,9 +953,15 @@ def _render_view_tile(
 
 
 def _build_voxel_preview_data_url(
-    voxels: List[Dict[str, int]], segment_ids: np.ndarray
+    voxels: List[Dict[str, int]], segment_ids: np.ndarray, use_voxel_colors: bool = False
 ) -> str:
-    coords, _ = _voxel_arrays(voxels)
+    """Composite of the four labelled views. With `use_voxel_colors` the model is
+    drawn in its real colors (used to show the LLM the recolored result) instead
+    of flat segment ID colors."""
+    coords, colors = _voxel_arrays(voxels)
+    voxel_colors = (
+        np.clip(colors, 0, 255).astype(np.uint8) if use_voxel_colors else None
+    )
     tile = PREVIEW_TILE_SIZE
     title_height = 26
     gap = 10
@@ -917,14 +991,20 @@ def _build_voxel_preview_data_url(
         y = row * (tile + title_height + gap)
         draw.text((x + 4, y + 4), f"{view['name']} (camera at {view['camera']})", fill=(0, 0, 0), font=title_font)
         composite.paste(
-            _render_view_tile(coords, segment_ids, view, tile, label_font), (x, y + title_height)
+            _render_view_tile(coords, segment_ids, view, tile, label_font, voxel_colors),
+            (x, y + title_height),
         )
 
     legend_top = composite.height - legend_height + 8
     for index, segment_id in enumerate(unique_segments):
         x = 4 + (index % legend_per_row) * legend_item_width
         y = legend_top + (index // legend_per_row) * (swatch + 8)
-        color = SEGMENT_PALETTE[(segment_id - 1) % len(SEGMENT_PALETTE)]
+        if voxel_colors is None:
+            color = SEGMENT_PALETTE[(segment_id - 1) % len(SEGMENT_PALETTE)]
+        else:
+            color = tuple(
+                int(c) for c in voxel_colors[segment_ids == segment_id].mean(0).round()
+            )
         draw.rectangle([x, y, x + swatch, y + swatch], fill=color, outline=(0, 0, 0))
         draw.text((x + swatch + 3, y), str(segment_id), fill=(0, 0, 0), font=label_font)
 
@@ -1008,6 +1088,97 @@ def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
     }
 
 
+def _verification_schema(segment_ids: List[int]) -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "verdict": {"type": "string"},
+            "corrections": {
+                "type": "array",
+                "minItems": 0,
+                "maxItems": len(segment_ids),
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "segment_id": {"type": "integer", "enum": segment_ids},
+                        "action": {"type": "string", "enum": ["recolor", "split"]},
+                        "part": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "color": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {"type": "integer", "minimum": 0, "maximum": 255},
+                        },
+                    },
+                    "required": ["segment_id", "action", "part", "reason", "color"],
+                },
+            },
+        },
+        "required": ["verdict", "corrections"],
+    }
+
+
+def _require_openai_api_key() -> str:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY not configured. Set OPENAI_API_KEY and restart the backend server.",
+        )
+    return api_key
+
+
+async def _post_openai_responses(payload: Dict[str, Any], api_key: str) -> Dict[str, Any]:
+    model = payload.get("model", "")
+    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS, connect=15.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/responses",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.error("OpenAI llmRender request failed: %s", e.response.text)
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI request failed: HTTP {e.response.status_code}",
+        )
+    except httpx.TimeoutException as e:
+        logger.error(
+            "OpenAI llmRender request timed out after %ss (%s)",
+            OPENAI_TIMEOUT_SECONDS,
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"OpenAI request timed out after {OPENAI_TIMEOUT_SECONDS:.0f}s "
+                f"(model={model}, reasoning={DEFAULT_REASONING_EFFORT}). "
+                "Lower OPENAI_LLM_RENDER_REASONING_EFFORT or raise OPENAI_LLM_RENDER_TIMEOUT_SECONDS."
+            ),
+        )
+    except httpx.HTTPError as e:
+        # httpx transport errors often stringify to "", so include the type name.
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI request failed: {type(e).__name__}: {e}".rstrip(": "),
+        )
+
+    response_json = response.json()
+    if response_json.get("status") == "incomplete":
+        reason = (response_json.get("incomplete_details") or {}).get("reason", "unknown")
+        raise HTTPException(status_code=502, detail=f"OpenAI response was incomplete: {reason}")
+    return response_json
+
+
 async def _call_openai_for_assignments(
     scene_summary: Dict[str, Any],
     reference_image_url: str,
@@ -1016,12 +1187,7 @@ async def _call_openai_for_assignments(
     model: str,
     on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENAI_API_KEY not configured. Set OPENAI_API_KEY and restart the backend server.",
-        )
+    api_key = _require_openai_api_key()
 
     segment_ids = [segment["id"] for segment in scene_summary["segments"]]
 
@@ -1149,13 +1315,90 @@ async def _call_openai_for_assignments(
     if response_json.get("status") == "incomplete":
         reason = (response_json.get("incomplete_details") or {}).get("reason", "unknown")
         raise HTTPException(status_code=502, detail=f"OpenAI response was incomplete: {reason}")
-
     parsed = _extract_json_object(_extract_response_text(response_json))
     assignments = parsed.get("assignments", [])
     if not isinstance(assignments, list):
         raise HTTPException(status_code=502, detail="OpenAI assignments must be an array")
     subject = parsed.get("subject") if isinstance(parsed.get("subject"), str) else ""
     return assignments, subject
+
+
+async def _call_openai_for_verification(
+    scene_summary: Dict[str, Any],
+    reference_image_url: str,
+    recolored_preview_image_url: str,
+    current_assignments: List[Dict[str, Any]],
+    prompt: Optional[str],
+    model: str,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Show the LLM the recolored model next to the reference and ask which
+    segments are still wrong. Returns (corrections, verdict); an empty
+    corrections list means the model matches the reference."""
+    api_key = _require_openai_api_key()
+
+    segment_ids = [segment["id"] for segment in scene_summary["segments"]]
+
+    system_prompt = (
+        "You verify a voxel model that was recolored to match a reference image. "
+        "Compare the recolored model against the reference and report ONLY the "
+        "segments that are wrong. You may also request that a segment covering two "
+        "differently colored parts be split in two. Never change geometry. "
+        "Return only JSON."
+    )
+    user_prompt = {
+        "task": (
+            "Image 1 is the reference. Image 2 shows the recolored voxel model from "
+            "four cameras in its CURRENT colors; every segment is labelled with its "
+            "number (legend at the bottom shows each segment's current color). "
+            "Compare the recolored model with the reference and return a correction "
+            "for every segment whose color does not match the reference. Return an "
+            "empty corrections array if the model already matches."
+        ),
+        "rules": [
+            "Only report segments that are clearly wrong; do not restate correct segments.",
+            "action 'recolor': give the color the segment should have, taken from the reference image.",
+            "action 'split': use only when one segment clearly spans two differently colored parts of the reference. The whole segment first receives the color you give; the split-off piece gets a new segment id that you can recolor on the next pass.",
+            "To merge segments that belong to the same part, recolor them with the exact same color; there is no merge action.",
+            "Pick saturated, representative colors as they appear in the reference; do not average shadows into grey.",
+        ],
+        "current_assignments": current_assignments,
+        "optional_user_prompt": prompt,
+        "scene_summary": scene_summary,
+    }
+
+    payload = {
+        "model": model,
+        "input": [
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": system_prompt}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": json.dumps(user_prompt)},
+                    {"type": "input_image", "image_url": reference_image_url, "detail": "high"},
+                    {"type": "input_image", "image_url": recolored_preview_image_url, "detail": "high"},
+                ],
+            },
+        ],
+        "reasoning": {"effort": DEFAULT_REASONING_EFFORT},
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "voxel_segment_corrections",
+                "schema": _verification_schema(segment_ids),
+            }
+        },
+    }
+
+    response_json = await _post_openai_responses(payload, api_key)
+    parsed = _extract_json_object(_extract_response_text(response_json))
+    corrections = parsed.get("corrections", [])
+    if not isinstance(corrections, list):
+        raise HTTPException(status_code=502, detail="OpenAI corrections must be an array")
+    verdict = parsed.get("verdict") if isinstance(parsed.get("verdict"), str) else ""
+    return corrections, verdict
 
 
 # ---------------------------------------------------------------------------
@@ -1211,6 +1454,87 @@ def _apply_assignments(
     return recolored, applied
 
 
+def _current_assignment_summary(
+    voxels: List[Dict[str, int]], segment_ids: np.ndarray, part_names: Dict[int, str]
+) -> List[Dict[str, Any]]:
+    """Per-segment summary of the current state sent to the verification call."""
+    _, colors = _voxel_arrays(voxels)
+    summary = []
+    for segment_id in np.unique(segment_ids):
+        members = colors[segment_ids == segment_id]
+        current = [int(c) for c in members.mean(0).round()]
+        summary.append(
+            {
+                "segment_id": int(segment_id),
+                "part": part_names.get(int(segment_id), ""),
+                "current_color": current,
+            }
+        )
+    return summary
+
+
+def _apply_verification_corrections(
+    voxels: List[Dict[str, int]],
+    coords: np.ndarray,
+    features: np.ndarray,
+    segment_ids: np.ndarray,
+    corrections: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, int]], np.ndarray, List[Dict[str, Any]], bool]:
+    """Apply one verification pass. Recolors the reported segments, then performs
+    requested splits using the ORIGINAL perceptual colours (`features`) so the
+    split follows the source structure rather than the flat assigned colour.
+    Returns (recolored voxels, updated segment ids, applied corrections, whether
+    any split happened)."""
+    valid_ids = {int(s) for s in np.unique(segment_ids)}
+    accepted: List[Dict[str, Any]] = []
+    split_requests: List[Tuple[int, Dict[str, Any]]] = []
+    for raw in corrections:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            segment_id = int(raw.get("segment_id"))
+        except (TypeError, ValueError):
+            continue
+        if segment_id not in valid_ids:
+            continue
+        accepted.append(raw)
+        if raw.get("action") == "split":
+            split_requests.append((segment_id, raw))
+
+    recolored, applied = _apply_assignments(voxels, segment_ids, accepted)
+    applied_by_id = {entry["segment_id"]: entry for entry in applied}
+    for entry in applied:
+        entry["action"] = "recolor"
+
+    updated = segment_ids
+    split_done = False
+    for segment_id, raw in split_requests:
+        if len(np.unique(updated)) >= MAX_SEGMENTS_LIMIT:
+            logger.warning("llmRender: split of segment %d skipped, segment cap reached", segment_id)
+            break
+        result = _split_segment(coords, features, updated, segment_id)
+        if result is None:
+            logger.warning("llmRender: segment %d could not be split", segment_id)
+            continue
+        updated = result
+        split_done = True
+        entry = applied_by_id.get(segment_id)
+        if entry is None:
+            entry = {
+                "segment_id": segment_id,
+                "name": raw.get("part", f"segment {segment_id}"),
+                "reason": raw.get("reason"),
+                "color": None,
+                "changed_voxels": 0,
+            }
+            applied.append(entry)
+            applied_by_id[segment_id] = entry
+        entry["action"] = "split"
+        entry["new_segment_id"] = int(updated.max())
+
+    return recolored, updated, applied, split_done
+
+
 def _serialize_xyzrgb(voxels: List[Dict[str, int]]) -> str:
     return "\n".join(
         f"{v['x']} {v['y']} {v['z']} {v['r']} {v['g']} {v['b']}" for v in voxels
@@ -1242,14 +1566,59 @@ async def llm_render(
             on_thinking=on_thinking,
         )
         recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
-
-        segment_count = int(segment_ids.max())
-        if len(applied) < segment_count:
+        if len(applied) < int(segment_ids.max()):
             logger.warning(
                 "llmRender: LLM returned %d assignments for %d segments",
                 len(applied),
-                segment_count,
+                int(segment_ids.max()),
             )
+
+        # Verification loop: show the LLM the recolored model next to the
+        # reference and apply its corrections until it reports a match or the
+        # pass budget runs out. A split consumes a pass but earns one extra pass
+        # (within MAX_VERIFY_PASSES) so the new segment can still be recolored.
+        verify_passes = (
+            request.verify_passes if request.verify_passes is not None else DEFAULT_VERIFY_PASSES
+        )
+        verification_corrections: List[Dict[str, Any]] = []
+        passes_used = 0
+        passes_remaining = verify_passes
+        part_names = {entry["segment_id"]: entry["name"] for entry in applied}
+        if passes_remaining > 0:
+            coords, original_colors = _voxel_arrays(voxels)
+            features = _perceptual_colors(original_colors)
+        while passes_remaining > 0:
+            passes_remaining -= 1
+            passes_used += 1
+            recolored_preview_url = _build_voxel_preview_data_url(
+                recolored, segment_ids, use_voxel_colors=True
+            )
+            corrections, verdict = await _call_openai_for_verification(
+                scene_summary=scene_summary,
+                reference_image_url=request.reference_image_url,
+                recolored_preview_image_url=recolored_preview_url,
+                current_assignments=_current_assignment_summary(
+                    recolored, segment_ids, part_names
+                ),
+                prompt=request.prompt,
+                model=model,
+            )
+            if not corrections:
+                logger.info("llmRender: verification pass %d found no errors (%s)", passes_used, verdict)
+                break
+            recolored, segment_ids, pass_applied, split_done = _apply_verification_corrections(
+                recolored, coords, features, segment_ids, corrections
+            )
+            for entry in pass_applied:
+                entry["pass"] = passes_used
+                part_names[entry["segment_id"]] = entry["name"]
+            verification_corrections.extend(pass_applied)
+            if split_done:
+                scene_summary = _build_scene_summary(voxels, segment_ids)
+                if passes_remaining == 0 and passes_used < MAX_VERIFY_PASSES:
+                    passes_remaining = 1
+
+        segment_count = int(segment_ids.max())
 
         track_api_call(
             endpoint=endpoint,
@@ -1259,7 +1628,18 @@ async def llm_render(
             voxel_count=len(voxels),
             segment_count=segment_count,
             assignments_count=len(applied),
+            verification_passes=passes_used,
+            verification_corrections_count=len(verification_corrections),
         )
+
+        message = f"Recolored {len(applied)} of {segment_count} segments" + (
+            f" as '{subject}'" if subject else ""
+        )
+        if passes_used:
+            message += (
+                f"; verified in {passes_used} pass(es) with "
+                f"{len(verification_corrections)} correction(s)"
+            )
 
         return LlmRenderResponse(
             xyzrgb_content=_serialize_xyzrgb(recolored),
@@ -1267,9 +1647,10 @@ async def llm_render(
             segment_count=segment_count,
             model=model,
             applied_rules=applied,
+            verification_passes=passes_used,
+            verification_corrections=verification_corrections,
             preview_image=voxel_preview_image_url if request.include_preview else None,
-            message=f"Recolored {len(applied)} of {segment_count} segments"
-            + (f" as '{subject}'" if subject else ""),
+            message=message,
         )
     except HTTPException:
         raise

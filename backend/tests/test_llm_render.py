@@ -7,14 +7,21 @@ from io import BytesIO
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
+from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.requests import llmRender as llm_render_module
 from src.requests.llmRender import (
+    DEFAULT_VERIFY_PASSES,
+    MAX_VERIFY_PASSES,
     SEGMENT_PALETTE,
     VIEWS,
+    LlmRenderRequest,
     _apply_assignments,
+    _apply_verification_corrections,
     _assignment_schema,
     _build_scene_summary,
     _build_voxel_preview_data_url,
@@ -29,7 +36,10 @@ from src.requests.llmRender import (
     _render_view_tile,
     _rgb_to_lab,
     _segment_voxels,
+    _split_segment,
+    _verification_schema,
     _voxel_arrays,
+    llm_render,
 )
 
 
@@ -466,3 +476,226 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def test_verify_passes_validator_defaults_and_bounds():
+    base = dict(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_url="https://example.com/ref.png",
+    )
+    assert LlmRenderRequest(**base).verify_passes == DEFAULT_VERIFY_PASSES
+    assert LlmRenderRequest(**base, verify_passes=0).verify_passes == 0
+    assert LlmRenderRequest(**base, verify_passes=MAX_VERIFY_PASSES).verify_passes == MAX_VERIFY_PASSES
+    with pytest.raises(ValidationError):
+        LlmRenderRequest(**base, verify_passes=-1)
+    with pytest.raises(ValidationError):
+        LlmRenderRequest(**base, verify_passes=MAX_VERIFY_PASSES + 1)
+
+
+def test_verification_schema_allows_empty_corrections_and_split_action():
+    schema = _verification_schema([1, 2])
+    corrections = schema["properties"]["corrections"]
+    assert corrections["minItems"] == 0
+    assert corrections["maxItems"] == 2
+    item = corrections["items"]["properties"]
+    assert item["segment_id"]["enum"] == [1, 2]
+    assert item["action"]["enum"] == ["recolor", "split"]
+    assert "corrections" in schema["required"]
+
+
+def test_build_voxel_preview_data_url_with_voxel_colors_shows_real_colors():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+
+    data_url = _build_voxel_preview_data_url(voxels, segment_ids, use_voxel_colors=True)
+
+    assert data_url.startswith("data:image/png;base64,")
+    image = Image.open(BytesIO(base64.b64decode(data_url.split(",", 1)[1])))
+    colors = {color for _, color in image.getcolors(maxcolors=image.width * image.height)}
+    # The model's real colours are shown; segment ID colours are not.
+    assert (120, 60, 20) in colors
+    assert (140, 200, 90) in colors
+    assert SEGMENT_PALETTE[0] not in colors
+    assert SEGMENT_PALETTE[1] not in colors
+
+
+def test_split_segment_splits_by_original_color():
+    voxels = _block((0, 4), (0, 4), (0, 4), RED)
+    for voxel in voxels:
+        if voxel["x"] >= 2:
+            voxel["r"], voxel["g"], voxel["b"] = BLUE
+    coords, colors = _voxel_arrays(voxels)
+    features = _perceptual_colors(colors)
+    segment_ids = np.ones(len(voxels), dtype=np.int32)
+
+    updated = _split_segment(coords, features, segment_ids, 1)
+
+    assert updated is not None
+    assert set(np.unique(updated).tolist()) == {1, 2}
+    left = set(updated[coords[:, 0] < 2].tolist())
+    right = set(updated[coords[:, 0] >= 2].tolist())
+    assert len(left) == 1 and len(right) == 1 and left != right
+
+
+def test_split_segment_falls_back_to_spatial_split_for_uniform_color():
+    voxels = _block((0, 8), (0, 2), (0, 2), YELLOW)
+    coords, colors = _voxel_arrays(voxels)
+    features = _perceptual_colors(colors)
+    segment_ids = np.ones(len(voxels), dtype=np.int32)
+
+    updated = _split_segment(coords, features, segment_ids, 1)
+
+    assert updated is not None
+    assert set(np.unique(updated).tolist()) == {1, 2}
+    left = set(updated[coords[:, 0] < 4].tolist())
+    right = set(updated[coords[:, 0] >= 4].tolist())
+    assert len(left) == 1 and len(right) == 1 and left != right
+
+
+def test_split_segment_returns_none_for_tiny_segments():
+    voxels = _block((0, 3), (0, 1), (0, 1), YELLOW)
+    coords, colors = _voxel_arrays(voxels)
+    features = _perceptual_colors(colors)
+    segment_ids = np.ones(len(voxels), dtype=np.int32)
+
+    assert _split_segment(coords, features, segment_ids, 1) is None
+
+
+def test_apply_verification_corrections_recolors_splits_and_ignores_invalid():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    coords, colors = _voxel_arrays(voxels)
+    features = _perceptual_colors(colors)
+    corrections = [
+        {"segment_id": 1, "action": "recolor", "part": "body", "reason": "wrong hue", "color": [5, 6, 7]},
+        {"segment_id": 2, "action": "split", "part": "head", "reason": "two parts", "color": [9, 9, 9]},
+        {"segment_id": 42, "action": "recolor", "part": "ghost", "reason": "missing", "color": [1, 1, 1]},
+        "not a dict",
+    ]
+
+    recolored, updated, applied, split_done = _apply_verification_corrections(
+        voxels, coords, features, segment_ids, corrections
+    )
+
+    assert split_done
+    assert set(np.unique(updated).tolist()) == {1, 2, 3}
+    assert {entry["segment_id"] for entry in applied} == {1, 2}
+    by_id = {entry["segment_id"]: entry for entry in applied}
+    assert by_id[1]["action"] == "recolor"
+    assert by_id[2]["action"] == "split"
+    assert by_id[2]["new_segment_id"] == 3
+    # The split colour is applied to the whole original segment before the split.
+    body = [v for v in recolored if v["z"] < 6]
+    head = [v for v in recolored if v["z"] >= 6]
+    assert all((v["r"], v["g"], v["b"]) == (5, 6, 7) for v in body)
+    assert all((v["r"], v["g"], v["b"]) == (9, 9, 9) for v in head)
+    # The split halves partition the head; geometry is untouched.
+    assert set(updated[segment_ids == 2].tolist()) == {2, 3}
+    assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def _serialized(voxels):
+    return "\n".join(f"{v['x']} {v['y']} {v['z']} {v['r']} {v['g']} {v['b']}" for v in voxels)
+
+
+def test_llm_render_verification_loop_recolors_and_splits(monkeypatch):
+    voxels = _two_part_model()
+
+    async def fake_fetch(url, max_bytes):
+        return _serialized(voxels)
+
+    async def fake_assignments(*, scene_summary, **kwargs):
+        return (
+            [
+                {"segment_id": s["id"], "part": f"part {s['id']}", "reason": "", "color": [10, 20, 30]}
+                for s in scene_summary["segments"]
+            ],
+            "robot",
+        )
+
+    verification_calls = []
+
+    async def fake_verification(
+        *, scene_summary, recolored_preview_image_url, current_assignments, **kwargs
+    ):
+        verification_calls.append(
+            {
+                "segment_ids": [s["id"] for s in scene_summary["segments"]],
+                "preview": recolored_preview_image_url,
+                "assignments": current_assignments,
+            }
+        )
+        if len(verification_calls) == 1:
+            return (
+                [{"segment_id": 2, "action": "split", "part": "head", "reason": "spans two parts", "color": [1, 2, 3]}],
+                "head spans two parts",
+            )
+        return [], "matches reference"
+
+    monkeypatch.setattr(llm_render_module, "_fetch_text_url", fake_fetch)
+    monkeypatch.setattr(llm_render_module, "_call_openai_for_assignments", fake_assignments)
+    monkeypatch.setattr(llm_render_module, "_call_openai_for_verification", fake_verification)
+
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_url="https://example.com/ref.png",
+        verify_passes=1,
+    )
+    response = asyncio.run(llm_render(request, {"user_email": "tester@example.com"}))
+
+    # The split consumed the only budgeted pass but earned one extra pass so the
+    # new segment could still be recolored.
+    assert response.verification_passes == 2
+    assert len(verification_calls) == 2
+    assert all(c["preview"].startswith("data:image/png;base64,") for c in verification_calls)
+    # The second pass sees the segment created by the split.
+    assert verification_calls[0]["segment_ids"] == [1, 2]
+    assert verification_calls[1]["segment_ids"] == [1, 2, 3]
+    assert {a["segment_id"] for a in verification_calls[1]["assignments"]} == {1, 2, 3}
+    assert all("current_color" in a for a in verification_calls[1]["assignments"])
+
+    split_entry = next(c for c in response.verification_corrections if c["action"] == "split")
+    assert split_entry["segment_id"] == 2
+    assert split_entry["new_segment_id"] == 3
+    assert split_entry["pass"] == 1
+    assert response.segment_count == 3
+    # The whole original head segment received the split correction's colour.
+    head_rows = [
+        line.split() for line in response.xyzrgb_content.strip().splitlines() if int(line.split()[2]) >= 6
+    ]
+    assert head_rows and all(row[3:] == ["1", "2", "3"] for row in head_rows)
+    assert "verified in 2 pass(es)" in response.message
+
+
+def test_llm_render_verify_passes_zero_skips_verification(monkeypatch):
+    voxels = _two_part_model()
+
+    async def fake_fetch(url, max_bytes):
+        return _serialized(voxels)
+
+    async def fake_assignments(*, scene_summary, **kwargs):
+        return (
+            [
+                {"segment_id": s["id"], "part": f"part {s['id']}", "reason": "", "color": [10, 20, 30]}
+                for s in scene_summary["segments"]
+            ],
+            "robot",
+        )
+
+    async def fail_verification(**kwargs):
+        raise AssertionError("verification must not run when verify_passes is 0")
+
+    monkeypatch.setattr(llm_render_module, "_fetch_text_url", fake_fetch)
+    monkeypatch.setattr(llm_render_module, "_call_openai_for_assignments", fake_assignments)
+    monkeypatch.setattr(llm_render_module, "_call_openai_for_verification", fail_verification)
+
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_url="https://example.com/ref.png",
+        verify_passes=0,
+    )
+    response = asyncio.run(llm_render(request, {"user_email": "tester@example.com"}))
+
+    assert response.verification_passes == 0
+    assert response.verification_corrections == []
+    assert "verified" not in response.message
