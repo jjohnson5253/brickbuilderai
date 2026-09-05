@@ -43,7 +43,7 @@ describe('JSON API service contracts', () => {
     ['model', () => UpdateModelApiService.updateModel('g1', '0 0 0', 'tok'), '/updateModel', { generation_id: 'g1', xyzrgb_content: '0 0 0' }, { generation_id: 'g1', success: true }],
     ['username', () => UpdateUsernameApiService.updateUsername('builder', 'tok'), '/updateUsername', { username: 'builder' }, { username: 'builder' }],
     ['ldr', () => LdrToMpdApiService.convertLdrToMpd('ldr', 'castle', 'tok'), '/ldrToMpd', { ldr_content: 'ldr', model_name: 'castle' }, { mpd_content: 'mpd', message: 'ok' }],
-    ['llm render', () => LlmRenderApiService.llmRender('xyz', 'image', 'paint', 'tok'), '/llmRender', { xyzrgb_url: 'xyz', reference_image_url: 'image', prompt: 'paint' }, { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], message: 'ok' }],
+    ['llm render', () => LlmRenderApiService.llmRender('xyz', 'image', 'paint', 'tok', 'claude-fable'), '/llmRender', { xyzrgb_url: 'xyz', reference_image_url: 'image', prompt: 'paint', model: 'claude-fable' }, { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], message: 'ok' }],
   ];
 
   it.each(cases)('%s sends the documented request and returns JSON', async (_name, invoke, endpoint, body, result) => {
@@ -93,9 +93,15 @@ describe('JSON API service contracts', () => {
     ]);
     vi.mocked(fetch).mockResolvedValueOnce({ ...ok({}), body: stream } as unknown as Response);
 
-    await expect(LlmRenderApiService.llmRenderStream('xyz', 'image', 'paint', 'tok', thinking)).resolves.toEqual(result);
+    await expect(LlmRenderApiService.llmRenderStream('xyz', 'image', 'paint', 'tok', thinking, 'claude-fable')).resolves.toEqual(result);
     expect(thinking.mock.calls.flat()).toEqual(['I see a red ', 'torso.']);
     expect(String(vi.mocked(fetch).mock.calls[0][0]).endsWith('/llmRender/stream')).toBe(true);
+    expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      xyzrgb_url: 'xyz',
+      reference_image_url: 'image',
+      prompt: 'paint',
+      model: 'claude-fable',
+    });
 
     vi.mocked(fetch).mockResolvedValueOnce({
       ...ok({}),

@@ -20,8 +20,26 @@ export interface LlmRenderRequest {
   xyzrgb_url: string;
   reference_image_url: string;
   prompt?: string;
+  model?: string;
   max_segments?: number;
 }
+
+export interface LlmEditModelOption {
+  id: string;
+  label: string;
+  provider: 'openai' | 'anthropic';
+}
+
+// Models users can pick for AI editing. Must stay in sync with
+// SUPPORTED_LLM_MODELS in backend/src/requests/llmRender.py.
+export const LLM_EDIT_MODELS: LlmEditModelOption[] = [
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol (OpenAI)', provider: 'openai' },
+  { id: 'gpt-5.1', label: 'GPT-5.1 (OpenAI)', provider: 'openai' },
+  { id: 'claude-fable', label: 'Claude Fable (Anthropic)', provider: 'anthropic' },
+  { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5 (Anthropic)', provider: 'anthropic' },
+];
+
+export const DEFAULT_LLM_EDIT_MODEL_ID = LLM_EDIT_MODELS[0].id;
 
 export interface LlmRenderAppliedRule {
   segment_id: number;
@@ -46,7 +64,8 @@ export class LlmRenderApiService {
     xyzrgbUrl: string,
     referenceImageUrl: string,
     prompt?: string,
-    accessToken?: string
+    accessToken?: string,
+    model?: string
   ): Promise<LlmRenderResponse> {
     const url = `${API_BASE_URL}/llmRender`;
 
@@ -62,6 +81,7 @@ export class LlmRenderApiService {
       xyzrgb_url: xyzrgbUrl,
       reference_image_url: referenceImageUrl,
       prompt,
+      ...(model ? { model } : {}),
     };
 
     const response = await fetch(url, {
@@ -89,6 +109,7 @@ export class LlmRenderApiService {
     prompt?: string,
     accessToken?: string,
     onThinking?: (delta: string) => void,
+    model?: string,
   ): Promise<LlmRenderResponse> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (accessToken) {
@@ -102,6 +123,7 @@ export class LlmRenderApiService {
         xyzrgb_url: xyzrgbUrl,
         reference_image_url: referenceImageUrl,
         prompt,
+        ...(model ? { model } : {}),
       } satisfies LlmRenderRequest),
     });
 

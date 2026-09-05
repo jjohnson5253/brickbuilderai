@@ -27,6 +27,18 @@ MAX_GRID_CELLS = 60_000_000
 DEFAULT_MODEL = os.getenv("OPENAI_LLM_RENDER_MODEL", "gpt-5.6-sol")
 DEFAULT_REASONING_EFFORT = os.getenv("OPENAI_LLM_RENDER_REASONING_EFFORT", "medium")
 OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_LLM_RENDER_TIMEOUT_SECONDS", "240"))
+ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_MAX_TOKENS = int(os.getenv("ANTHROPIC_LLM_RENDER_MAX_TOKENS", "8192"))
+
+# Models users can select for AI editing, mapped to the provider that serves them.
+# Only these values are accepted in the request; the env-configured default may
+# be any model, with its provider inferred from the name.
+SUPPORTED_LLM_MODELS: Dict[str, str] = {
+    "gpt-5.6-sol": "openai",
+    "gpt-5.1": "openai",
+    "claude-fable": "anthropic",
+    "claude-sonnet-4-5": "anthropic",
+}
 
 DEFAULT_MAX_SEGMENTS = 16
 MAX_SEGMENTS_LIMIT = 24
@@ -123,7 +135,12 @@ class LlmRenderRequest(BaseModel):
         if value is None:
             return value
         value = value.strip()
-        return value or None
+        if not value:
+            return None
+        if value not in SUPPORTED_LLM_MODELS:
+            supported = ", ".join(sorted(SUPPORTED_LLM_MODELS))
+            raise ValueError(f"model must be one of: {supported}")
+        return value
 
     @validator("max_segments")
     def validate_max_segments(cls, value: Optional[int]) -> int:
@@ -935,8 +952,17 @@ def _build_voxel_preview_data_url(
 
 
 # ---------------------------------------------------------------------------
-# OpenAI call
+# LLM calls (OpenAI and Anthropic)
 # ---------------------------------------------------------------------------
+
+
+def _resolve_llm_provider(model: str) -> str:
+    """Map a model name to the provider that serves it."""
+    provider = SUPPORTED_LLM_MODELS.get(model)
+    if provider:
+        return provider
+    # Env-configured defaults may not be in the registry; infer from the name.
+    return "anthropic" if model.lower().startswith("claude") else "openai"
 
 
 def _extract_response_text(response_json: Dict[str, Any]) -> str:
@@ -958,14 +984,14 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:
-            raise HTTPException(status_code=502, detail="OpenAI response did not contain JSON")
+            raise HTTPException(status_code=502, detail="LLM response did not contain JSON")
         try:
             parsed = json.loads(match.group(0))
         except json.JSONDecodeError:
-            raise HTTPException(status_code=502, detail="OpenAI response JSON was invalid")
+            raise HTTPException(status_code=502, detail="LLM response JSON was invalid")
 
     if not isinstance(parsed, dict):
-        raise HTTPException(status_code=502, detail="OpenAI response JSON must be an object")
+        raise HTTPException(status_code=502, detail="LLM response JSON must be an object")
     return parsed
 
 
@@ -1008,23 +1034,8 @@ def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
     }
 
 
-async def _call_openai_for_assignments(
-    scene_summary: Dict[str, Any],
-    reference_image_url: str,
-    voxel_preview_image_url: str,
-    prompt: Optional[str],
-    model: str,
-    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
-) -> Tuple[List[Dict[str, Any]], str]:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="OPENAI_API_KEY not configured. Set OPENAI_API_KEY and restart the backend server.",
-        )
-
-    segment_ids = [segment["id"] for segment in scene_summary["segments"]]
-
+def _build_llm_prompts(scene_summary: Dict[str, Any], prompt: Optional[str]) -> Tuple[str, str]:
+    """Build the provider-agnostic system prompt and JSON user prompt."""
     system_prompt = (
         "You recolor voxel models so they match a reference image. The model has been "
         "pre-split into numbered segments; your job is to decide which part of the "
@@ -1057,6 +1068,34 @@ async def _call_openai_for_assignments(
         "optional_user_prompt": prompt,
         "scene_summary": scene_summary,
     }
+    return system_prompt, json.dumps(user_prompt)
+
+
+def _parse_assignment_response(parsed: Dict[str, Any], provider_label: str) -> Tuple[List[Dict[str, Any]], str]:
+    assignments = parsed.get("assignments", [])
+    if not isinstance(assignments, list):
+        raise HTTPException(status_code=502, detail=f"{provider_label} assignments must be an array")
+    subject = parsed.get("subject") if isinstance(parsed.get("subject"), str) else ""
+    return assignments, subject
+
+
+async def _call_openai_for_assignments(
+    scene_summary: Dict[str, Any],
+    reference_image_url: str,
+    voxel_preview_image_url: str,
+    prompt: Optional[str],
+    model: str,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="OPENAI_API_KEY not configured. Set OPENAI_API_KEY and restart the backend server.",
+        )
+
+    segment_ids = [segment["id"] for segment in scene_summary["segments"]]
+    system_prompt, user_prompt_json = _build_llm_prompts(scene_summary, prompt)
 
     payload = {
         "model": model,
@@ -1068,7 +1107,7 @@ async def _call_openai_for_assignments(
             {
                 "role": "user",
                 "content": [
-                    {"type": "input_text", "text": json.dumps(user_prompt)},
+                    {"type": "input_text", "text": user_prompt_json},
                     {"type": "input_image", "image_url": reference_image_url, "detail": "high"},
                     {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
                 ],
@@ -1151,11 +1190,156 @@ async def _call_openai_for_assignments(
         raise HTTPException(status_code=502, detail=f"OpenAI response was incomplete: {reason}")
 
     parsed = _extract_json_object(_extract_response_text(response_json))
-    assignments = parsed.get("assignments", [])
-    if not isinstance(assignments, list):
-        raise HTTPException(status_code=502, detail="OpenAI assignments must be an array")
-    subject = parsed.get("subject") if isinstance(parsed.get("subject"), str) else ""
-    return assignments, subject
+    return _parse_assignment_response(parsed, "OpenAI")
+
+
+def _anthropic_image_block(image_url: str) -> Dict[str, Any]:
+    """Build an Anthropic image content block from an https or data: URL."""
+    if image_url.startswith("data:"):
+        header, _, b64_data = image_url.partition(",")
+        media_type = header[len("data:"):].split(";")[0] or "image/png"
+        return {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": b64_data},
+        }
+    return {"type": "image", "source": {"type": "url", "url": image_url}}
+
+
+def _extract_anthropic_response_text(response_json: Dict[str, Any]) -> str:
+    output_parts: List[str] = []
+    for block in response_json.get("content", []):
+        if isinstance(block, dict) and isinstance(block.get("text"), str):
+            output_parts.append(block["text"])
+    return "\n".join(output_parts).strip()
+
+
+def _build_anthropic_payload(
+    scene_summary: Dict[str, Any],
+    reference_image_url: str,
+    voxel_preview_image_url: str,
+    prompt: Optional[str],
+    model: str,
+) -> Dict[str, Any]:
+    segment_ids = [segment["id"] for segment in scene_summary["segments"]]
+    system_prompt, user_prompt_json = _build_llm_prompts(scene_summary, prompt)
+    # Anthropic has no structured-output response format, so the schema is
+    # embedded in the prompt and the JSON is extracted from the reply text.
+    schema_instruction = (
+        "Respond with ONLY a JSON object that validates against this JSON schema, "
+        "with no other text: " + json.dumps(_assignment_schema(segment_ids))
+    )
+    return {
+        "model": model,
+        "max_tokens": ANTHROPIC_MAX_TOKENS,
+        "system": system_prompt,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_prompt_json},
+                    _anthropic_image_block(reference_image_url),
+                    _anthropic_image_block(voxel_preview_image_url),
+                    {"type": "text", "text": schema_instruction},
+                ],
+            }
+        ],
+    }
+
+
+async def _call_anthropic_for_assignments(
+    scene_summary: Dict[str, Any],
+    reference_image_url: str,
+    voxel_preview_image_url: str,
+    prompt: Optional[str],
+    model: str,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY not configured. Set ANTHROPIC_API_KEY and restart the backend server.",
+        )
+
+    payload = _build_anthropic_payload(
+        scene_summary, reference_image_url, voxel_preview_image_url, prompt, model
+    )
+
+    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS, connect=15.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": ANTHROPIC_API_VERSION,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.error("Anthropic llmRender request failed: %s", e.response.text)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Anthropic request failed: HTTP {e.response.status_code}",
+        )
+    except httpx.TimeoutException as e:
+        logger.error(
+            "Anthropic llmRender request timed out after %ss (%s)",
+            OPENAI_TIMEOUT_SECONDS,
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Anthropic request timed out after {OPENAI_TIMEOUT_SECONDS:.0f}s "
+                f"(model={model}). Raise OPENAI_LLM_RENDER_TIMEOUT_SECONDS."
+            ),
+        )
+    except httpx.HTTPError as e:
+        # httpx transport errors often stringify to "", so include the type name.
+        raise HTTPException(
+            status_code=502,
+            detail=f"Anthropic request failed: {type(e).__name__}: {e}".rstrip(": "),
+        )
+
+    response_json = response.json()
+    if response_json.get("stop_reason") == "max_tokens":
+        raise HTTPException(
+            status_code=502,
+            detail="Anthropic response was truncated. Raise ANTHROPIC_LLM_RENDER_MAX_TOKENS.",
+        )
+
+    # Anthropic currently returns the final JSON response in one message, so the
+    # SSE endpoint emits the final result without incremental thinking deltas.
+    _ = on_thinking
+    parsed = _extract_json_object(_extract_anthropic_response_text(response_json))
+    return _parse_assignment_response(parsed, "Anthropic")
+
+
+async def _call_llm_for_assignments(
+    scene_summary: Dict[str, Any],
+    reference_image_url: str,
+    voxel_preview_image_url: str,
+    prompt: Optional[str],
+    model: str,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Route the segment-color request to the provider that serves the model."""
+    provider = _resolve_llm_provider(model)
+    if provider == "anthropic":
+        call = _call_anthropic_for_assignments
+    else:
+        call = _call_openai_for_assignments
+    return await call(
+        scene_summary=scene_summary,
+        reference_image_url=reference_image_url,
+        voxel_preview_image_url=voxel_preview_image_url,
+        prompt=prompt,
+        model=model,
+        on_thinking=on_thinking,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1233,7 +1417,7 @@ async def llm_render(
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
-        assignments, subject = await _call_openai_for_assignments(
+        assignments, subject = await _call_llm_for_assignments(
             scene_summary=scene_summary,
             reference_image_url=request.reference_image_url,
             voxel_preview_image_url=voxel_preview_image_url,

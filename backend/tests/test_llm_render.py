@@ -7,26 +7,38 @@ from io import BytesIO
 from pathlib import Path
 
 import numpy as np
+import pytest
+from fastapi import HTTPException
 from PIL import Image
+from pydantic import ValidationError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import src.requests.llmRender as llm_render_module
 from src.requests.llmRender import (
     SEGMENT_PALETTE,
+    SUPPORTED_LLM_MODELS,
     VIEWS,
+    LlmRenderRequest,
+    LlmRenderResponse,
+    _anthropic_image_block,
     _apply_assignments,
     _assignment_schema,
+    _build_anthropic_payload,
     _build_scene_summary,
     _build_voxel_preview_data_url,
+    _call_llm_for_assignments,
+    _extract_anthropic_response_text,
+    _parse_assignment_response,
     _extract_thinking_delta,
     _geometric_regions,
     _load_font,
-    LlmRenderResponse,
     llm_render_stream,
     _perceptual_colors,
     _project_segments,
     _quantize_colors,
     _render_view_tile,
+    _resolve_llm_provider,
     _rgb_to_lab,
     _segment_voxels,
     _voxel_arrays,
@@ -466,3 +478,144 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def _request_kwargs(**overrides):
+    kwargs = {
+        "xyzrgb_url": "https://example.com/model.xyzrgb",
+        "reference_image_url": "https://example.com/reference.png",
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_supported_llm_models_cover_both_providers():
+    providers = set(SUPPORTED_LLM_MODELS.values())
+    assert providers == {"openai", "anthropic"}
+
+
+def test_resolve_llm_provider_uses_registry_and_prefix_fallback():
+    for model, provider in SUPPORTED_LLM_MODELS.items():
+        assert _resolve_llm_provider(model) == provider
+    # Env-configured defaults outside the registry fall back to name inference.
+    assert _resolve_llm_provider("claude-opus-next") == "anthropic"
+    assert _resolve_llm_provider("gpt-7-experimental") == "openai"
+
+
+def test_request_accepts_every_supported_model():
+    for model in SUPPORTED_LLM_MODELS:
+        request = LlmRenderRequest(**_request_kwargs(model=model))
+        assert request.model == model
+
+
+def test_request_rejects_unsupported_model():
+    with pytest.raises(ValidationError, match="model must be one of"):
+        LlmRenderRequest(**_request_kwargs(model="gpt-2"))
+
+
+def test_request_treats_blank_model_as_default():
+    request = LlmRenderRequest(**_request_kwargs(model="  "))
+    assert request.model is None
+
+
+def test_anthropic_image_block_handles_https_and_data_urls():
+    url_block = _anthropic_image_block("https://example.com/reference.png")
+    assert url_block == {
+        "type": "image",
+        "source": {"type": "url", "url": "https://example.com/reference.png"},
+    }
+
+    data_block = _anthropic_image_block("data:image/png;base64,aGVsbG8=")
+    assert data_block == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": "aGVsbG8="},
+    }
+
+
+def test_extract_anthropic_response_text_joins_text_blocks():
+    response_json = {
+        "content": [
+            {"type": "text", "text": '{"subject": "duck",'},
+            {"type": "tool_use", "id": "ignored"},
+            {"type": "text", "text": '"assignments": []}'},
+        ]
+    }
+    assert _extract_anthropic_response_text(response_json) == '{"subject": "duck",\n"assignments": []}'
+
+
+def test_build_anthropic_payload_embeds_schema_prompts_and_images():
+    scene_summary = {"segments": [{"id": 1}, {"id": 2}]}
+    payload = _build_anthropic_payload(
+        scene_summary=scene_summary,
+        reference_image_url="https://example.com/reference.png",
+        voxel_preview_image_url="data:image/png;base64,aGVsbG8=",
+        prompt="match the duck",
+        model="claude-fable",
+    )
+
+    assert payload["model"] == "claude-fable"
+    assert payload["max_tokens"] > 0
+    assert "recolor voxel models" in payload["system"]
+
+    content = payload["messages"][0]["content"]
+    assert content[0]["type"] == "text"
+    assert "match the duck" in content[0]["text"]
+    assert content[1]["source"]["type"] == "url"
+    assert content[2]["source"]["type"] == "base64"
+    # The assignment schema rides along in the prompt because Anthropic has no
+    # structured-output response format.
+    assert '"segment_id"' in content[3]["text"]
+
+
+def test_parse_assignment_response_requires_assignment_array():
+    assignments, subject = _parse_assignment_response(
+        {"subject": "duck", "assignments": [{"segment_id": 1}]}, "Anthropic"
+    )
+    assert assignments == [{"segment_id": 1}]
+    assert subject == "duck"
+
+    with pytest.raises(HTTPException) as excinfo:
+        _parse_assignment_response({"assignments": "nope"}, "Anthropic")
+    assert "Anthropic assignments must be an array" in excinfo.value.detail
+
+
+def test_call_llm_for_assignments_routes_by_model(monkeypatch):
+    calls = []
+    thinking_deltas = []
+
+    async def on_thinking(delta):
+        thinking_deltas.append(delta)
+
+    async def fake_openai(**kwargs):
+        calls.append(("openai", kwargs["model"], kwargs.get("on_thinking") is on_thinking))
+        return [], "openai-subject"
+
+    async def fake_anthropic(**kwargs):
+        calls.append(("anthropic", kwargs["model"], kwargs.get("on_thinking") is on_thinking))
+        if kwargs.get("on_thinking"):
+            await kwargs["on_thinking"]("final-only")
+        return [], "anthropic-subject"
+
+    monkeypatch.setattr(llm_render_module, "_call_openai_for_assignments", fake_openai)
+    monkeypatch.setattr(llm_render_module, "_call_anthropic_for_assignments", fake_anthropic)
+
+    common = {
+        "scene_summary": {"segments": [{"id": 1}]},
+        "reference_image_url": "https://example.com/reference.png",
+        "voxel_preview_image_url": "data:image/png;base64,aGVsbG8=",
+        "prompt": None,
+    }
+
+    _, subject = asyncio.run(
+        _call_llm_for_assignments(model="claude-fable", on_thinking=on_thinking, **common)
+    )
+    assert subject == "anthropic-subject"
+    _, subject = asyncio.run(
+        _call_llm_for_assignments(model="gpt-5.1", on_thinking=on_thinking, **common)
+    )
+    assert subject == "openai-subject"
+    assert calls == [
+        ("anthropic", "claude-fable", True),
+        ("openai", "gpt-5.1", True),
+    ]
+    assert thinking_deltas == ["final-only"]

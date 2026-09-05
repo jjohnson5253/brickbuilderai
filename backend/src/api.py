@@ -116,7 +116,14 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     logger.warning(
         "OPENAI_API_KEY environment variable is not set. /llmRender will return "
-        "errors until OPENAI_API_KEY is configured."
+        "errors for OpenAI models until OPENAI_API_KEY is configured."
+    )
+
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    logger.warning(
+        "ANTHROPIC_API_KEY environment variable is not set. /llmRender will return "
+        "errors for Claude models until ANTHROPIC_API_KEY is configured."
     )
 
 
@@ -290,8 +297,9 @@ async def llm_render_endpoint(
     Recolor an xyzrgb voxel model to better match a reference image.
 
     The endpoint fetches xyzrgb_url, summarizes the voxel shape for spatial
-    reasoning, sends that summary plus reference_image_url to OpenAI, applies
-    the returned semantic recoloring rules, and returns updated xyzrgb content.
+    reasoning, routes the request to the provider that serves the selected
+    model, applies the returned semantic recoloring rules, and returns updated
+    xyzrgb content.
     """
     return await llm_render(request, auth_info)
 

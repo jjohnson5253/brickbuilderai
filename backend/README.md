@@ -85,7 +85,8 @@ curl -X POST http://localhost:8002/promptEditModel \
   -o edited_model_response.json
 ```
 #### /llmRender
-Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`.
+Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`
+for OpenAI models and `ANTHROPIC_API_KEY` for Claude models.
 
 The model is first split server-side into up to `max_segments` (default 16) contiguous
 segments. Splitting combines colour structure (clustered in CIELAB with lightness
@@ -95,11 +96,17 @@ a head and torso still split). Small high-contrast features (eyes, mouth, button
 jewelry, shirt patterns) are protected from speckle removal, and same-coloured pieces of
 one feature (both eyes, all buttons) share a single segment; the scene summary flags these
 with `is_detail` and `island_count`. A labelled multi-view preview of those
-segments plus the reference image is sent to OpenAI, which returns one colour per segment.
-`applied_rules` in the response lists each segment's inferred part name, reason and colour.
+segments plus the reference image is sent to the selected LLM, which returns one colour per
+segment. `applied_rules` in the response lists each segment's inferred part name, reason and
+colour.
+
+The optional `model` field selects which LLM does the recoloring. Supported values:
+`gpt-5.6-sol` (default), `gpt-5.1`, `claude-fable`, `claude-sonnet-4-5`. `gpt-*` models are
+served by OpenAI; `claude-*` models by Anthropic.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
-(default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
+(default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`, also used for
+Anthropic requests), `ANTHROPIC_LLM_RENDER_MAX_TOKENS` (default `8192`).
 ```bash
 curl -X POST http://localhost:8002/llmRender \
   -H "Content-Type: application/json" \
