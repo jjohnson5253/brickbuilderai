@@ -64,7 +64,7 @@ describe('preview password middleware', () => {
     const response = await middleware(loginRequest('test-password'));
 
     expect(response?.status).toBe(303);
-    expect(response?.headers.get('location')).toBe('/');
+    expect(response?.headers.get('location')).toBe('https://example.com/');
     expect(response?.headers.get('set-cookie')).toMatch(
       /^brickbuilder_preview_auth=[a-f0-9]{64}; Path=\/; HttpOnly; Secure; SameSite=Strict;/,
     );
