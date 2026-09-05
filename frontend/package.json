@@ -41,6 +41,7 @@
       },
       "scripts": {
             "dev": "vite",
+            "prebuild": "node scripts/resolve-pr-backend.mjs",
             "build": "vite build",
             "test": "vitest run",
             "test:coverage": "vitest run --coverage",
