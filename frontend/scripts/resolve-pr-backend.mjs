@@ -106,14 +106,18 @@ async function main() {
     return;
   }
 
-  // Railway names PR environments like "pr-<number>".
+  // Railway names PR environments like "pr-<number>" or "<project-name>-pr-<number>"
+  // (observed in practice), so match on a "pr-<number>" suffix rather than an
+  // exact string.
+  const prSuffix = `pr-${prId}`.toLowerCase();
   const envEdges = project.environments?.edges ?? [];
-  const prEnv = envEdges.find(
-    (e) => e.node?.name?.toLowerCase() === `pr-${prId}`.toLowerCase()
-  );
+  const prEnv = envEdges.find((e) => {
+    const name = e.node?.name?.toLowerCase() ?? '';
+    return name === prSuffix || name.endsWith(`-${prSuffix}`);
+  });
   if (!prEnv) {
     log(
-      `No Railway environment named "pr-${prId}" found yet (it may still be ` +
+      `No Railway environment matching "*${prSuffix}" found yet (it may still be ` +
         `spinning up). Falling back to the default configured backend.`
     );
     return;
