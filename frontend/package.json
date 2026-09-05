@@ -30,8 +30,7 @@
       },
       "scripts": {
             "dev": "vite",
-            "prebuild": "node scripts/resolve-pr-backend.mjs",
-            "build": "vite build",
+            "build": "node scripts/build.mjs",
             "test": "vitest run",
             "test:coverage": "vitest run --coverage",
             "vercel:dev": "vercel dev",
