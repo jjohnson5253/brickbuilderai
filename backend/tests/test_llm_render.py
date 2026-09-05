@@ -1,4 +1,7 @@
+import asyncio
 import base64
+import importlib
+import json
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -11,11 +14,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.requests.llmRender import (
     SEGMENT_PALETTE,
     VIEWS,
+    LlmRenderResponse,
     _apply_assignments,
     _assignment_schema,
     _build_scene_summary,
     _build_voxel_preview_data_url,
+    _extract_thinking_delta,
     _geometric_regions,
+    llm_render_stream,
     _load_font,
     _majority_color,
     _perceptual_colors,
@@ -401,6 +407,43 @@ def test_assignment_schema_requires_every_segment():
     assert assignments["minItems"] == 3
     assert assignments["maxItems"] == 3
     assert assignments["items"]["properties"]["segment_id"]["enum"] == [1, 2, 3]
+
+
+def test_extract_thinking_delta_only_returns_reasoning_summaries():
+    assert _extract_thinking_delta(
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "delta": "I notice the torso should use red bricks.",
+        }
+    ) == "I notice the torso should use red bricks."
+    assert _extract_thinking_delta({"type": "response.output_text.delta", "delta": "private output"}) is None
+    assert _extract_thinking_delta({"type": "response.reasoning_summary_text.delta", "delta": 3}) is None
+
+
+def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
+    async def fake_llm_render(_request, _auth_info, on_thinking):
+        await on_thinking("I see separate arms and a torso.")
+        return LlmRenderResponse(
+            xyzrgb_content="0 0 0 255 0 0\n",
+            voxel_count=1,
+            segment_count=1,
+            model="test-model",
+            applied_rules=[],
+        )
+
+    module = importlib.import_module("src.requests.llmRender")
+    monkeypatch.setattr(module, "llm_render", fake_llm_render)
+
+    async def collect_events():
+        return [event async for event in llm_render_stream(object(), {})]
+
+    events = [
+        json.loads(event.removeprefix("data: "))
+        for event in asyncio.run(collect_events())
+    ]
+    assert events[0] == {"type": "thinking", "delta": "I see separate arms and a torso."}
+    assert events[1]["type"] == "result"
+    assert events[1]["data"]["xyzrgb_content"] == "0 0 0 255 0 0\n"
 
 
 def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
