@@ -1406,6 +1406,7 @@ interface ThreeLDRViewerProps {
   totalSteps?: number;        // Total number of steps in model
   showBaseplate?: boolean;    // Whether to show baseplate with studs
   animateModelBuild?: boolean; // Whether to drop parts into place on load
+  cameraView?: 'perspective' | 'top';
 }
 
 // Parse step boundaries from MPD content - returns array of cumulative part counts per step
@@ -1449,7 +1450,8 @@ export function ThreeLDRViewer({
   currentStepIndex,
   totalSteps,
   showBaseplate = false,
-  animateModelBuild = false
+  animateModelBuild = false,
+  cameraView = 'perspective'
 }: ThreeLDRViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1777,6 +1779,12 @@ export function ThreeLDRViewer({
                 camera.position.copy(center).add(direction.multiplyScalar(finalDistance));
                 controls.target.copy(center);
                 controls.update();
+              } else if (cameraView === 'top') {
+                camera.up.set(0, 0, -1);
+                camera.position.copy(center).add(new THREE.Vector3(0, 1, 0).multiplyScalar(minDistance));
+                controls.target.copy(center);
+                controls.enableRotate = false;
+                controls.update();
               } else {
                 // Match the front-left screenshot angle
                 const camOffset = new THREE.Vector3(-1, 0.5, 1).normalize().multiplyScalar(minDistance);
@@ -2049,7 +2057,7 @@ export function ThreeLDRViewer({
         }
       }
     };
-  }, [modelPath, modelContent, onExportCaptureReady, animateModelBuild]);
+  }, [modelPath, modelContent, onExportCaptureReady, animateModelBuild, cameraView]);
 
   useEffect(() => {
     const { scene } = sceneRef.current;
