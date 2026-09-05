@@ -140,4 +140,4 @@ npm run test:coverage
 
 This project is licensed under the [MIT License](LICENSE).
 
-> LEGO® is a trademark of the LEGO Group, which does not sponsor, authorize, or endorse this project.
+> LEGO® is a trademark of the LEGO Group, which does not sponsor, authorize, or endorse this project
