@@ -1,5 +1,6 @@
 # Notes
  - This app creates a docker image that uses sam3d image-to-3d model but stops short of the GLB generation because only voxels are needed for lego conversion. This code is in `/serverless` and code for calling the hosted docker image as a serverless endpoint on runpod is in route.ts
+ - `LegoACE/` is a vendored copy of [VAST-AI-Research/LegoACE](https://github.com/VAST-AI-Research/LegoACE) (MIT). Its pre-trained weights are released on HuggingFace as [`VAST-AI/LegoACE`](https://huggingface.co/VAST-AI/LegoACE); see [`docs/legoace-weights-research.md`](../docs/legoace-weights-research.md) for availability/usability findings and a proposed integration path.
  - you can use /frontend to test
 ### uploading to docker
  - `cd serverless`
