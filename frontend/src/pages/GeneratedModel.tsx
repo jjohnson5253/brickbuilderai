@@ -249,6 +249,7 @@ export default function GeneratedModel() {
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
   const [isLlmEditing, setIsLlmEditing] = React.useState(false);
   const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
+  const [llmThinking, setLlmThinking] = React.useState("");
   
   // Voxel editor state
   const [showVoxelEditor, setShowVoxelEditor] = React.useState(false);
@@ -1579,6 +1580,7 @@ export default function GeneratedModel() {
 
     setIsLlmEditing(true);
     setLlmEditError(null);
+    setLlmThinking("");
 
     try {
       // Give the LLM every available reference image (processed + original) so
@@ -1598,11 +1600,12 @@ export default function GeneratedModel() {
         throw new Error('No reference image found for this generation');
       }
 
-      const llmResponse = await LlmRenderApiService.llmRender(
+      const llmResponse = await LlmRenderApiService.llmRenderStream(
         xyzrgbUrl,
         referenceImageUrls,
         'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
-        accessToken || undefined
+        accessToken || undefined,
+        (delta) => setLlmThinking((current) => current + delta),
       );
 
       setXyzrgbContent(llmResponse.xyzrgb_content);
@@ -2304,6 +2307,15 @@ export default function GeneratedModel() {
                     </>
                   )}
               </button>
+              {isLlmEditing && llmThinking && (
+                <div
+                  aria-live="polite"
+                  className="w-full max-w-sm rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-700 shadow-sm sm:max-w-md"
+                >
+                  <p className="mb-1 font-semibold text-slate-900">AI design notes</p>
+                  <p className="whitespace-pre-wrap break-words">{llmThinking}</p>
+                </div>
+              )}
 
               {/* Edit Model button — white with grey border, turns red on hover */}
               <button
