@@ -15,6 +15,7 @@ from src.requests.llmRender import (
     SEGMENT_PALETTE,
     VIEWS,
     _apply_assignments,
+    _apply_geometry_edits,
     _assignment_schema,
     _build_scene_summary,
     _build_voxel_preview_data_url,
@@ -361,6 +362,8 @@ def test_build_scene_summary_describes_segments_without_colors():
 
     assert summary["segment_count"] == 2
     assert summary["voxel_count"] == len(voxels)
+    assert summary["bounds"] == {"x": [0, 5], "y": [0, 5], "z": [0, 9]}
+    assert summary["geometry_edit_budget"] == 28
     head = next(s for s in summary["segments"] if s["id"] == 2)
     assert head["center"]["z"] > 0.6
     assert head["extent"]["z"][0] > 0.5
@@ -404,6 +407,9 @@ def test_assignment_schema_requires_every_segment():
     assert assignments["minItems"] == 3
     assert assignments["maxItems"] == 3
     assert assignments["items"]["properties"]["segment_id"]["enum"] == [1, 2, 3]
+    geometry_edits = schema["properties"]["geometry_edits"]
+    assert geometry_edits["items"]["properties"]["operation"]["enum"] == ["add", "remove"]
+    assert "geometry_edits" in schema["required"]
 
 
 def test_extract_thinking_delta_only_returns_reasoning_summaries():
@@ -426,6 +432,7 @@ def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
             segment_count=1,
             model="test-model",
             applied_rules=[],
+            geometry_changes={"added": 0, "removed": 0},
         )
 
     module = importlib.import_module("src.requests.llmRender")
@@ -466,3 +473,37 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def test_apply_geometry_edits_adds_removes_and_preserves_unedited_voxels():
+    voxels = _block((0, 3), (0, 3), (0, 3), YELLOW)
+    edits = [
+        {"operation": "remove", "position": {"x": 0, "y": 0, "z": 0}, "color": [0, 0, 0]},
+        {"operation": "add", "position": {"x": 3, "y": 1, "z": 1}, "color": [20, 30, 40]},
+    ]
+
+    updated, changes = _apply_geometry_edits(voxels, edits)
+
+    by_position = {(v["x"], v["y"], v["z"]): v for v in updated}
+    assert changes == {"added": 1, "removed": 1}
+    assert (0, 0, 0) not in by_position
+    assert (by_position[(3, 1, 1)]["r"], by_position[(3, 1, 1)]["g"], by_position[(3, 1, 1)]["b"]) == (20, 30, 40)
+    assert by_position[(1, 1, 1)] == next(
+        voxel for voxel in voxels if (voxel["x"], voxel["y"], voxel["z"]) == (1, 1, 1)
+    )
+
+
+def test_apply_geometry_edits_rejects_invalid_or_excessive_changes():
+    voxels = _block((0, 3), (0, 3), (0, 3), YELLOW)
+    edits = [
+        {"operation": "add", "position": {"x": 5, "y": 1, "z": 1}, "color": [1, 2, 3]},
+        {"operation": "add", "position": {"x": True, "y": 1, "z": 1}, "color": [1, 2, 3]},
+        {"operation": "add", "position": {"x": 1, "y": 1, "z": 1}, "color": [1, 2, 3]},
+        {"operation": "remove", "position": {"x": 0, "y": 0, "z": 0}, "color": [0, 0, 0]},
+    ]
+
+    updated, changes = _apply_geometry_edits(voxels, edits)
+
+    # A 27-voxel model permits only its first three proposed edits; all are invalid.
+    assert updated == voxels
+    assert changes == {"added": 0, "removed": 0}

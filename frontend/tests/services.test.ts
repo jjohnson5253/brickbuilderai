@@ -43,7 +43,7 @@ describe('JSON API service contracts', () => {
     ['model', () => UpdateModelApiService.updateModel('g1', '0 0 0', 'tok'), '/updateModel', { generation_id: 'g1', xyzrgb_content: '0 0 0' }, { generation_id: 'g1', success: true }],
     ['username', () => UpdateUsernameApiService.updateUsername('builder', 'tok'), '/updateUsername', { username: 'builder' }, { username: 'builder' }],
     ['ldr', () => LdrToMpdApiService.convertLdrToMpd('ldr', 'castle', 'tok'), '/ldrToMpd', { ldr_content: 'ldr', model_name: 'castle' }, { mpd_content: 'mpd', message: 'ok' }],
-    ['llm render', () => LlmRenderApiService.llmRender('xyz', 'image', 'paint', 'tok'), '/llmRender', { xyzrgb_url: 'xyz', reference_image_url: 'image', prompt: 'paint' }, { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], message: 'ok' }],
+    ['llm render', () => LlmRenderApiService.llmRender('xyz', 'image', 'paint', 'tok'), '/llmRender', { xyzrgb_url: 'xyz', reference_image_url: 'image', prompt: 'paint' }, { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], geometry_changes: { added: 0, removed: 0 }, message: 'ok' }],
   ];
 
   it.each(cases)('%s sends the documented request and returns JSON', async (_name, invoke, endpoint, body, result) => {
@@ -84,7 +84,7 @@ describe('JSON API service contracts', () => {
   });
 
   it('streams LLM brick-design thinking before returning the result', async () => {
-    const result = { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], message: 'ok' };
+    const result = { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], geometry_changes: { added: 0, removed: 0 }, message: 'ok' };
     const thinking = vi.fn();
     const stream = sse([
       'data: {"type":"thinking","delta":"I see a red "}\n',
