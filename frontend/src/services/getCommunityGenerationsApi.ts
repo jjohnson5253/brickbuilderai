@@ -41,6 +41,8 @@ export interface CommunityGeneration {
   ordered?: boolean;
   updated_at?: string | null;
   is_community?: boolean;
+  is_highlighted?: boolean;
+  brick_count?: number | null;
   username?: string | null;
   // Some clients/UIs may expect these — keep optional for compatibility
   image_url?: string | null;
@@ -51,6 +53,7 @@ export interface GetCommunityGenerationsRequest {
   limit?: number;
   offset?: number;
   processing?: boolean;
+  highlighted?: boolean;
 }
 
 export interface GetCommunityGenerationsResponse {
@@ -64,7 +67,8 @@ export class GetCommunityGenerationsApiService {
     authToken: string | undefined,
     limit: number = 50,
     offset: number = 0,
-    processing?: boolean
+    processing?: boolean,
+    highlighted?: boolean
   ): Promise<GetCommunityGenerationsResponse> {
     const url = `${API_BASE_URL}/getCommunityGenerations`;
 
@@ -72,6 +76,7 @@ export class GetCommunityGenerationsApiService {
       limit,
       offset,
       ...(processing !== undefined && { processing }),
+      ...(highlighted !== undefined && { highlighted }),
     };
 
     const headers: Record<string, string> = {
