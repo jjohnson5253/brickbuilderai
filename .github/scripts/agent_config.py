@@ -68,9 +68,9 @@ def resolve(agent: str, repository_root: Path) -> dict[str, str]:
 
     profile = repository_root / ".github" / "agents" / f"{agent}.agent.md"
     values = parse_frontmatter(profile)
-    model = values.get("model")
-    if not model or not SAFE_VALUE.fullmatch(model):
-        raise ValueError(f"{profile} has an invalid or missing model")
+    model = values.get("model", "")
+    if model and not SAFE_VALUE.fullmatch(model):
+        raise ValueError(f"{profile} has an invalid model")
     if values.get("target") != "github-copilot":
         raise ValueError(f"{profile} must target github-copilot")
     return {"agent": agent, "model": model}

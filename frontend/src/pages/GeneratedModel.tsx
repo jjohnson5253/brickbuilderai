@@ -28,7 +28,11 @@ import { GetPriceApiService, GetPriceResponse } from "../services/getPriceApi";
 import { ResizeScaler } from "../components/ResizeScaler";
 import { ResizeModelApiService } from "../services/resizeModelApi";
 import { PromptEditModelApiService } from "../services/promptEditModelApi";
-import { LlmRenderApiService } from "../services/llmRenderApi";
+import {
+  DEFAULT_LLM_EDIT_MODEL_ID,
+  LLM_EDIT_MODELS,
+  LlmRenderApiService,
+} from "../services/llmRenderApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
 import { GetGenerationsByImageApiService, GenerationIteration } from "../services/getGenerationsByImageApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
@@ -36,7 +40,10 @@ import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
 import { UpdateModelApiService, UpdateModelResponse } from "../services/updateModelApi";
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
-import { trackGeneratedModelAiEditClick } from "../utils/generatedModelAnalytics";
+import {
+  trackGeneratedModelAiEditClick,
+  trackGeneratedModelAiEditModelSelected,
+} from "../utils/generatedModelAnalytics";
 import { getGeneratedModelPath } from "../utils/generationRoutes";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
@@ -249,6 +256,8 @@ export default function GeneratedModel() {
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
   const [isLlmEditing, setIsLlmEditing] = React.useState(false);
   const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
+  const [llmThinking, setLlmThinking] = React.useState("");
+  const [selectedLlmModel, setSelectedLlmModel] = React.useState(DEFAULT_LLM_EDIT_MODEL_ID);
   
   // Voxel editor state
   const [showVoxelEditor, setShowVoxelEditor] = React.useState(false);
@@ -1579,6 +1588,7 @@ export default function GeneratedModel() {
 
     setIsLlmEditing(true);
     setLlmEditError(null);
+    setLlmThinking("");
 
     try {
       let referenceImageUrl = processedImageUrl;
@@ -1594,11 +1604,13 @@ export default function GeneratedModel() {
         throw new Error('No reference image found for this generation');
       }
 
-      const llmResponse = await LlmRenderApiService.llmRender(
+      const llmResponse = await LlmRenderApiService.llmRenderStream(
         xyzrgbUrl,
         referenceImageUrl,
         'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
-        accessToken || undefined
+        accessToken || undefined,
+        (delta) => setLlmThinking((current) => current + delta),
+        selectedLlmModel,
       );
 
       setXyzrgbContent(llmResponse.xyzrgb_content);
@@ -1623,8 +1635,18 @@ export default function GeneratedModel() {
     currentGenerationId,
     handleUpdatedModelStarted,
     processedImageUrl,
+    selectedLlmModel,
     xyzrgbUrl,
   ]);
+
+  const handleLlmModelChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextModel = event.target.value;
+      setSelectedLlmModel(nextModel);
+      trackGeneratedModelAiEditModelSelected(currentGenerationId, nextModel);
+    },
+    [currentGenerationId],
+  );
 
   // Guard an action (e.g. in-app navigation) behind the unsaved-changes modal.
   // If the voxel editor has unsaved changes, prompt the user; otherwise run immediately.
@@ -2282,7 +2304,7 @@ export default function GeneratedModel() {
                   type="button"
                   aria-label="LLM edit model"
                   onClick={() => {
-                    trackGeneratedModelAiEditClick(currentGenerationId, isDemoModel);
+                    trackGeneratedModelAiEditClick(currentGenerationId, isDemoModel, selectedLlmModel);
                     guardUnsavedChanges(() => { void handleLlmEditModel(); });
                   }}
                   disabled={isLlmEditing || isSavePolling || xyzrgbLoading || !xyzrgbUrl || !currentGenerationId}
@@ -2300,6 +2322,31 @@ export default function GeneratedModel() {
                     </>
                   )}
               </button>
+              <label className="flex w-full max-w-sm flex-col gap-1 text-left text-xs font-medium uppercase tracking-[0.16em] text-slate-500 sm:max-w-md">
+                <span>AI model</span>
+                <select
+                  aria-label="AI edit model"
+                  value={selectedLlmModel}
+                  onChange={handleLlmModelChange}
+                  disabled={isLlmEditing || isSavePolling || xyzrgbLoading}
+                  className="h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 shadow-sm transition-colors focus:border-[#f44336] focus:outline-none focus:ring-2 focus:ring-[#f44336]/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                >
+                  {LLM_EDIT_MODELS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isLlmEditing && llmThinking && (
+                <div
+                  aria-live="polite"
+                  className="w-full max-w-sm rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-700 shadow-sm sm:max-w-md"
+                >
+                  <p className="mb-1 font-semibold text-slate-900">AI design notes</p>
+                  <p className="whitespace-pre-wrap break-words">{llmThinking}</p>
+                </div>
+              )}
 
               {/* Edit Model button — white with grey border, turns red on hover */}
               <button

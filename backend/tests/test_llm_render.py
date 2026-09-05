@@ -1,5 +1,7 @@
 import asyncio
 import base64
+import importlib
+import json
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +20,7 @@ from src.requests.llmRender import (
     SUPPORTED_LLM_MODELS,
     VIEWS,
     LlmRenderRequest,
+    LlmRenderResponse,
     _anthropic_image_block,
     _apply_assignments,
     _assignment_schema,
@@ -26,9 +29,11 @@ from src.requests.llmRender import (
     _build_voxel_preview_data_url,
     _call_llm_for_assignments,
     _extract_anthropic_response_text,
+    _parse_assignment_response,
+    _extract_thinking_delta,
     _geometric_regions,
     _load_font,
-    _parse_assignment_response,
+    llm_render_stream,
     _perceptual_colors,
     _project_segments,
     _quantize_colors,
@@ -413,6 +418,43 @@ def test_assignment_schema_requires_every_segment():
     assert assignments["items"]["properties"]["segment_id"]["enum"] == [1, 2, 3]
 
 
+def test_extract_thinking_delta_only_returns_reasoning_summaries():
+    assert _extract_thinking_delta(
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "delta": "I notice the torso should use red bricks.",
+        }
+    ) == "I notice the torso should use red bricks."
+    assert _extract_thinking_delta({"type": "response.output_text.delta", "delta": "private output"}) is None
+    assert _extract_thinking_delta({"type": "response.reasoning_summary_text.delta", "delta": 3}) is None
+
+
+def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
+    async def fake_llm_render(_request, _auth_info, on_thinking):
+        await on_thinking("I see separate arms and a torso.")
+        return LlmRenderResponse(
+            xyzrgb_content="0 0 0 255 0 0\n",
+            voxel_count=1,
+            segment_count=1,
+            model="test-model",
+            applied_rules=[],
+        )
+
+    module = importlib.import_module("src.requests.llmRender")
+    monkeypatch.setattr(module, "llm_render", fake_llm_render)
+
+    async def collect_events():
+        return [event async for event in llm_render_stream(object(), {})]
+
+    events = [
+        json.loads(event.removeprefix("data: "))
+        for event in asyncio.run(collect_events())
+    ]
+    assert events[0] == {"type": "thinking", "delta": "I see separate arms and a torso."}
+    assert events[1]["type"] == "result"
+    assert events[1]["data"]["xyzrgb_content"] == "0 0 0 255 0 0\n"
+
+
 def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     voxels = _two_part_model()
     segment_ids = _segment_voxels(voxels, max_segments=16)
@@ -539,13 +581,19 @@ def test_parse_assignment_response_requires_assignment_array():
 
 def test_call_llm_for_assignments_routes_by_model(monkeypatch):
     calls = []
+    thinking_deltas = []
+
+    async def on_thinking(delta):
+        thinking_deltas.append(delta)
 
     async def fake_openai(**kwargs):
-        calls.append(("openai", kwargs["model"]))
+        calls.append(("openai", kwargs["model"], kwargs.get("on_thinking") is on_thinking))
         return [], "openai-subject"
 
     async def fake_anthropic(**kwargs):
-        calls.append(("anthropic", kwargs["model"]))
+        calls.append(("anthropic", kwargs["model"], kwargs.get("on_thinking") is on_thinking))
+        if kwargs.get("on_thinking"):
+            await kwargs["on_thinking"]("final-only")
         return [], "anthropic-subject"
 
     monkeypatch.setattr(llm_render_module, "_call_openai_for_assignments", fake_openai)
@@ -558,8 +606,16 @@ def test_call_llm_for_assignments_routes_by_model(monkeypatch):
         "prompt": None,
     }
 
-    _, subject = asyncio.run(_call_llm_for_assignments(model="claude-fable", **common))
+    _, subject = asyncio.run(
+        _call_llm_for_assignments(model="claude-fable", on_thinking=on_thinking, **common)
+    )
     assert subject == "anthropic-subject"
-    _, subject = asyncio.run(_call_llm_for_assignments(model="gpt-5.1", **common))
+    _, subject = asyncio.run(
+        _call_llm_for_assignments(model="gpt-5.1", on_thinking=on_thinking, **common)
+    )
     assert subject == "openai-subject"
-    assert calls == [("anthropic", "claude-fable"), ("openai", "gpt-5.1")]
+    assert calls == [
+        ("anthropic", "claude-fable", True),
+        ("openai", "gpt-5.1", True),
+    ]
+    assert thinking_deltas == ["final-only"]
