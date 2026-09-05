@@ -1,8 +1,18 @@
 name: Assign new issues to a custom agent
 
 on:
-  issues:
-    types: [opened]
+  # Automatic assignment on issue creation is disabled. Run this workflow
+  # manually (Actions tab > "Assign new issues to a custom agent" > Run
+  # workflow) for the issue you want to hand off, or re-enable the trigger
+  # below once you want every new issue auto-assigned again.
+  # issues:
+  #   types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to assign
+        required: true
+        type: number
 
 permissions:
   contents: read
@@ -10,15 +20,11 @@ permissions:
 
 jobs:
   assign:
-    if: >-
-      !contains(github.event.issue.body || '', '<!-- do-not-auto-assign-agent -->') &&
-      !contains(github.event.issue.assignees.*.login, 'copilot-swe-agent[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       GH_TOKEN: ${{ secrets.COPILOT_ASSIGNMENT_TOKEN }}
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
-      LABELS_JSON: ${{ toJson(github.event.issue.labels) }}
+      ISSUE_NUMBER: ${{ inputs.issue_number }}
       AGENT_BASE_BRANCH: staging
 
     steps:
@@ -32,22 +38,44 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve the labeled agent and its pinned model
-        id: config
+      - name: Load the issue and check opt-out/assignment state
+        id: issue
         shell: bash
         run: |
           set -euo pipefail
-          config="$(python3 .github/scripts/agent_config.py --labels-json "$LABELS_JSON")"
+          issue="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}")"
+
+          if jq -e '(.body // "") | contains("<!-- do-not-auto-assign-agent -->")' <<<"$issue" >/dev/null; then
+            echo 'Issue opts out via <!-- do-not-auto-assign-agent -->; skipping.'
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif jq -e '[.assignees[].login] | contains(["copilot-swe-agent[bot]"])' <<<"$issue" >/dev/null; then
+            echo 'Issue is already assigned to copilot-swe-agent[bot]; skipping.'
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+          jq -c '.labels' <<<"$issue" > "$RUNNER_TEMP/labels.json"
+
+      - name: Resolve the labeled agent and its pinned model
+        id: config
+        if: steps.issue.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$(python3 .github/scripts/agent_config.py --labels-json "$(cat "$RUNNER_TEMP/labels.json")")"
           echo "agent=$(jq -r .agent <<<"$config")" >> "$GITHUB_OUTPUT"
           echo "model=$(jq -r .model <<<"$config")" >> "$GITHUB_OUTPUT"
 
       - name: Assign the issue to Copilot cloud agent
+        if: steps.issue.outputs.skip != 'true'
         shell: bash
         env:
           CUSTOM_AGENT: ${{ steps.config.outputs.agent }}
           AGENT_MODEL: ${{ steps.config.outputs.model }}
         run: |
           set -euo pipefail
+          # AGENT_MODEL is empty when the agent profile doesn't pin a model;
+          # omit it so the cloud agent falls back to its own default model.
           payload="$(jq -n \
             --arg repo "$GITHUB_REPOSITORY" \
             --arg branch "$AGENT_BASE_BRANCH" \
@@ -55,13 +83,12 @@ jobs:
             --arg model "$AGENT_MODEL" \
             '{
               assignees: ["copilot-swe-agent[bot]"],
-              agent_assignment: {
+              agent_assignment: ({
                 target_repo: $repo,
                 base_branch: $branch,
                 custom_instructions: "Follow the selected custom-agent profile exactly.",
-                custom_agent: $agent,
-                model: $model
-              }
+                custom_agent: $agent
+              } + (if $model == "" then {} else {model: $model} end))
             }')"
 
           gh api --method POST \

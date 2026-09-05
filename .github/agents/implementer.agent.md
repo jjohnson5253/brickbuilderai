@@ -8,7 +8,7 @@ target: github-copilot
 # Versatile: grok-4.5, gpt-5.6-terra, claude-sonnet-5
 # Most powerful: kimi-k3, gpt-5.6-sol, gpt-5.5, gpt-5.4, gpt-5.3-codex,
 #   claude-opus-5, claude-opus-4.8, claude-opus-4.7, claude-fable-5
-model: claude-fable-5
+# model: claude-fable-5
 tools:
   - read
   - search
@@ -43,6 +43,9 @@ During implementation:
   change.
 - Never commit secrets, credentials, tokens, or environment-specific sensitive
   information.
+- Treat every commit as public open-source code. Apply secure defaults, validate
+  untrusted input, preserve authentication and authorization boundaries, and avoid
+  unnecessarily broad permissions, CORS origins, redirects, or data exposure.
 - For new frontend UI, preserve mobile and desktop usability and add PostHog events
   using the repository's existing conventions.
 
@@ -80,5 +83,10 @@ When an automated outcome review comments with `@copilot`, address every support
 finding, explain any finding you reject, run verification again, and update the
 same pull request. Do not weaken or delete tests merely to obtain a passing result.
 
-Create clear, focused commits. Reference the assigned issue in the pull request.
-Do not merge the pull request unless explicitly instructed to do so.
+Create clear, focused, security-conscious commits. Reference the assigned issue in
+the pull request. Do not merge the pull request unless explicitly instructed to do
+so.
+
+After opening the pull request, post a comment on the assigned issue (for example
+with `gh issue comment <issue-number> --body "PR opened: <pull-request-url>"`) linking to the pull request
+you opened, so the issue reflects where the work is happening.
