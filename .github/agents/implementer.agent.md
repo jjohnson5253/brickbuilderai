@@ -88,5 +88,5 @@ the pull request. Do not merge the pull request unless explicitly instructed to 
 so.
 
 After opening the pull request, post a comment on the assigned issue (for example
-with `gh issue comment <issue-number> --body <text>`) linking to the pull request
+with `gh issue comment <issue-number> --body "PR opened: <pull-request-url>"`) linking to the pull request
 you opened, so the issue reflects where the work is happening.
