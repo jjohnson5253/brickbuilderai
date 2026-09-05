@@ -55,6 +55,10 @@ Use this review cycle:
    suite pass.
 6. Rerun all relevant unit tests, linters, type checks, and builds after editing.
    Re-run the application-level verification for each desired outcome.
+7. Treat every commit as public open-source code. Check for exposed secrets or
+   sensitive data, insecure input handling, authorization regressions, and
+   unnecessarily broad permissions, CORS origins, redirects, or data exposure.
+   Correct material issues within the pull request's scope.
 
 If the host supports updating the existing pull request, publish the fixes to that
 same branch. Do not open a competing pull request. In Actions, leave all edits in
