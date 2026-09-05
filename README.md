@@ -1,143 +1,130 @@
 <h1 align="center">BrickBuilder</h1>
 
 <p align="center">
-  <b>Use AI to design LEGO® models.</b><br/> Turn any image or text prompt into a buildable LEGO®-compatible brick model.</b><br/>
-  <!-- Get a 3D preview, step-by-step building instructions, downloadable LDR/MPD files, and a parts list you can order. -->
+  <strong>Turn an image or an idea into a buildable brick model.</strong><br>
+  Generate a 3D model, inspect it in the browser, follow building instructions,
+  and download files or a parts list.
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://github.com/jjohnson5253/brickbuilderai/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/jjohnson5253/brickbuilderai?style=flat" /></a>
-  <a href="https://github.com/jjohnson5253/brickbuilderai/network/members"><img alt="GitHub forks" src="https://img.shields.io/github/forks/jjohnson5253/brickbuilderai?style=flat" /></a>
-  <a href="https://github.com/jjohnson5253/brickbuilderai/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/jjohnson5253/brickbuilderai" /></a>
-  <a href="https://github.com/jjohnson5253/brickbuilderai/commits"><img alt="Last commit" src="https://img.shields.io/github/last-commit/jjohnson5253/brickbuilderai" /></a>
-  <img alt="Made with TypeScript" src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" />
-  <img alt="Made with Python" src="https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white" />
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+  <a href="https://github.com/jjohnson5253/brickbuilderai/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/jjohnson5253/brickbuilderai?style=flat"></a>
+  <a href="https://github.com/jjohnson5253/brickbuilderai/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/jjohnson5253/brickbuilderai"></a>
 </p>
 
 <p align="center">
-  <img width="768" height="520" alt="github-readme-video (1)" src="https://github.com/user-attachments/assets/63added8-2404-45ce-a87c-df40c801ddf4" />
+  <img width="768" height="520" alt="BrickBuilder demo" src="https://github.com/user-attachments/assets/63added8-2404-45ce-a87c-df40c801ddf4">
 </p>
 
-## What it does
+## How it works
 
-Upload a photo or type a prompt, and BrickBuilder turns it into a real brick build:
+1. **Describe or upload** — provide a text prompt or an image.
+2. **Create geometry** — the backend uses the selected image-to-3D pipeline.
+3. **Convert to bricks** — the model is voxelized and optimized into brick parts.
+4. **Build and share** — view the result in 3D, step through instructions, download
+   LDraw files (`.ldr`/`.mpd`), or review the parts list.
 
-1. **Image or text in** — start from any picture, or describe what you want.
-2. **3D reconstruction** — a Trellis or SAM-3D model converts the subject into a solid shape.
-3. **Voxelization** - 3D model is voxelized if using Trellis, or gotten directly from the SAM3D stream.
-4. **Brick optimization** — an optimizer packs the voxels into real LEGO®-compatible parts.
-5. **Build it** — explore the model in 3D, follow the instructions, download the LDR/MPD, or order the parts.
-
-Generation time is typically under 30 seconds when SAM3D is used.
+Standard generation uses the Trellis pipeline. SAM-3D is an optional streaming
+pipeline that can produce better voxel results and typically completes in under
+30 seconds, but requires a separately hosted RunPod worker.
 
 ## Examples
 
 <p align="center">
-  <img src="frontend/public/assets/demo-images/Pokemon.png" width="180" />
-  <img src="frontend/public/assets/demo-images/Link.png" width="180" />
-  <img src="frontend/public/assets/demo-images/Octopus.png" width="180" />
-  <img src="frontend/public/assets/demo-images/Nyan%20Cat.png" width="180" />
+  <img src="frontend/public/assets/demo-images/Pokemon.png" width="180" alt="Pokemon example">
+  <img src="frontend/public/assets/demo-images/Link.png" width="180" alt="Link example">
+  <img src="frontend/public/assets/demo-images/Octopus.png" width="180" alt="Octopus example">
+  <img src="frontend/public/assets/demo-images/Nyan%20Cat.png" width="180" alt="Nyan Cat example">
 </p>
 
-## Project layout
+## Repository layout
 
-| Folder | What it is | Stack |
-| --- | --- | --- |
-| `frontend/` | Web app: upload, 3D viewer, instructions, checkout | React, Vite, TypeScript, Three.js, Tailwind, Supabase, Stripe |
-| `backend/` | API that converts images/text into brick models | fal.ai Python, FastAPI, Open3D, Trimesh |
-| `serverless/` | Image-to-3D voxel generation worker | SAM-3D, Docker, RunPod |
+| Directory | Description |
+| --- | --- |
+| [`frontend/`](frontend/) | React/Vite application, 3D viewer, instructions, and checkout |
+| [`backend/`](backend/) | FastAPI API, voxelization, brick optimization, and integrations |
+| [`serverless/`](serverless/) | Dockerized SAM-3D worker for RunPod |
 
-## Running locally
-
-<details>
-<summary>🤖 <strong>AI Setup Prompt</strong> — Copy this prompt to your AI assistant to set up the project automatically</summary>
-
-```
-Help me set up and run the BrickBuilder project locally.
-
-Prerequisites I need installed:
-- Python 3.10+
-- Node.js
-- uv (Python package manager from Astral)
-
-Steps:
-1. Copy backend/.env-example to backend/.env and frontend/.env-example to frontend/.env
-2. Ask me for my fal.ai API key and set FAL_KEY in backend/.env
-3. Run `python install.py` to install dependencies (uses uv for backend, npm for frontend)
-4. Run `python run.py` to start both the backend API (port 8002) and frontend dev server. The backend server will take a minute to start the first run as it builds c++ executables.
-
-The backend is a FastAPI server, frontend is React+Vite. Let me know if any dependencies are missing.
-```
-
-</details>
+## Run locally
 
 ### Prerequisites
 
-| Requirement | Notes |
-| --- | --- |
-| **Python 3.10+** | [python.org/downloads](https://www.python.org/downloads/) |
-| **Node.js** | [nodejs.org](https://nodejs.org/) |
-| **uv** | Python package manager — [install guide](https://docs.astral.sh/uv/getting-started/installation/) |
-| **fal.ai account** | Sign up at [fal.ai](https://fal.ai/) and get an API key |
+- Python 3.10 or newer
+- Node.js and npm
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- A [fal.ai](https://fal.ai/) account and API key
 
-### Environment setup
+### Configure environment variables
 
-1. Copy the example env files:
-   ```bash
-   cp backend/.env-example backend/.env
-   cp frontend/.env-example frontend/.env
-   ```
+Copy the example files and fill in the values needed for your setup:
 
-2. Set your fal API key in `backend/.env`:
-   ```
-   FAL_KEY=your_fal_api_key_here
-   ```
+```bash
+cp backend/.env-example backend/.env
+cp frontend/.env-example frontend/.env
+```
 
-3. (Optional) Configure Supabase, Stripe, and other integrations in the `.env` files as needed. A local postgres database will be spun up if supabase is not connected.
+At minimum, set `FAL_KEY` in `backend/.env`. The frontend's local API mode
+defaults to `http://127.0.0.1:8002`; set the Supabase values in
+`frontend/.env` if you are using authentication or saved generations. See the
+comments in both example files for optional integrations such as Stripe,
+BrickOwl, PostHog, and RunPod.
 
-### Install & run
+> Never commit `.env` files or put server-only secrets in `VITE_*` variables.
+> `VITE_*` values are bundled into the browser and are public.
+
+### Install and start
+
+From the repository root:
 
 ```bash
 python install.py
 python run.py
 ```
-Voxelization with SAM-3D produces better results than Trellis, but it runs as a separate worker that you host on RunPod. To enable it, deploy the SAM-3D image on [RunPod](https://www.runpod.io/)
 
-Since the LEGO pipeline only needs voxels, BrickBuilder streams SAM3D's geometry/appearance callbacks and stops after the final colored voxel output. This avoids the extra mesh decoding and GLB export step, reducing end-to-end generation time.
+This starts the FastAPI backend on port `8002` and the Vite development server
+on its configured local port. To run either application independently, see
+[`backend/README.md`](backend/README.md) and
+[`frontend/README.md`](frontend/README.md).
 
-The SAM3D worker image is published publicly on Docker Hub as `jjohnson5253/manifold-sam3d:latest`, so you can deploy it on RunPod without building it yourself:
+### Optional SAM-3D worker
 
-1. In the [RunPod Serverless console](https://www.runpod.io/console/serverless), create a new endpoint.
-2. Set the container image to `jjohnson5253/manifold-sam3d:latest` (leave container registry auth blank — the image is public).
-3. Pick a GPU with enough VRAM (an H100 is recommended for SAM-3D).
-4. Attach a network volume to the endpoint and mount it where the model weights are cached. The weights are large, so the volume keeps them warm across workers and avoids re-downloading them on every cold start, which makes the endpoint load much faster.
-5. Deploy, then copy the endpoint ID and your RunPod API key into `RUNPOD_ENDPOINT_ID` and `RUNPOD_API_KEY` in `backend/.env`.
-
-See `serverless/README.md` if you want to build and push your own image instead.
+The default pipeline does not require RunPod. To enable streaming generation,
+deploy the public `jjohnson5253/manifold-sam3d:latest` image as a RunPod
+Serverless endpoint, then set `RUNPOD_API_KEY` and `RUNPOD_ENDPOINT_ID` in
+`backend/.env`. An H100 is recommended because the model requires substantial
+GPU memory. For instructions to build the image yourself, see
+[`serverless/README.md`](serverless/README.md).
 
 ## Testing
 
-Pull requests run isolated backend and frontend test jobs in GitHub Actions. The
-tests mock external APIs and storage, so no production credentials are needed.
+Dependencies are mocked where possible, so production credentials are not
+needed for the test suites.
 
 ```bash
 # Backend
 cd backend
 uv run --group dev pytest
 
-# Frontend (unit tests and coverage gate)
+# Frontend
 cd frontend
-npm ci
-npm run test:coverage
+npm install
+npm test
 ```
 
-## Attributes
-- Legolization: https://github.com/AvaLovelace1/BrickGPT/
-- Image-to-3D Streaming: https://github.com/rehan-remade/Manifold
+## Related documentation
+
+- [Backend API examples](backend/README.md)
+- [Frontend development notes](frontend/README.md)
+- [SAM-3D worker notes](serverless/README.md)
+
+## Acknowledgements
+
+- [BrickGPT](https://github.com/AvaLovelace1/BrickGPT/) — brick optimization
+- [Manifold](https://github.com/rehan-remade/Manifold) — image-to-3D streaming
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+BrickBuilder is licensed under the [MIT License](LICENSE).
 
-> LEGO® is a trademark of the LEGO Group, which does not sponsor, authorize, or endorse this project
+> LEGO® is a trademark of the LEGO Group, which does not sponsor, authorize,
+> or endorse this project.
