@@ -19,6 +19,12 @@ import { UpdateUsernameApiService, UsernameTakenError } from '../src/services/up
 
 const ok = (data: unknown) => ({ ok: true, status: 200, statusText: 'OK', json: vi.fn().mockResolvedValue(data), text: vi.fn() });
 const fail = (status = 400, text = 'bad request') => ({ ok: false, status, statusText: 'Bad Request', json: vi.fn(), text: vi.fn().mockResolvedValue(text) });
+const sse = (chunks: string[]) => new ReadableStream({
+  start(controller) {
+    chunks.forEach((chunk) => controller.enqueue(new TextEncoder().encode(chunk)));
+    controller.close();
+  },
+});
 
 describe('JSON API service contracts', () => {
   beforeEach(() => vi.stubGlobal('fetch', vi.fn()));
@@ -75,6 +81,27 @@ describe('JSON API service contracts', () => {
     await expect(UpdateModelApiService.updateModel('g', 'xyz')).rejects.toThrow('API error: 500 - broken');
     vi.mocked(fetch).mockResolvedValueOnce(fail(409, 'taken') as unknown as Response);
     await expect(UpdateUsernameApiService.updateUsername('taken')).rejects.toBeInstanceOf(UsernameTakenError);
+  });
+
+  it('streams LLM brick-design thinking before returning the result', async () => {
+    const result = { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], message: 'ok' };
+    const thinking = vi.fn();
+    const stream = sse([
+      'data: {"type":"thinking","delta":"I see a red "}\n',
+      '\ndata: {"type":"thinking","delta":"torso."}\n\n',
+      `data: ${JSON.stringify({ type: 'result', data: result })}\n\n`,
+    ]);
+    vi.mocked(fetch).mockResolvedValueOnce({ ...ok({}), body: stream } as unknown as Response);
+
+    await expect(LlmRenderApiService.llmRenderStream('xyz', 'image', 'paint', 'tok', thinking)).resolves.toEqual(result);
+    expect(thinking.mock.calls.flat()).toEqual(['I see a red ', 'torso.']);
+    expect(String(vi.mocked(fetch).mock.calls[0][0]).endsWith('/llmRender/stream')).toBe(true);
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ...ok({}),
+      body: sse(['data: {"type":"error","detail":"Model unavailable"}\n\n']),
+    } as unknown as Response);
+    await expect(LlmRenderApiService.llmRenderStream('xyz', 'image')).rejects.toThrow('Model unavailable');
   });
 
   it('validates required values before making requests', async () => {
