@@ -935,6 +935,221 @@ def _build_voxel_preview_data_url(
 
 
 # ---------------------------------------------------------------------------
+# Few-shot examples
+# ---------------------------------------------------------------------------
+
+
+def _few_shot_enabled() -> bool:
+    value = os.getenv("OPENAI_LLM_RENDER_FEW_SHOT", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _example_block(
+    x_range: Tuple[int, int],
+    y_range: Tuple[int, int],
+    z_range: Tuple[int, int],
+    color: Tuple[int, int, int],
+) -> Dict[Tuple[int, int, int], Tuple[int, int, int]]:
+    return {
+        (x, y, z): color
+        for x in range(*x_range)
+        for y in range(*y_range)
+        for z in range(*z_range)
+    }
+
+
+def _paint_front(
+    voxels: Dict[Tuple[int, int, int], Tuple[int, int, int]],
+    x: int,
+    z: int,
+    color: Tuple[int, int, int],
+) -> None:
+    """Recolor the front-most voxel (smallest y, i.e. facing the front camera)
+    in the given column, mirroring how details sit on a model's surface."""
+    for y in range(-64, 64):
+        if (x, y, z) in voxels:
+            voxels[(x, y, z)] = color
+            return
+
+
+def _example_robot() -> Tuple[
+    str,
+    List[Dict[str, int]],
+    Dict[Tuple[int, int, int], Tuple[str, str]],
+]:
+    """A blue-bodied, grey-headed toy robot with two black eyes and two red
+    buttons: exercises part identification plus is_detail/island_count."""
+    blue, grey, black, red = (40, 90, 200), (170, 170, 170), (20, 20, 20), (200, 40, 40)
+    voxels = _example_block((0, 10), (0, 8), (0, 10), blue)
+    voxels.update(_example_block((2, 8), (1, 7), (10, 17), grey))
+    for x, z in ((3, 13), (3, 14), (6, 13), (6, 14)):
+        _paint_front(voxels, x, z, black)
+    for x, z in ((4, 4), (5, 4), (4, 6), (5, 6)):
+        _paint_front(voxels, x, z, red)
+    parts = {
+        blue: ("body", "large lower block; matches the robot's blue torso in the reference"),
+        grey: ("head", "smaller block sitting on top of the body; matches the grey head"),
+        black: (
+            "eyes",
+            "small dark detail on the head front with island_count 2, matching the two eyes",
+        ),
+        red: (
+            "buttons",
+            "small detail on the body front with island_count 2, matching the two red buttons",
+        ),
+    }
+    return (
+        "toy robot",
+        [
+            {"x": x, "y": y, "z": z, "r": c[0], "g": c[1], "b": c[2]}
+            for (x, y, z), c in voxels.items()
+        ],
+        parts,
+    )
+
+
+def _example_mushroom() -> Tuple[
+    str,
+    List[Dict[str, int]],
+    Dict[Tuple[int, int, int], Tuple[str, str]],
+]:
+    """A red-capped mushroom on a beige stem with white spots on the cap front:
+    exercises matching a repeated detail against the reference."""
+    beige, red, white = (225, 200, 160), (190, 30, 40), (240, 240, 240)
+    voxels = _example_block((3, 8), (3, 8), (0, 6), beige)
+    cx, cy, cz, radius = 5.0, 5.0, 5.0, 6.0
+    for x in range(0, 11):
+        for y in range(0, 11):
+            for z in range(6, 12):
+                if (x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2 <= radius * radius:
+                    voxels[(x, y, z)] = red
+    for x, z in ((2, 8), (2, 9), (8, 8), (8, 9)):
+        _paint_front(voxels, x, z, white)
+    parts = {
+        beige: ("stem", "narrow beige column supporting the cap"),
+        red: ("cap", "wide red dome sitting on top of the stem"),
+        white: (
+            "spots",
+            "small white detail on the cap with island_count 2, matching the cap spots",
+        ),
+    }
+    return (
+        "mushroom",
+        [
+            {"x": x, "y": y, "z": z, "r": c[0], "g": c[1], "b": c[2]}
+            for (x, y, z), c in voxels.items()
+        ],
+        parts,
+    )
+
+
+def _render_reference_data_url(voxels: List[Dict[str, int]]) -> str:
+    """Render the model's true colors from the front camera as an example
+    'reference image' PNG data URL."""
+    coords, colors = _voxel_arrays(voxels)
+    front = next(view for view in VIEWS if view["name"] == "front")
+    projection = _project_segments(
+        coords, np.arange(1, len(voxels) + 1, dtype=np.int32), front
+    )
+    palette = np.vstack([np.full((1, 3), 255), colors]).astype(np.uint8)
+    image = Image.fromarray(palette[projection], "RGB")
+    scale = max(1, min(PREVIEW_TILE_SIZE // image.width, PREVIEW_TILE_SIZE // image.height))
+    if scale > 1:
+        image = image.resize((image.width * scale, image.height * scale), Image.NEAREST)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _build_few_shot_example(
+    subject: str,
+    voxels: List[Dict[str, int]],
+    parts_by_color: Dict[Tuple[int, int, int], Tuple[str, str]],
+) -> Dict[str, Any]:
+    """Run the real segmentation pipeline on an example model and pair it with
+    the correct answer, so the LLM sees the full task end to end."""
+    segment_ids = _segment_voxels(voxels, DEFAULT_MAX_SEGMENTS)
+    _, colors = _voxel_arrays(voxels)
+    assignments = []
+    for segment_id in np.unique(segment_ids):
+        members = colors[segment_ids == segment_id]
+        unique_colors, counts = np.unique(members, axis=0, return_counts=True)
+        dominant = unique_colors[np.argmax(counts)]
+        color, (part, reason) = min(
+            parts_by_color.items(),
+            key=lambda item: float(((np.array(item[0]) - dominant) ** 2).sum()),
+        )
+        assignments.append(
+            {
+                "segment_id": int(segment_id),
+                "part": part,
+                "reason": reason,
+                "color": list(color),
+            }
+        )
+    return {
+        "scene_summary": _build_scene_summary(voxels, segment_ids),
+        "reference_image_url": _render_reference_data_url(voxels),
+        "voxel_preview_image_url": _build_voxel_preview_data_url(voxels, segment_ids),
+        "answer": {"subject": subject, "assignments": assignments},
+    }
+
+
+_FEW_SHOT_MESSAGES: Optional[List[Dict[str, Any]]] = None
+
+
+def _few_shot_messages() -> List[Dict[str, Any]]:
+    """User/assistant message pairs showing two worked examples of the task:
+    a reference image and its labelled voxel preview, then the correct segment
+    color assignments. Built once and cached for the process lifetime."""
+    global _FEW_SHOT_MESSAGES
+    if _FEW_SHOT_MESSAGES is None:
+        messages: List[Dict[str, Any]] = []
+        examples = [
+            _build_few_shot_example(*_example_robot()),
+            _build_few_shot_example(*_example_mushroom()),
+        ]
+        for index, example in enumerate(examples, start=1):
+            example_prompt = {
+                "example": index,
+                "task": (
+                    "Worked example. Image 1 is the reference and image 2 is the "
+                    "labelled voxel preview, exactly like the real request that "
+                    "follows the examples."
+                ),
+                "scene_summary": example["scene_summary"],
+            }
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": json.dumps(example_prompt)},
+                        {
+                            "type": "input_image",
+                            "image_url": example["reference_image_url"],
+                            "detail": "low",
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": example["voxel_preview_image_url"],
+                            "detail": "low",
+                        },
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": json.dumps(example["answer"])}
+                    ],
+                }
+            )
+        _FEW_SHOT_MESSAGES = messages
+    return _FEW_SHOT_MESSAGES
+
+
+# ---------------------------------------------------------------------------
 # OpenAI call
 # ---------------------------------------------------------------------------
 
@@ -1035,6 +1250,14 @@ async def _call_openai_for_assignments(
         "that a model builder can follow, such as identifying parts and their colors. "
         "Return only JSON."
     )
+    few_shot_messages: List[Dict[str, Any]] = []
+    if _few_shot_enabled():
+        few_shot_messages = _few_shot_messages()
+        system_prompt += (
+            " The conversation starts with worked example pairs: a reference image "
+            "and labelled voxel preview followed by the correct JSON answer. The "
+            "final user message is the real request to answer."
+        )
     user_prompt = {
         "task": (
             "Image 1 is the reference. Image 2 shows the voxel model from four cameras "
@@ -1065,6 +1288,7 @@ async def _call_openai_for_assignments(
                 "role": "system",
                 "content": [{"type": "input_text", "text": system_prompt}],
             },
+            *few_shot_messages,
             {
                 "role": "user",
                 "content": [
