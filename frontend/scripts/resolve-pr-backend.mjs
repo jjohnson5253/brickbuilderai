@@ -18,7 +18,8 @@
  *   RAILWAY_API_TOKEN            - Railway account or workspace token
  *   RAILWAY_PROJECT_ID           - the Railway project containing the backend
  *   RAILWAY_BACKEND_SERVICE_NAME - name of the backend service in Railway
- *                                  (defaults to "backend")
+ *                                  (defaults to "brickai-backend"; only needed
+ *                                  if you rename the Railway service)
  */
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +42,7 @@ async function main() {
 
   const token = process.env.RAILWAY_API_TOKEN;
   const projectId = process.env.RAILWAY_PROJECT_ID;
-  const serviceName = process.env.RAILWAY_BACKEND_SERVICE_NAME || 'backend';
+  const serviceName = process.env.RAILWAY_BACKEND_SERVICE_NAME || 'brickai-backend';
 
   if (!token || !projectId) {
     log(
