@@ -85,7 +85,7 @@ curl -X POST http://localhost:8002/promptEditModel \
   -o edited_model_response.json
 ```
 #### /llmRender
-Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`.
+Recolor an existing xyzrgb file to better match one or more reference images. Requires `OPENAI_API_KEY`.
 
 The model is first split server-side into up to `max_segments` (default 16) contiguous
 segments. Splitting combines colour structure (clustered in CIELAB with lightness
@@ -94,9 +94,15 @@ watershed that separates thick cores joined by thin necks, so same-coloured part
 a head and torso still split). Small high-contrast features (eyes, mouth, buttons, logos,
 jewelry, shirt patterns) are protected from speckle removal, and same-coloured pieces of
 one feature (both eyes, all buttons) share a single segment; the scene summary flags these
-with `is_detail` and `island_count`. A labelled multi-view preview of those
-segments plus the reference image is sent to OpenAI, which returns one colour per segment.
-`applied_rules` in the response lists each segment's inferred part name, reason and colour.
+with `is_detail` and `island_count`. Unless `check_segmentation` is false, the LLM then
+reviews the labelled preview against the reference image(s) and may merge segments that
+are fragments of one part or ask for a segment spanning several parts to be re-split
+deterministically; applied changes are reported in `segmentation_adjustments` (segment ids
+there refer to the segmentation the LLM reviewed). A labelled multi-view preview of the
+final segments plus every reference image is sent to OpenAI, which returns one colour per
+segment. `applied_rules` in the response lists each segment's inferred part name, reason
+and colour. Reference images can be given as `reference_image_url`, `reference_image_urls`
+(max 4 combined), or both.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
 (default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
@@ -106,9 +112,10 @@ curl -X POST http://localhost:8002/llmRender \
   -H "X-API-Key: <your DEVELOPER_API_KEY>" \
   -d '{
     "xyzrgb_url": "https://example.com/model.xyzrgb",
-    "reference_image_url": "https://example.com/reference.png",
+    "reference_image_urls": ["https://example.com/reference.png", "https://example.com/reference-side.png"],
     "prompt": "match the character colors, preserving the model shape",
     "max_segments": 16,
+    "check_segmentation": true,
     "include_preview": false
   }' \
   -o llm_render_response.json

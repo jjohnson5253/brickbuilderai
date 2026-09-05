@@ -18,9 +18,11 @@ const API_BASE_URL = getApiUrl();
 
 export interface LlmRenderRequest {
   xyzrgb_url: string;
-  reference_image_url: string;
+  reference_image_url?: string;
+  reference_image_urls?: string[];
   prompt?: string;
   max_segments?: number;
+  check_segmentation?: boolean;
 }
 
 export interface LlmRenderAppliedRule {
@@ -31,12 +33,23 @@ export interface LlmRenderAppliedRule {
   changed_voxels: number;
 }
 
+export interface LlmRenderSegmentationAdjustment {
+  action: 'merge' | 'split';
+  segment_ids?: number[];
+  into?: number;
+  segment_id?: number;
+  pieces?: number;
+  new_segment_ids?: number[];
+  reason?: string | null;
+}
+
 export interface LlmRenderResponse {
   xyzrgb_content: string;
   voxel_count: number;
   segment_count: number;
   model: string;
   applied_rules: LlmRenderAppliedRule[];
+  segmentation_adjustments?: LlmRenderSegmentationAdjustment[];
   preview_image?: string | null;
   message: string;
 }
@@ -44,7 +57,7 @@ export interface LlmRenderResponse {
 export class LlmRenderApiService {
   static async llmRender(
     xyzrgbUrl: string,
-    referenceImageUrl: string,
+    referenceImageUrls: string | string[],
     prompt?: string,
     accessToken?: string
   ): Promise<LlmRenderResponse> {
@@ -60,7 +73,9 @@ export class LlmRenderApiService {
 
     const requestBody: LlmRenderRequest = {
       xyzrgb_url: xyzrgbUrl,
-      reference_image_url: referenceImageUrl,
+      reference_image_urls: Array.isArray(referenceImageUrls)
+        ? referenceImageUrls
+        : [referenceImageUrls],
       prompt,
     };
 
@@ -85,7 +100,7 @@ export class LlmRenderApiService {
 
   static async llmRenderStream(
     xyzrgbUrl: string,
-    referenceImageUrl: string,
+    referenceImageUrls: string | string[],
     prompt?: string,
     accessToken?: string,
     onThinking?: (delta: string) => void,
@@ -100,7 +115,9 @@ export class LlmRenderApiService {
       headers,
       body: JSON.stringify({
         xyzrgb_url: xyzrgbUrl,
-        reference_image_url: referenceImageUrl,
+        reference_image_urls: Array.isArray(referenceImageUrls)
+          ? referenceImageUrls
+          : [referenceImageUrls],
         prompt,
       } satisfies LlmRenderRequest),
     });
