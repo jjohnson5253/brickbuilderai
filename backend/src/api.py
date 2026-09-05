@@ -7,7 +7,7 @@ os.environ["OPEN3D_HEADLESS"] = "1"
 os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 from fastapi import FastAPI, Depends, Request, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from dotenv import load_dotenv
@@ -22,7 +22,7 @@ from .requests.partToMpd import part_to_mpd, PartToMpdRequest, PartToMpdResponse
 from .requests.ldrToMpd import ldr_to_mpd, LdrToMpdRequest, LdrToMpdResponse
 from .requests.resizeModel import resize_model, ResizeModelRequest, ResizeModelResponse
 from .requests.promptEditModel import prompt_edit_model, PromptEditModelRequest
-from .requests.llmRender import llm_render, LlmRenderRequest, LlmRenderResponse
+from .requests.llmRender import llm_render, llm_render_stream, LlmRenderRequest, LlmRenderResponse
 from .requests.createCheckoutSession import create_checkout_session, CreateCheckoutSessionRequest, CreateCheckoutSessionResponse
 from .requests.stripeWebhook import stripe_webhook, StripeWebhookRequest, StripeWebhookResponse
 from .requests.getGeneration import get_generation, GetGenerationRequest, GetGenerationResponse
@@ -294,6 +294,19 @@ async def llm_render_endpoint(
     the returned semantic color and geometry edits, and returns updated xyzrgb content.
     """
     return await llm_render(request, auth_info)
+
+
+@app.post("/llmRender/stream")
+async def llm_render_stream_endpoint(
+    request: LlmRenderRequest,
+    auth_info: dict = Depends(get_user_with_optional_auth),
+) -> StreamingResponse:
+    """Stream brick-design reasoning summaries and the recolored model."""
+    return StreamingResponse(
+        llm_render_stream(request, auth_info),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
 
 
 @app.post("/createCheckoutSession", response_model=CreateCheckoutSessionResponse)
