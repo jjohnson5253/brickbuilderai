@@ -176,10 +176,11 @@ async def process_image_to_bricks_task(
         image_input_for_3d = image_input
         is_base64_for_3d = is_base64
         prompt_enhancement = None
+        reference_image_urls = None
         
         if edit_image:
-            logger.info("Applying nano banana edit preprocessing to image")
-            original_resized_url, processed_image_url, prompt_enhancement = await asyncio.get_event_loop().run_in_executor(
+            logger.info("Generating four Nano Banana Lite reference views")
+            original_resized_url, processed_image_url, prompt_enhancement, reference_image_urls = await asyncio.get_event_loop().run_in_executor(
                 None, generate_image_from_image, image_input, is_base64, prompt, model_option, prompt_option, status_callback
             )
             
@@ -188,7 +189,8 @@ async def process_image_to_bricks_task(
                 generation_id, 
                 "processing", 
                 external_image_url=processed_image_url,
-                prompt_enhancement=prompt_enhancement
+                prompt_enhancement=prompt_enhancement,
+                reference_image_urls=reference_image_urls,
             )
             
             # Use the processed image for 3D model generation
@@ -246,7 +248,8 @@ async def process_image_to_bricks_task(
         await generation_storage.store_images(
             generation_id=generation_id,
             original_image_url=final_storage_original_url,
-            processed_image_url=processed_image_url
+            processed_image_url=processed_image_url,
+            reference_image_urls=reference_image_urls,
         )
         
         # Store GLB file - use fal.ai URL directly

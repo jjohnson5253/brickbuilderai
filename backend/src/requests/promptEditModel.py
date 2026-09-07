@@ -109,9 +109,9 @@ async def process_prompt_edit_task(
         # Update status to processing
         await generation_storage.update_status(new_generation_id, "processing")
         
-        # Step 1: Apply nano banana edit to the processed image using the edit prompt
-        logger.info(f"Applying nano banana edit with prompt: {edit_prompt}")
-        original_resized_url, edited_image_url, prompt_enhancement = generate_image_from_image(
+        # Step 1: Generate four edited views, using isometric for 3D reconstruction
+        logger.info(f"Applying Nano Banana Lite edits with prompt: {edit_prompt}")
+        original_resized_url, edited_image_url, prompt_enhancement, reference_image_urls = generate_image_from_image(
             processed_image_url, 
             is_base64=False,
             edit_prompt=edit_prompt,
@@ -123,7 +123,8 @@ async def process_prompt_edit_task(
             new_generation_id, 
             "processing", 
             external_image_url=edited_image_url,
-            prompt_enhancement=prompt_enhancement
+            prompt_enhancement=prompt_enhancement,
+            reference_image_urls=reference_image_urls,
         )
         
         # Step 2: Generate 3D model from the edited image
@@ -167,7 +168,8 @@ async def process_prompt_edit_task(
         await generation_storage.store_images(
             generation_id=new_generation_id,
             original_image_url=original_resized_url,
-            processed_image_url=edited_image_url
+            processed_image_url=edited_image_url,
+            reference_image_urls=reference_image_urls,
         )
         
         # Store GLB file - use fal.ai URL directly

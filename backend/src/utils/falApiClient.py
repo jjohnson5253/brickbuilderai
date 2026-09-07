@@ -83,7 +83,7 @@ class FalApiClient:
             elif model == "flux-2":
                 endpoint = "fal-ai/flux-2"
             else:  # nano-banana
-                endpoint = "fal-ai/nano-banana"
+                endpoint = "google/nano-banana-lite"
             
             # Build arguments based on model
             arguments = {"prompt": prompt}

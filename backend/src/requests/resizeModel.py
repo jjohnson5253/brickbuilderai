@@ -125,6 +125,8 @@ async def process_resize_model_task(
             update_data['processed_image_url'] = generation['processed_image_url']
         if generation.get('external_image_url'):
             update_data['external_image_url'] = generation['external_image_url']
+        if generation.get('reference_image_urls'):
+            update_data['reference_image_urls'] = generation['reference_image_urls']
         if generation.get('input_image_name'):
             update_data['input_image_name'] = generation['input_image_name']
 

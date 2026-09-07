@@ -85,7 +85,8 @@ curl -X POST http://localhost:8002/promptEditModel \
   -o edited_model_response.json
 ```
 #### /llmRender
-Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`.
+Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`
+and `FAL_KEY`.
 
 The model is first split server-side into up to `max_segments` (default 16) contiguous
 segments. Splitting combines colour structure (clustered in CIELAB with lightness
@@ -95,8 +96,15 @@ a head and torso still split). Small high-contrast features (eyes, mouth, button
 jewelry, shirt patterns) are protected from speckle removal, and same-coloured pieces of
 one feature (both eyes, all buttons) share a single segment; the scene summary flags these
 with `is_detail` and `island_count`. A labelled multi-view preview of those
-segments plus the reference image is sent to OpenAI, which returns one colour per segment.
+segments plus the reference images is sent to OpenAI, which returns one colour per segment.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
+
+Image preprocessing runs four `google/nano-banana-lite/edit` requests concurrently with
+separate front, top, side, and isometric instructions. The isometric output is used for 3D
+reconstruction, while all four ordered URLs are stored in `reference_image_urls` for
+LLM rendering. Callers can also pass one to five URLs directly in `reference_image_urls`.
+For legacy generations with only `reference_image_url`, `/llmRender` creates the four
+views on demand.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
 (default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
@@ -106,7 +114,12 @@ curl -X POST http://localhost:8002/llmRender \
   -H "X-API-Key: <your DEVELOPER_API_KEY>" \
   -d '{
     "xyzrgb_url": "https://example.com/model.xyzrgb",
-    "reference_image_url": "https://example.com/reference.png",
+    "reference_image_urls": [
+      "https://example.com/front.png",
+      "https://example.com/top.png",
+      "https://example.com/side.png",
+      "https://example.com/isometric.png"
+    ],
     "prompt": "match the character colors, preserving the model shape",
     "max_segments": 16,
     "include_preview": false

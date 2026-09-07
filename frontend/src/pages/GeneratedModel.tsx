@@ -29,7 +29,11 @@ import { ResizeScaler } from "../components/ResizeScaler";
 import { ResizeModelApiService } from "../services/resizeModelApi";
 import { PromptEditModelApiService } from "../services/promptEditModelApi";
 import { LlmRenderApiService } from "../services/llmRenderApi";
-import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
+import {
+  GetGenerationApiService,
+  GetGenerationResponse,
+  selectGenerationReferenceImages,
+} from "../services/getGenerationApi";
 import { GetGenerationsByImageApiService, GenerationIteration } from "../services/getGenerationsByImageApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
 import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
@@ -1581,22 +1585,19 @@ export default function GeneratedModel() {
     setLlmEditError(null);
 
     try {
-      let referenceImageUrl = processedImageUrl;
-      if (!referenceImageUrl) {
-        const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
-        referenceImageUrl = generation.processed_image_url || generation.external_image_url;
-        if (generation.processed_image_url) {
-          setProcessedImageUrl(generation.processed_image_url);
-        }
+      const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
+      const referenceImages = selectGenerationReferenceImages(generation, processedImageUrl);
+      if (generation.processed_image_url) {
+        setProcessedImageUrl(generation.processed_image_url);
       }
 
-      if (!referenceImageUrl) {
+      if (!referenceImages) {
         throw new Error('No reference image found for this generation');
       }
 
       const llmResponse = await LlmRenderApiService.llmRender(
         xyzrgbUrl,
-        referenceImageUrl,
+        referenceImages,
         'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
         accessToken || undefined
       );

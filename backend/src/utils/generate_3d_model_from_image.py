@@ -79,7 +79,7 @@ async def generate_3d_model_from_image(
         
         # Edit the image using nano banana - returns both resized original and edited image URLs
         # Pass None for edit_prompt to use default 3D style enhancement based on model_option
-        original_resized_url, edited_image_url, prompt_enhancement_used = await asyncio.get_event_loop().run_in_executor(
+        original_resized_url, edited_image_url, prompt_enhancement_used, _reference_image_urls = await asyncio.get_event_loop().run_in_executor(
             None, generate_image_from_image, image_input, is_base64, None, model_option
         )
         

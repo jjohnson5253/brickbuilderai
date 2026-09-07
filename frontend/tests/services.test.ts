@@ -49,6 +49,25 @@ describe('JSON API service contracts', () => {
     expect((options?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
   });
 
+  it('sends multiple LLM render reference images', async () => {
+    const result = { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], message: 'ok' };
+    vi.mocked(fetch).mockResolvedValueOnce(ok(result) as unknown as Response);
+
+    await expect(
+      LlmRenderApiService.llmRender(
+        'xyz',
+        ['front', 'top', 'side', 'iso', 'bottom'],
+        undefined,
+        'tok',
+      ),
+    ).resolves.toEqual(result);
+
+    expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)).toMatchObject({
+      xyzrgb_url: 'xyz',
+      reference_image_urls: ['front', 'top', 'side', 'iso', 'bottom'],
+    });
+  });
+
   it('persists pricing results used by checkout', async () => {
     const estimate = { cart_id: 'cart', parts_list: [{ design_id: '1', color_id: '2', quantity: 3 }], unmapped_parts: 0 };
     vi.mocked(fetch).mockResolvedValueOnce(ok(estimate) as unknown as Response);

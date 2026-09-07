@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import heapq
 import json
@@ -12,10 +13,11 @@ import httpx
 import numpy as np
 from fastapi import HTTPException
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, root_validator, validator
 from scipy import ndimage
 from skimage.segmentation import watershed
 
+from ..utils import generate_image
 from ..utils.posthog_client import track_api_call, track_error
 
 logger = logging.getLogger(__name__)
@@ -91,9 +93,21 @@ VIEWS: List[Dict[str, Any]] = [
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
+def _validate_image_url(value: str) -> str:
+    if value is None:
+        return value
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("URL is required")
+    if not value.startswith(("http://", "https://")):
+        raise ValueError("URL must start with http:// or https://")
+    return value
+
+
 class LlmRenderRequest(BaseModel):
     xyzrgb_url: str
-    reference_image_url: str
+    reference_image_url: Optional[str] = None
+    reference_image_urls: Optional[List[str]] = None
     prompt: Optional[str] = None
     model: Optional[str] = None
     max_segments: Optional[int] = DEFAULT_MAX_SEGMENTS
@@ -101,12 +115,23 @@ class LlmRenderRequest(BaseModel):
 
     @validator("xyzrgb_url", "reference_image_url")
     def validate_url(cls, value: str) -> str:
-        value = (value or "").strip()
-        if not value:
-            raise ValueError("URL is required")
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("URL must start with http:// or https://")
-        return value
+        return _validate_image_url(value)
+
+    @validator("reference_image_urls")
+    def validate_reference_urls(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return value
+        if not 1 <= len(value) <= 5:
+            raise ValueError("reference_image_urls must contain between 1 and 5 URLs")
+        return [_validate_image_url(url) for url in value]
+
+    @root_validator(skip_on_failure=True)
+    def require_reference_images(cls, values):
+        if not values.get("reference_image_url") and not values.get("reference_image_urls"):
+            raise ValueError("At least one reference image URL is required")
+        if values.get("reference_image_url") and values.get("reference_image_urls"):
+            raise ValueError("Provide reference_image_url or reference_image_urls, not both")
+        return values
 
     @validator("prompt")
     def validate_prompt(cls, value: Optional[str]) -> Optional[str]:
@@ -1002,7 +1027,7 @@ def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
 
 async def _call_openai_for_assignments(
     scene_summary: Dict[str, Any],
-    reference_image_url: str,
+    reference_image_urls: List[str],
     voxel_preview_image_url: str,
     prompt: Optional[str],
     model: str,
@@ -1026,7 +1051,8 @@ async def _call_openai_for_assignments(
     )
     user_prompt = {
         "task": (
-            "Image 1 is the reference. Image 2 shows the voxel model from four cameras "
+            "The reference images show the subject from multiple cameras. The final image "
+            "shows the voxel model from four cameras "
             "with every segment drawn in a flat ID color and labelled with its number "
             "(legend at the bottom). Steps: (1) identify the subject and its major "
             "colored parts in the reference image; (2) work out which preview view "
@@ -1058,7 +1084,10 @@ async def _call_openai_for_assignments(
                 "role": "user",
                 "content": [
                     {"type": "input_text", "text": json.dumps(user_prompt)},
-                    {"type": "input_image", "image_url": reference_image_url, "detail": "high"},
+                    *[
+                        {"type": "input_image", "image_url": url, "detail": "high"}
+                        for url in reference_image_urls
+                    ],
                     {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
                 ],
             },
@@ -1123,6 +1152,18 @@ async def _call_openai_for_assignments(
         raise HTTPException(status_code=502, detail="OpenAI assignments must be an array")
     subject = parsed.get("subject") if isinstance(parsed.get("subject"), str) else ""
     return assignments, subject
+
+
+async def _resolve_reference_image_urls(request: LlmRenderRequest) -> List[str]:
+    if request.reference_image_urls:
+        return request.reference_image_urls
+    if not request.reference_image_url:
+        raise ValueError("A reference image is required")
+
+    return await asyncio.to_thread(
+        generate_image.generate_reference_view_images,
+        request.reference_image_url,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1196,9 +1237,10 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
+        reference_image_urls = await _resolve_reference_image_urls(request)
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
-            reference_image_url=request.reference_image_url,
+            reference_image_urls=reference_image_urls,
             voxel_preview_image_url=voxel_preview_image_url,
             prompt=request.prompt,
             model=model,

@@ -8,13 +8,16 @@ specifically Flux for text-to-image generation with background removal preproces
 import os
 import json
 import logging
+import re
 import tempfile
 import asyncio
 import shutil
 import base64
-import requests
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, List
+
+import requests
 from PIL import Image, ImageOps
 import fal_client
 import httpx
@@ -48,6 +51,72 @@ PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_C = _load_prompt_enhancement("prompt_enhanc
 PROMPT_ENHANCEMENT_REFERENCE_IMAGE = (
     "rendered in the same voxelized way as the objects in this reference image. All patterns on the object should be voxelized with same sized voxels. White background. No shadows. Isometric view."
 )
+
+REFERENCE_VIEWS = (
+    ("front", "Show the subject from a straight-on front view."),
+    ("top", "Show the subject from directly above in a top-down view."),
+    ("side", "Show the subject from a straight-on side profile view."),
+    ("isometric", "Show the subject from a three-quarter isometric view."),
+)
+REFERENCE_VIEW_BASE_PROMPT = (
+    "Preserve the exact same subject, shape, proportions, colors, patterns, and details from "
+    "the input image. Show the full subject centered on a plain white background with flat, "
+    "even lighting and no shadows."
+)
+NANO_BANANA_LITE_EDIT_ENDPOINT = "google/nano-banana-lite/edit"
+
+
+def generate_reference_view_images(
+    image_url: str,
+    base_prompt: Optional[str] = None,
+    status_callback: Optional[Callable[[str], None]] = None,
+) -> List[str]:
+    """Generate front, top, side, and isometric references from one image."""
+    def on_queue_update(update):
+        if isinstance(update, fal_client.Queued):
+            if status_callback:
+                status_callback("queued")
+        elif isinstance(update, fal_client.InProgress):
+            if status_callback:
+                status_callback("processing")
+            for log in update.logs:
+                logger.debug(f"Nano banana reference-view progress: {log['message']}")
+
+    def generate_view(view: tuple[str, str]) -> str:
+        view_name, view_instruction = view
+        prompt_base = re.sub(
+            r"\bisometric view\.?",
+            "",
+            base_prompt.strip(),
+            flags=re.IGNORECASE,
+        ).strip(" ,") if base_prompt and base_prompt.strip() else ""
+        prompt_parts = [prompt_base] if prompt_base else []
+        prompt_parts.extend((REFERENCE_VIEW_BASE_PROMPT, view_instruction))
+        result = fal_client.subscribe(
+            NANO_BANANA_LITE_EDIT_ENDPOINT,
+            arguments={
+                "prompt": " ".join(prompt_parts),
+                "image_urls": [image_url],
+                "num_images": 1,
+                "output_format": "png",
+            },
+            with_logs=True,
+            on_queue_update=on_queue_update,
+        )
+
+        images = result.get("images")
+        image_url_result = (
+            images[0].get("url")
+            if isinstance(images, list) and images and isinstance(images[0], dict)
+            else None
+        )
+        if not image_url_result:
+            logger.error("Nano Banana Lite returned no %s image: %s", view_name, result)
+            raise RuntimeError(f"Nano Banana Lite returned no {view_name} reference image")
+        return image_url_result
+
+    with ThreadPoolExecutor(max_workers=len(REFERENCE_VIEWS)) as executor:
+        return list(executor.map(generate_view, REFERENCE_VIEWS))
 
 
 async def generate_image_from_text_simple_streaming(
@@ -258,7 +327,7 @@ async def generate_image_from_text(prompt: str, model: str, status_callback: Opt
     return original_image_url, processed_image_url, enhanced_prompt
 
 
-def generate_image_from_image(image_input: str, is_base64: bool = False, edit_prompt: str = None, model_option: str = "a", prompt_option: str = "a", status_callback: Optional[Callable[[str], None]] = None) -> tuple[str, str, str]:
+def generate_image_from_image(image_input: str, is_base64: bool = False, edit_prompt: str = None, model_option: str = "a", prompt_option: str = "a", status_callback: Optional[Callable[[str], None]] = None) -> tuple[str, str, str, List[str]]:
     """
     Generate an edited image from an existing image using the fal.ai nano banana edit endpoint.
     Resizes the image to 700px height while maintaining aspect ratio and applies low-poly 3D videogame style.
@@ -272,10 +341,11 @@ def generate_image_from_image(image_input: str, is_base64: bool = False, edit_pr
         status_callback: Optional callback function(status) for queue updates
     
     Returns:
-        Tuple of (resized_original_url, edited_image_url, prompt_enhancement)
+        Tuple of (resized_original_url, isometric_image_url, prompt_enhancement, reference_image_urls)
         - resized_original_url: URL of the resized original image uploaded to fal.ai
-        - edited_image_url: URL of the edited image from nano banana endpoint
+        - isometric_image_url: Isometric Nano Banana Lite output used for 3D generation
         - prompt_enhancement: The prompt text that was used for editing
+        - reference_image_urls: Front, top, side, and isometric output URLs
     """
     try:
         # Step 1: Handle image input and resize to 700px height with aspect ratio maintained
@@ -317,17 +387,6 @@ def generate_image_from_image(image_input: str, is_base64: bool = False, edit_pr
         # Upload resized image to fal.ai storage
         resized_image_url = fal_client.upload(img_buffer.read(), "image/jpeg")
         
-        # Step 2: Call fal.ai nano banana edit endpoint with shared prompt enhancement
-        def on_queue_update(update):
-            if isinstance(update, fal_client.Queued):
-                if status_callback:
-                    status_callback("queued")
-            elif isinstance(update, fal_client.InProgress):
-                if status_callback:
-                    status_callback("processing")
-                for log in update.logs:
-                    logger.debug(f"Nano banana edit progress: {log['message']}")
-        
         # Select prompt enhancement based on model_option (a=regular, b=premium) and prompt_option (a, b, or c)
         if model_option.lower() == "b":
             # Premium (trellis-2)
@@ -354,27 +413,21 @@ def generate_image_from_image(image_input: str, is_base64: bool = False, edit_pr
         else:
             prompt = f"Detect the main subject in this image. {prompt_enhancement_base}"
         
-        logger.info(f"Submitting image to nano banana edit API with prompt: {prompt}")
-        
-        result = fal_client.subscribe(
-            "fal-ai/nano-banana/edit",
-            arguments={
-                "prompt": prompt,
-                "image_urls": [resized_image_url]
-            },
-            with_logs=True,
-            on_queue_update=on_queue_update,
+        logger.info("Submitting four concurrent reference-view requests to Nano Banana Lite")
+        reference_image_urls = generate_reference_view_images(
+            resized_image_url,
+            base_prompt=prompt,
+            status_callback=status_callback,
+        )
+        isometric_image_url = reference_image_urls[-1]
+        logger.info(
+            "Successfully generated four Nano Banana Lite views. "
+            "Resized original URL: %s..., Isometric URL: %s...",
+            resized_image_url[:50],
+            isometric_image_url[:50],
         )
         
-        # Extract the edited image URL from the result
-        if "images" not in result or not result["images"]:
-            logger.error(f"No images in nano banana edit response: {result}")
-            raise Exception("No images returned from nano banana edit endpoint")
-        
-        edited_image_url = result["images"][0]["url"]
-        logger.info(f"Successfully edited image. Resized original URL: {resized_image_url[:50]}..., Edited URL: {edited_image_url[:50]}...")
-        
-        return resized_image_url, edited_image_url, prompt
+        return resized_image_url, isometric_image_url, prompt, reference_image_urls
         
     except Exception as e:
         logger.error(f"Error in generate_image_from_image: {str(e)}")
@@ -418,7 +471,7 @@ def generate_image_from_text_with_reference_image(prompt: str) -> str:
         logger.info(f"Submitting text prompt with reference image to nano banana edit API with prompt: {enhanced_prompt}")
         
         result = fal_client.subscribe(
-            "fal-ai/nano-banana/edit",
+            NANO_BANANA_LITE_EDIT_ENDPOINT,
             arguments={
                 "prompt": enhanced_prompt,
                 "image_urls": [reference_image_url]
@@ -617,7 +670,7 @@ async def generate_image_from_image_streaming(
     model_option: str = "a",
     prompt_option: str = "a",
     edit_prompt: Optional[str] = None,
-) -> Tuple[str, str, str]:
+) -> Tuple[str, str, str, List[str]]:
     """
     Streaming version of generate_image_from_image that sends SSE events
     for fal.ai queue status (queued, processing, completed) through the queue.
@@ -632,7 +685,7 @@ async def generate_image_from_image_streaming(
         edit_prompt: Optional custom prompt to combine with the selected enhancement
 
     Returns:
-        Tuple of (resized_original_url, edited_image_url, prompt_enhancement)
+        Tuple of (resized_original_url, isometric_image_url, prompt_enhancement, reference_image_urls)
     """
     loop = asyncio.get_running_loop()
 
@@ -656,7 +709,7 @@ async def generate_image_from_image_streaming(
             loop,
         )
 
-    resized_original_url, edited_image_url, prompt_enhancement = await loop.run_in_executor(
+    resized_original_url, edited_image_url, prompt_enhancement, reference_image_urls = await loop.run_in_executor(
         None,
         generate_image_from_image,
         image_url,
@@ -672,4 +725,4 @@ async def generate_image_from_image_streaming(
     )
 
     logger.info(f"Streaming image editing complete: resized={resized_original_url[:80]}..., edited={edited_image_url[:80]}...")
-    return resized_original_url, edited_image_url, prompt_enhancement
+    return resized_original_url, edited_image_url, prompt_enhancement, reference_image_urls
