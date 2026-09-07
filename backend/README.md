@@ -106,7 +106,12 @@ curl -X POST http://localhost:8002/llmRender \
   -H "X-API-Key: <your DEVELOPER_API_KEY>" \
   -d '{
     "xyzrgb_url": "https://example.com/model.xyzrgb",
-    "reference_image_url": "https://example.com/reference.png",
+    "reference_image_urls": [
+      "https://example.com/front.png",
+      "https://example.com/top.png",
+      "https://example.com/side.png",
+      "https://example.com/isometric.png"
+    ],
     "prompt": "match the character colors, preserving the model shape",
     "max_segments": 16,
     "include_preview": false

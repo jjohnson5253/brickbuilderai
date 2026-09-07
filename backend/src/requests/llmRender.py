@@ -91,6 +91,17 @@ VIEWS: List[Dict[str, Any]] = [
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
+def _validate_image_url(value: str) -> str:
+    if value is None:
+        return value
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("URL is required")
+    if not value.startswith(("http://", "https://")):
+        raise ValueError("URL must start with http:// or https://")
+    return value
+
+
 class LlmRenderRequest(BaseModel):
     xyzrgb_url: str
     reference_image_url: Optional[str] = None
@@ -102,14 +113,7 @@ class LlmRenderRequest(BaseModel):
 
     @validator("xyzrgb_url", "reference_image_url")
     def validate_url(cls, value: str) -> str:
-        if value is None:
-            return value
-        value = (value or "").strip()
-        if not value:
-            raise ValueError("URL is required")
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("URL must start with http:// or https://")
-        return value
+        return _validate_image_url(value)
 
     @validator("reference_image_urls")
     def validate_reference_urls(cls, value: Optional[List[str]]) -> Optional[List[str]]:
@@ -117,12 +121,14 @@ class LlmRenderRequest(BaseModel):
             return value
         if not 1 <= len(value) <= 5:
             raise ValueError("reference_image_urls must contain between 1 and 5 URLs")
-        return [cls.validate_url(url) for url in value]
+        return [_validate_image_url(url) for url in value]
 
     @root_validator
     def require_reference_images(cls, values):
         if not values.get("reference_image_url") and not values.get("reference_image_urls"):
             raise ValueError("At least one reference image URL is required")
+        if values.get("reference_image_url") and values.get("reference_image_urls"):
+            raise ValueError("Provide reference_image_url or reference_image_urls, not both")
         return values
 
     @validator("prompt")

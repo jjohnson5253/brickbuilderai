@@ -52,6 +52,15 @@ def test_llm_render_request_rejects_more_than_five_reference_images():
         )
 
 
+def test_llm_render_request_rejects_mixed_reference_fields():
+    with pytest.raises(ValueError, match="or reference_image_urls"):
+        LlmRenderRequest(
+            xyzrgb_url="https://example.com/model.xyzrgb",
+            reference_image_url="https://example.com/ref.png",
+            reference_image_urls=["https://example.com/other.png"],
+        )
+
+
 def _block(x_range, y_range, z_range, color):
     return [
         {"x": x, "y": y, "z": z, "r": color[0], "g": color[1], "b": color[2]}
