@@ -85,7 +85,8 @@ curl -X POST http://localhost:8002/promptEditModel \
   -o edited_model_response.json
 ```
 #### /llmRender
-Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`.
+Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`
+and `FAL_KEY`.
 
 The model is first split server-side into up to `max_segments` (default 16) contiguous
 segments. Splitting combines colour structure (clustered in CIELAB with lightness
@@ -95,8 +96,12 @@ a head and torso still split). Small high-contrast features (eyes, mouth, button
 jewelry, shirt patterns) are protected from speckle removal, and same-coloured pieces of
 one feature (both eyes, all buttons) share a single segment; the scene summary flags these
 with `is_detail` and `island_count`. A labelled multi-view preview of those
-segments plus the reference image is sent to OpenAI, which returns one colour per segment.
+segments plus the reference images is sent to OpenAI, which returns one colour per segment.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
+
+Pass `reference_image_url` to have Nano Banana generate front, top, side, and isometric
+views before rendering. Callers that already have multiple views can pass one to five URLs
+in `reference_image_urls` and skip that generation step.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
 (default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).

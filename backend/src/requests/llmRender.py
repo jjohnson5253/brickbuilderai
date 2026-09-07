@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import heapq
 import json
@@ -16,6 +17,7 @@ from pydantic import BaseModel, root_validator, validator
 from scipy import ndimage
 from skimage.segmentation import watershed
 
+from ..utils import generate_image
 from ..utils.posthog_client import track_api_call, track_error
 
 logger = logging.getLogger(__name__)
@@ -123,7 +125,7 @@ class LlmRenderRequest(BaseModel):
             raise ValueError("reference_image_urls must contain between 1 and 5 URLs")
         return [_validate_image_url(url) for url in value]
 
-    @root_validator
+    @root_validator(skip_on_failure=True)
     def require_reference_images(cls, values):
         if not values.get("reference_image_url") and not values.get("reference_image_urls"):
             raise ValueError("At least one reference image URL is required")
@@ -1152,6 +1154,18 @@ async def _call_openai_for_assignments(
     return assignments, subject
 
 
+async def _resolve_reference_image_urls(request: LlmRenderRequest) -> List[str]:
+    if request.reference_image_urls:
+        return request.reference_image_urls
+    if not request.reference_image_url:
+        raise ValueError("A reference image is required")
+
+    return await asyncio.to_thread(
+        generate_image.generate_reference_view_images,
+        request.reference_image_url,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Apply
 # ---------------------------------------------------------------------------
@@ -1223,9 +1237,10 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
+        reference_image_urls = await _resolve_reference_image_urls(request)
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
-            reference_image_urls=request.reference_image_urls or [request.reference_image_url],
+            reference_image_urls=reference_image_urls,
             voxel_preview_image_url=voxel_preview_image_url,
             prompt=request.prompt,
             model=model,

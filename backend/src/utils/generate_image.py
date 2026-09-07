@@ -14,7 +14,7 @@ import shutil
 import base64
 import requests
 from io import BytesIO
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, List
 from PIL import Image, ImageOps
 import fal_client
 import httpx
@@ -48,6 +48,59 @@ PROMPT_ENHANCEMENT_3D_PREMIUM_OPTION_C = _load_prompt_enhancement("prompt_enhanc
 PROMPT_ENHANCEMENT_REFERENCE_IMAGE = (
     "rendered in the same voxelized way as the objects in this reference image. All patterns on the object should be voxelized with same sized voxels. White background. No shadows. Isometric view."
 )
+
+REFERENCE_VIEW_COUNT = 4
+REFERENCE_VIEW_PROMPT = (
+    "Create four consistent reference images of the exact same subject shown in the input image. "
+    "Across the four outputs, show exactly these camera views in this order: front, top, side, "
+    "and isometric. Preserve the subject's shape, proportions, colors, patterns, and details. "
+    "Show the full subject centered on a plain white background with flat, even lighting and no shadows."
+)
+
+
+def generate_reference_view_images(
+    image_url: str,
+    status_callback: Optional[Callable[[str], None]] = None,
+) -> List[str]:
+    """Generate front, top, side, and isometric references from one image."""
+    def on_queue_update(update):
+        if isinstance(update, fal_client.Queued):
+            if status_callback:
+                status_callback("queued")
+        elif isinstance(update, fal_client.InProgress):
+            if status_callback:
+                status_callback("processing")
+            for log in update.logs:
+                logger.debug(f"Nano banana reference-view progress: {log['message']}")
+
+    result = fal_client.subscribe(
+        "fal-ai/nano-banana/edit",
+        arguments={
+            "prompt": REFERENCE_VIEW_PROMPT,
+            "image_urls": [image_url],
+            "num_images": REFERENCE_VIEW_COUNT,
+        },
+        with_logs=True,
+        on_queue_update=on_queue_update,
+    )
+
+    images = result.get("images")
+    if not isinstance(images, list) or len(images) < REFERENCE_VIEW_COUNT:
+        logger.error("Expected %d Nano Banana reference images, received: %s", REFERENCE_VIEW_COUNT, result)
+        raise RuntimeError(
+            f"Nano Banana returned fewer than {REFERENCE_VIEW_COUNT} reference images"
+        )
+
+    image_urls = [
+        image.get("url")
+        for image in images[:REFERENCE_VIEW_COUNT]
+        if isinstance(image, dict) and image.get("url")
+    ]
+    if len(image_urls) != REFERENCE_VIEW_COUNT:
+        logger.error("Nano Banana reference images contained invalid URLs: %s", images)
+        raise RuntimeError("Nano Banana returned invalid reference image URLs")
+
+    return image_urls
 
 
 async def generate_image_from_text_simple_streaming(

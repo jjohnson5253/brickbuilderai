@@ -1,9 +1,11 @@
+import asyncio
 import base64
 import sys
 from io import BytesIO
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,10 +24,12 @@ from src.requests.llmRender import (
     _project_segments,
     _quantize_colors,
     _render_view_tile,
+    _resolve_reference_image_urls,
     _rgb_to_lab,
     _segment_voxels,
     _voxel_arrays,
 )
+from src.utils import generate_image
 
 
 def test_llm_render_request_accepts_up_to_five_reference_images():
@@ -59,6 +63,51 @@ def test_llm_render_request_rejects_mixed_reference_fields():
             reference_image_url="https://example.com/ref.png",
             reference_image_urls=["https://example.com/other.png"],
         )
+
+
+def test_single_reference_is_expanded_to_four_nano_banana_views(monkeypatch):
+    expected_urls = [
+        "https://example.com/front.png",
+        "https://example.com/top.png",
+        "https://example.com/side.png",
+        "https://example.com/isometric.png",
+    ]
+    generated_from = []
+
+    def generate_views(image_url):
+        generated_from.append(image_url)
+        return expected_urls
+
+    monkeypatch.setattr(generate_image, "generate_reference_view_images", generate_views)
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_url="https://example.com/source.png",
+    )
+
+    result = asyncio.run(_resolve_reference_image_urls(request))
+
+    assert result == expected_urls
+    assert generated_from == ["https://example.com/source.png"]
+
+
+def test_multiple_references_bypass_nano_banana_generation(monkeypatch):
+    expected_urls = [
+        "https://example.com/front.png",
+        "https://example.com/top.png",
+        "https://example.com/side.png",
+        "https://example.com/isometric.png",
+    ]
+
+    def unexpected_generation(_image_url):
+        raise AssertionError("Nano Banana should not run for pre-generated references")
+
+    monkeypatch.setattr(generate_image, "generate_reference_view_images", unexpected_generation)
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_urls=expected_urls,
+    )
+
+    assert asyncio.run(_resolve_reference_image_urls(request)) == expected_urls
 
 
 def _block(x_range, y_range, z_range, color):
