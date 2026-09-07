@@ -99,9 +99,12 @@ with `is_detail` and `island_count`. A labelled multi-view preview of those
 segments plus the reference images is sent to OpenAI, which returns one colour per segment.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
 
-Pass `reference_image_url` to have Nano Banana generate front, top, side, and isometric
-views before rendering. Callers that already have multiple views can pass one to five URLs
-in `reference_image_urls` and skip that generation step.
+Image preprocessing runs four `google/nano-banana-lite/edit` requests concurrently with
+separate front, top, side, and isometric instructions. The isometric output is used for 3D
+reconstruction, while all four ordered URLs are stored in `reference_image_urls` for
+LLM rendering. Callers can also pass one to five URLs directly in `reference_image_urls`.
+For legacy generations with only `reference_image_url`, `/llmRender` creates the four
+views on demand.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
 (default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).

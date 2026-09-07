@@ -27,6 +27,7 @@ export interface GetGenerationResponse {
   prompt: string | null;
   external_image_url: string | null;
   processed_image_url: string | null;
+  reference_image_urls: string[] | null;
   detail_level: number | null;
   ldr_content: string | null;
   mpd_url: string | null;
@@ -45,6 +46,16 @@ export interface CompletedGeneration {
   xyzrgb_url: string | null;
   problematic_xyzrgb_url: string | null;
 }
+
+export const selectGenerationReferenceImages = (
+  generation: Pick<GetGenerationResponse, 'reference_image_urls' | 'processed_image_url' | 'external_image_url'>,
+  fallbackUrl?: string | null,
+): string | string[] | null => {
+  if (generation.reference_image_urls?.length) {
+    return generation.reference_image_urls;
+  }
+  return fallbackUrl || generation.processed_image_url || generation.external_image_url;
+};
 
 export class GetGenerationApiService {
   /**

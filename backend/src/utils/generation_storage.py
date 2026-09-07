@@ -260,6 +260,7 @@ class GenerationStorage:
         generation_id: str,
         original_image_url: Optional[str] = None,
         processed_image_url: Optional[str] = None,
+        reference_image_urls: Optional[List[str]] = None,
         input_image_name: Optional[str] = None
     ) -> None:
         """
@@ -269,6 +270,7 @@ class GenerationStorage:
             generation_id: The generation ID to update
             original_image_url: External URL of the original generated image
             processed_image_url: External URL of the processed image
+            reference_image_urls: Ordered front, top, side, and isometric image URLs
             input_image_name: Name of input image if provided by user
         """
         # First, save external URLs to database immediately (before attempting storage uploads)
@@ -308,6 +310,18 @@ class GenerationStorage:
                     content_type="image/png"
                 )
                 update_data["processed_image_url"] = storage_url
+
+            if reference_image_urls:
+                view_names = ("front", "top", "side", "isometric")
+                stored_reference_urls = []
+                for view_name, source_url in zip(view_names, reference_image_urls):
+                    storage_url = await self._download_and_upload_from_url(
+                        source_url=source_url,
+                        file_path=f"generations/{generation_id}/reference_{view_name}_{timestamp}.png",
+                        content_type="image/png",
+                    )
+                    stored_reference_urls.append(storage_url)
+                update_data["reference_image_urls"] = stored_reference_urls
                 
             if update_data:
                 result = self.client.table("generations").update(update_data).eq("id", generation_id).execute()
@@ -496,7 +510,8 @@ class GenerationStorage:
         status: str,
         error_message: Optional[str] = None,
         external_image_url: Optional[str] = None,
-        prompt_enhancement: Optional[str] = None
+        prompt_enhancement: Optional[str] = None,
+        reference_image_urls: Optional[List[str]] = None,
     ) -> None:
         """
         Update the status of a generation
@@ -507,6 +522,7 @@ class GenerationStorage:
             error_message: Optional error message if status is "failed"
             external_image_url: Optional URL of the generated/edited image from nano-banana
             prompt_enhancement: Optional prompt enhancement text that was used
+            reference_image_urls: Ordered front, top, side, and isometric image URLs
         """
         try:
             update_data = {
@@ -519,6 +535,8 @@ class GenerationStorage:
                 update_data["external_image_url"] = external_image_url
             if prompt_enhancement:
                 update_data["prompt_enhancement"] = prompt_enhancement
+            if reference_image_urls:
+                update_data["reference_image_urls"] = reference_image_urls
                 
             result = self.client.table("generations").update(update_data).eq("id", generation_id).execute()
             # logger.info(f"Updated generation {generation_id} status to: {status}")

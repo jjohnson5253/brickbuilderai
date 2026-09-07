@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime, timedelta
 
 from pydantic import BaseModel
@@ -25,6 +25,7 @@ class GetGenerationResponse(BaseModel):
     mpd_url: Optional[str] = None  # Only available when completed
     external_image_url: Optional[str] = None  # Available during processing and completed
     processed_image_url: Optional[str] = None  # Available when image processing is done
+    reference_image_urls: Optional[List[str]] = None
     preview_image_url: Optional[str] = None  # User-uploaded preview image, if set
     xyzrgb_url: Optional[str] = None
     problematic_xyzrgb_url: Optional[str] = None
@@ -66,6 +67,7 @@ async def get_generation(request: GetGenerationRequest) -> GetGenerationResponse
         detail_level = generation.get("detail_level")
         external_image_url = generation.get("external_image_url")
         processed_image_url = generation.get("processed_image_url")
+        reference_image_urls = generation.get("reference_image_urls")
         preview_image_url = generation.get("preview_image_url")
         xyzrgb_url = generation.get("xyzrgb_url")
         problematic_xyzrgb_url = generation.get("problematic_xyzrgb_url")
@@ -112,6 +114,7 @@ async def get_generation(request: GetGenerationRequest) -> GetGenerationResponse
             detail_level=detail_level,
             external_image_url=external_image_url,
             processed_image_url=processed_image_url,
+            reference_image_urls=reference_image_urls,
             preview_image_url=preview_image_url,
             xyzrgb_url=xyzrgb_url,
             problematic_xyzrgb_url=problematic_xyzrgb_url,

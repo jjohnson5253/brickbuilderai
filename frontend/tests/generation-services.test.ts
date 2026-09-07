@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { GetGenerationApiService, type GetGenerationResponse } from '../src/services/getGenerationApi';
+import {
+  GetGenerationApiService,
+  selectGenerationReferenceImages,
+  type GetGenerationResponse,
+} from '../src/services/getGenerationApi';
 import { GlbToBricksApiService } from '../src/services/glbToBricksApi';
 import { ImageToBricksApiService } from '../src/services/imageToBricksApi';
 import { TextToBricksApiService } from '../src/services/textToBricksApi';
@@ -57,7 +61,7 @@ describe('generation services', () => {
   });
 
   it('gets and polls a generation through completion', async () => {
-    const processing: GetGenerationResponse = { generation_id: 'g', status: 'processing', prompt: null, external_image_url: null, processed_image_url: null, detail_level: 1, ldr_content: null, mpd_url: null, xyzrgb_url: null, problematic_xyzrgb_url: null, error_message: null };
+    const processing: GetGenerationResponse = { generation_id: 'g', status: 'processing', prompt: null, external_image_url: null, processed_image_url: null, reference_image_urls: null, detail_level: 1, ldr_content: null, mpd_url: null, xyzrgb_url: null, problematic_xyzrgb_url: null, error_message: null };
     const completed = { ...processing, status: 'completed' as const, prompt: 'castle', ldr_content: 'ldr' };
     vi.mocked(fetch).mockResolvedValueOnce(response(processing) as unknown as Response).mockResolvedValueOnce(response(completed) as unknown as Response);
     const callback = vi.fn();
@@ -67,12 +71,28 @@ describe('generation services', () => {
   });
 
   it('reports failed, invalid, timed-out, and aborted polling', async () => {
-    const base = { generation_id: 'g', prompt: null, external_image_url: null, processed_image_url: null, detail_level: null, ldr_content: null, mpd_url: null, xyzrgb_url: null, problematic_xyzrgb_url: null };
+    const base = { generation_id: 'g', prompt: null, external_image_url: null, processed_image_url: null, reference_image_urls: null, detail_level: null, ldr_content: null, mpd_url: null, xyzrgb_url: null, problematic_xyzrgb_url: null };
     vi.spyOn(GetGenerationApiService, 'getGeneration').mockResolvedValue({ ...base, status: 'failed', error_message: 'boom' });
     await expect(GetGenerationApiService.pollUntilComplete('g')).rejects.toThrow('boom');
     vi.mocked(GetGenerationApiService.getGeneration).mockResolvedValue({ ...base, status: 'processing', error_message: null });
     await expect(GetGenerationApiService.pollUntilComplete('g', undefined, 0, 1)).rejects.toThrow('timed out');
     const controller = new AbortController(); controller.abort();
     await expect(GetGenerationApiService.pollUntilComplete('g', undefined, 0, 1, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('prefers all generated reference views and falls back to the isometric image', () => {
+    const generation = {
+      reference_image_urls: ['front', 'top', 'side', 'isometric'],
+      processed_image_url: 'processed-isometric',
+      external_image_url: 'external-isometric',
+    };
+
+    expect(selectGenerationReferenceImages(generation, 'local-isometric')).toEqual(
+      generation.reference_image_urls,
+    );
+    expect(selectGenerationReferenceImages(
+      { ...generation, reference_image_urls: null },
+      'local-isometric',
+    )).toBe('local-isometric');
   });
 });

@@ -7,7 +7,7 @@ import base64
 import struct
 import numpy as np
 from datetime import datetime
-from typing import AsyncGenerator, AsyncIterator, Optional, Tuple, Union
+from typing import AsyncGenerator, AsyncIterator, List, Optional, Tuple, Union
 
 import httpx
 
@@ -265,6 +265,7 @@ async def _run_trellis_3d_branch(
     credits_to_deduct: int,
     original_image_url: Optional[str],
     processed_image_url: Optional[str],
+    reference_image_urls: Optional[List[str]],
     image_url: str,
     prompt_enhancement: Optional[str],
     model_option: Optional[str],
@@ -335,6 +336,7 @@ async def _run_trellis_3d_branch(
         generation_id=generation_id,
         original_image_url=original_image_url,
         processed_image_url=processed_image_url,
+        reference_image_urls=reference_image_urls,
     )
     if model_url:
         await generation_storage.store_model_file(
@@ -405,6 +407,7 @@ async def _pipeline_worker(
     """
     temp_dir = None
     heartbeat_task = None
+    reference_image_urls = None
     try:
         temp_dir = tempfile.mkdtemp(prefix="sam3d_")
 
@@ -450,7 +453,7 @@ async def _pipeline_worker(
         if edit_image and not text_prompt:
             from .generate_image import generate_image_from_image_streaming
 
-            original_image_url, edited_url, prompt_enhancement = (
+            original_image_url, edited_url, prompt_enhancement, reference_image_urls = (
                 await generate_image_from_image_streaming(
                     image_url=image_url,
                     queue=queue,
@@ -467,6 +470,7 @@ async def _pipeline_worker(
                 "processing",
                 external_image_url=edited_url,
                 prompt_enhancement=prompt_enhancement,
+                reference_image_urls=reference_image_urls,
             )
 
         # --- Background removal (for imageToBricks path) ---
@@ -507,6 +511,7 @@ async def _pipeline_worker(
                 credits_to_deduct=credits_to_deduct,
                 original_image_url=original_image_url,
                 processed_image_url=processed_image_url,
+                reference_image_urls=reference_image_urls,
                 image_url=image_url,
                 prompt_enhancement=prompt_enhancement,
                 model_option=model_option,
@@ -686,6 +691,7 @@ async def _pipeline_worker(
             generation_id=generation_id,
             original_image_url=original_image_url,
             processed_image_url=processed_image_url,
+            reference_image_urls=reference_image_urls,
         )
 
         # Store GLB file (from glb_ready/complete event if available)
