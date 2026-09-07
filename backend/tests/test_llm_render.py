@@ -9,6 +9,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.requests.llmRender import (
+    LlmRenderRequest,
     SEGMENT_PALETTE,
     VIEWS,
     _apply_assignments,
@@ -25,6 +26,30 @@ from src.requests.llmRender import (
     _segment_voxels,
     _voxel_arrays,
 )
+
+
+def test_llm_render_request_accepts_up_to_five_reference_images():
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_urls=[
+            "https://example.com/front.png",
+            "https://example.com/top.png",
+            "https://example.com/side.png",
+            "https://example.com/iso.png",
+            "https://example.com/bottom.png",
+        ],
+    )
+
+    assert request.reference_image_url is None
+    assert len(request.reference_image_urls) == 5
+
+
+def test_llm_render_request_rejects_more_than_five_reference_images():
+    with pytest.raises(ValueError, match="between 1 and 5"):
+        LlmRenderRequest(
+            xyzrgb_url="https://example.com/model.xyzrgb",
+            reference_image_urls=["https://example.com/ref.png"] * 6,
+        )
 
 
 def _block(x_range, y_range, z_range, color):

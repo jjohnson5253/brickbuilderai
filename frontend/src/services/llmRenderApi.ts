@@ -18,7 +18,8 @@ const API_BASE_URL = getApiUrl();
 
 export interface LlmRenderRequest {
   xyzrgb_url: string;
-  reference_image_url: string;
+  reference_image_url?: string;
+  reference_image_urls?: string[];
   prompt?: string;
   max_segments?: number;
 }
@@ -44,7 +45,7 @@ export interface LlmRenderResponse {
 export class LlmRenderApiService {
   static async llmRender(
     xyzrgbUrl: string,
-    referenceImageUrl: string,
+    referenceImageUrl: string | string[],
     prompt?: string,
     accessToken?: string
   ): Promise<LlmRenderResponse> {
@@ -60,7 +61,9 @@ export class LlmRenderApiService {
 
     const requestBody: LlmRenderRequest = {
       xyzrgb_url: xyzrgbUrl,
-      reference_image_url: referenceImageUrl,
+      ...(Array.isArray(referenceImageUrl)
+        ? { reference_image_urls: referenceImageUrl }
+        : { reference_image_url: referenceImageUrl }),
       prompt,
     };
 
