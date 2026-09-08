@@ -70,6 +70,12 @@ def _handle_signal(signum, frame):
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
+if not IS_WINDOWS:
+    # Closing the terminal sends SIGHUP to this process. Left uncaught, its
+    # default disposition kills us immediately without running atexit hooks,
+    # orphaning the children (each is in its own session, so they don't get
+    # the SIGHUP themselves) to launchd instead of being cleaned up.
+    signal.signal(signal.SIGHUP, _handle_signal)
 
 
 if __name__ == "__main__":

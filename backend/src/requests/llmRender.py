@@ -1241,15 +1241,27 @@ def _anthropic_tool_payload(
     voxel_preview_image_url: str,
     schema: Dict[str, Any],
     schema_name: str,
+    stream: bool = False,
 ) -> Dict[str, Any]:
     """Build an Anthropic Messages API payload equivalent to the OpenAI
-    Responses payloads below: the schema is enforced by forcing a single tool
-    call, so the parsed result arrives as that tool call's `input` rather than
-    JSON embedded in free text."""
+    Responses payloads below: the model is asked (not forced) to call a tool
+    matching the schema, so the parsed result arrives as that tool call's
+    `input` rather than JSON embedded in free text. tool_choice is left as
+    "auto" rather than forced: testing showed Claude Fable 5 essentially never
+    produces a visible thinking block when tool use is forced, but does think
+    (sometimes) when it is free to choose - see _extract_anthropic_tool_json
+    for the plain-text JSON fallback this requires. Adaptive thinking with
+    "summarized" display is enabled so any reasoning is surfaced, like
+    OpenAI's reasoning summaries."""
+    tool_system_prompt = (
+        f"{system_prompt}\n\nAlways give your final answer by calling the "
+        f"`{schema_name}` tool; never reply with plain text."
+    )
     return {
         "model": model,
         "max_tokens": ANTHROPIC_MAX_TOKENS,
-        "system": system_prompt,
+        "system": tool_system_prompt,
+        "thinking": {"type": "adaptive", "display": "summarized"},
         "messages": [
             {
                 "role": "user",
@@ -1267,7 +1279,8 @@ def _anthropic_tool_payload(
                 "input_schema": schema,
             }
         ],
-        "tool_choice": {"type": "tool", "name": schema_name},
+        "tool_choice": {"type": "auto"},
+        "stream": stream,
     }
 
 
@@ -1277,12 +1290,73 @@ def _extract_anthropic_tool_json(response_json: Dict[str, Any], tool_name: str) 
             result = block.get("input")
             if isinstance(result, dict):
                 return result
+    # tool_choice is "auto" (see _anthropic_tool_payload) so thinking can
+    # happen; the model occasionally answers in plain text anyway, so fall
+    # back to parsing JSON out of any text block.
+    for block in response_json.get("content", []):
+        text = block.get("text")
+        if block.get("type") == "text" and isinstance(text, str) and text.strip():
+            return _extract_json_object(text)
     raise HTTPException(
         status_code=502, detail="Anthropic response did not contain the expected tool call"
     )
 
 
-async def _post_anthropic_messages(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _accumulate_anthropic_stream_content(
+    content_blocks: List[Dict[str, Any]], json_buffers: Dict[int, str], event: Dict[str, Any]
+) -> None:
+    """Rebuild the non-streaming `content` array shape from an Anthropic SSE
+    event: tool_use inputs stream as incremental JSON fragments
+    (input_json_delta) that must be concatenated and parsed once the block
+    closes."""
+    event_type = event.get("type")
+    if event_type == "content_block_start":
+        index = event.get("index", len(content_blocks))
+        while len(content_blocks) <= index:
+            content_blocks.append({})
+        block = dict(event.get("content_block") or {})
+        content_blocks[index] = block
+        if block.get("type") == "tool_use":
+            json_buffers[index] = ""
+    elif event_type == "content_block_delta":
+        index = event.get("index")
+        delta = event.get("delta") or {}
+        delta_type = delta.get("type")
+        if delta_type == "input_json_delta" and index in json_buffers:
+            json_buffers[index] += delta.get("partial_json") or ""
+        elif delta_type == "text_delta" and 0 <= (index or -1) < len(content_blocks):
+            # tool_choice is "auto" (see _anthropic_tool_payload), so the model
+            # occasionally answers in plain text instead of calling the tool;
+            # accumulate that text so _extract_anthropic_tool_json can fall
+            # back to parsing JSON out of it.
+            block = content_blocks[index]
+            block["text"] = (block.get("text") or "") + (delta.get("text") or "")
+    elif event_type == "content_block_stop":
+        index = event.get("index")
+        if index in json_buffers:
+            raw = json_buffers[index]
+            try:
+                content_blocks[index]["input"] = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=502, detail="Anthropic tool_use input was invalid JSON"
+                )
+
+
+def _extract_anthropic_thinking_delta(event: Dict[str, Any]) -> Optional[str]:
+    if event.get("type") != "content_block_delta":
+        return None
+    delta = event.get("delta") or {}
+    if delta.get("type") != "thinking_delta":
+        return None
+    text = delta.get("thinking")
+    return text if isinstance(text, str) and text else None
+
+
+async def _post_anthropic_messages(
+    payload: Dict[str, Any],
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -1304,6 +1378,37 @@ async def _post_anthropic_messages(payload: Dict[str, Any]) -> Dict[str, Any]:
     timeout = httpx.Timeout(ANTHROPIC_TIMEOUT_SECONDS, connect=15.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
+            if payload.get("stream"):
+                content_blocks: List[Dict[str, Any]] = []
+                json_buffers: Dict[int, str] = {}
+                async with client.stream(
+                    "POST",
+                    "https://api.anthropic.com/v1/messages",
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if not data:
+                            continue
+                        try:
+                            event = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if event.get("type") == "error":
+                            message = (event.get("error") or {}).get(
+                                "message", "Anthropic stream failed"
+                            )
+                            raise HTTPException(status_code=502, detail=message)
+                        delta = _extract_anthropic_thinking_delta(event)
+                        if delta and on_thinking:
+                            await on_thinking(delta)
+                        _accumulate_anthropic_stream_content(content_blocks, json_buffers, event)
+                return {"content": content_blocks}
+
             response = await client.post(
                 "https://api.anthropic.com/v1/messages",
                 headers=headers,
@@ -1391,8 +1496,6 @@ async def _call_openai_for_assignments(
     }
 
     if _model_provider(model) == "anthropic":
-        if on_thinking:
-            await on_thinking("Waiting for the model to assign colors...\n")
         payload = _anthropic_tool_payload(
             model=model,
             system_prompt=system_prompt,
@@ -1401,8 +1504,9 @@ async def _call_openai_for_assignments(
             voxel_preview_image_url=voxel_preview_image_url,
             schema=_assignment_schema(segment_ids),
             schema_name="voxel_segment_colors",
+            stream=True,
         )
-        response_json = await _post_anthropic_messages(payload)
+        response_json = await _post_anthropic_messages(payload, on_thinking=on_thinking)
         parsed = _extract_anthropic_tool_json(response_json, "voxel_segment_colors")
     else:
         payload = {
