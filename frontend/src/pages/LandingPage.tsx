@@ -1,5 +1,6 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
+import posthog from "posthog-js";
 import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard, Box } from "lucide-react";
 import { SEO } from "../components/SEO";
 import FallingBricks from "../components/FallingBricks";
@@ -17,6 +18,8 @@ import { SiteFooter } from "../components/SiteFooter";
 import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { GenerationStats, GetGenerationStatsApiService } from "../services/getGenerationStatsApi";
+import { GetCommunityGenerationsApiService } from "../services/getCommunityGenerationsApi";
+import { FeaturedModel, communityGenerationToFeaturedModel, mergeFeaturedModels } from "../utils/featuredModels";
 
 // Check if 3D streaming (SAM3D) is enabled by default via environment variable.
 // Streaming requires a RunPod endpoint, so it is opt-in: default to Standard
@@ -80,16 +83,21 @@ type ModelMetadata = {
   img_url: string;
 };
 
-type FeaturedItem = {
-  title: string;
-  metadata: ModelMetadata;
-};
+// Static demo models used as carousel filler/fallback
+const DEMO_FEATURED: FeaturedModel[] = Object.entries(modelsMetadata).map(([title, metadata]) => {
+  const m = metadata as ModelMetadata;
+  return {
+    id: m.id,
+    title,
+    imgUrl: m.img_url,
+    pieces: m.pieces,
+    cost: m.cost,
+    source: 'demo' as const,
+  };
+});
 
-// Generate FEATURED array from metadata
-const FEATURED: FeaturedItem[] = Object.entries(modelsMetadata).map(([title, metadata]) => ({
-  title,
-  metadata: metadata as ModelMetadata
-}));
+// Number of highlighted community models to load for the carousel
+const HIGHLIGHTED_MODELS_LIMIT = 12;
 
 // ---- Typewriter placeholder logic ----
 const EXAMPLE_PHRASES = [
@@ -229,6 +237,37 @@ export default function LandingPage() {
   const [areOptionsHidden, setAreOptionsHidden] = useState(true);
   const [showGlbUpload, setShowGlbUpload] = useState(false);
   const [generationStats, setGenerationStats] = useState<GenerationStats | null>(null);
+  const [featuredModels, setFeaturedModels] = useState<FeaturedModel[]>(DEMO_FEATURED);
+
+  // Load highlighted community models for the featured carousel; keep the
+  // static demo models as a fallback (and filler) if none are available.
+  useEffect(() => {
+    let cancelled = false;
+
+    GetCommunityGenerationsApiService.getCommunityGenerations(
+      undefined,
+      HIGHLIGHTED_MODELS_LIMIT,
+      0,
+      undefined,
+      true // highlighted only
+    )
+      .then((response) => {
+        if (cancelled) return;
+        const communityModels = (response.generations || [])
+          .map(communityGenerationToFeaturedModel)
+          .filter((model): model is FeaturedModel => model !== null);
+        if (communityModels.length > 0) {
+          setFeaturedModels(mergeFeaturedModels(communityModels, DEMO_FEATURED));
+        }
+      })
+      .catch((error) => {
+        console.warn('Unable to load highlighted community models', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1220,7 +1259,7 @@ export default function LandingPage() {
               </div>
             )}
             <div className="w-screen relative left-1/2 -translate-x-1/2">
-              <FeaturedStrip items={FEATURED} />
+              <FeaturedStrip items={featuredModels} />
             </div>
           </section>
 
@@ -1435,7 +1474,7 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
 }
 
 /** TranslateX marquee (no user scroll). Cards remain 1:1 squares. */
-const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedItem[] }) {
+const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedModel[] }) {
   const navigate = useNavigate();
   const trackRef = useRef<HTMLDivElement>(null);
   const runRef = useRef<HTMLDivElement>(null);
@@ -1460,7 +1499,7 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
     measure();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [items]);
 
   useEffect(() => {
     const track = trackRef.current;
@@ -1558,7 +1597,7 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
     <div ref={runRef} className="flex w-max gap-6 py-1" style={{ willChange: "transform" }}>
       {items.map((m, i) => (
         <article
-          key={`card-${i}`}
+          key={`card-${m.id}-${i}`}
           className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
           style={{
             width: "clamp(10rem, 18vw, 17rem)",
@@ -1572,7 +1611,7 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
             style={{ paddingTop: "100%" }}
           >
             <img
-              src={m.metadata.img_url}
+              src={m.imgUrl}
               alt={m.title}
               className="absolute left-0 top-0 h-full w-full object-contain"
               style={{ transform: "translateZ(0)" }}
@@ -1581,11 +1620,20 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
             />
           </div>
           <div className="mt-3 text-center">
-            <h3 className="text-sm font-semibold text-slate-800 mb-1">{m.title}</h3>
-            <p className="text-xs text-slate-600">{m.metadata.pieces} pieces</p>
-            <p className="text-xs text-slate-600">${m.metadata.cost} USD</p>
+            <h3 className="text-sm font-semibold text-slate-800 mb-1 truncate">{m.title}</h3>
+            <div className="min-h-8">
+              {m.pieces != null && <p className="text-xs text-slate-600">{m.pieces} pieces</p>}
+              {m.cost != null && <p className="text-xs text-slate-600">${m.cost} USD</p>}
+            </div>
             <button
-              onClick={() => navigate(`/generated-model?id=${m.metadata.id}`)}
+              onClick={() => {
+                posthog.capture('landing_carousel_model_clicked', {
+                  generation_id: m.id,
+                  model_title: m.title,
+                  source: m.source,
+                });
+                navigate(`/generated-model?id=${m.id}`);
+              }}
               className="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 h-9 text-xs hover:bg-slate-50 cursor-pointer"
             >
               <Eye className="w-4 h-4"/> View Model

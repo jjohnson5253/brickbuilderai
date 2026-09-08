@@ -709,7 +709,8 @@ class GenerationStorage:
         self,
         limit: int = 10,
         status_filter: Optional[List[str]] = None,
-        offset: int = 0
+        offset: int = 0,
+        highlighted_only: bool = False
     ) -> list[Dict[str, Any]]:
         """
         Retrieve generations flagged as community (is_community = true)
@@ -718,6 +719,7 @@ class GenerationStorage:
             limit: Maximum number of records to return
             status_filter: Optional list of statuses to filter by
             offset: Number of records to skip (for pagination)
+            highlighted_only: If True, only return generations flagged as highlighted
 
         Returns:
             List of generation data dictionaries
@@ -726,6 +728,9 @@ class GenerationStorage:
             query = (self.client.table("generations")
                      .select("*")
                      .eq("is_community", True))
+
+            if highlighted_only:
+                query = query.eq("is_highlighted", True)
 
             if status_filter:
                 query = query.in_("status", status_filter)

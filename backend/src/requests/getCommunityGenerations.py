@@ -35,12 +35,15 @@ class CommunityGeneration(BaseModel):
     ordered: Optional[bool] = False
     updated_at: Optional[str] = None
     is_community: Optional[bool] = True
+    is_highlighted: Optional[bool] = False
+    brick_count: Optional[int] = None
 
 
 class GetCommunityGenerationsRequest(BaseModel):
     limit: int = 50
     offset: int = 0  # Offset for pagination (number of unique generations to skip)
     processing: Optional[bool] = None  # If True, return only processing/queued generations
+    highlighted: Optional[bool] = None  # If True, return only highlighted community generations
 
 
 class GetCommunityGenerationsResponse(BaseModel):
@@ -76,6 +79,7 @@ async def get_community_generations(
                 "limit": request.limit,
                 "offset": request.offset,
                 "processing": request.processing,
+                "highlighted": request.highlighted,
             },
         )
 
@@ -87,6 +91,7 @@ async def get_community_generations(
             limit=request.limit + 1,
             status_filter=status_filter,
             offset=request.offset,
+            highlighted_only=bool(request.highlighted),
         )
 
         has_more = len(generations_batch) > request.limit
@@ -153,6 +158,8 @@ async def get_community_generations(
                 ordered=gen.get("ordered", False),
                 updated_at=gen.get("updated_at"),
                 is_community=gen.get("is_community", True),
+                is_highlighted=gen.get("is_highlighted", False),
+                brick_count=gen.get("brick_count"),
             )
             for gen in generations
         ]
