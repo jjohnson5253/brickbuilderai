@@ -38,6 +38,7 @@ import { UpdateModelApiService, UpdateModelResponse } from "../services/updateMo
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import { trackGeneratedModelAiEditClick } from "../utils/generatedModelAnalytics";
 import { getGeneratedModelPath } from "../utils/generationRoutes";
+import { LlmDesignNotes } from "../components/LlmDesignNotes";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
@@ -2303,15 +2304,7 @@ export default function GeneratedModel() {
                     </>
                   )}
               </button>
-              {isLlmEditing && llmThinking && (
-                <div
-                  aria-live="polite"
-                  className="w-full max-w-sm rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-left text-sm text-slate-700 shadow-sm sm:max-w-md"
-                >
-                  <p className="mb-1 font-semibold text-slate-900">AI design notes</p>
-                  <p className="whitespace-pre-wrap break-words">{llmThinking}</p>
-                </div>
-              )}
+              <LlmDesignNotes notes={llmThinking} />
 
               {/* Edit Model button — white with grey border, turns red on hover */}
               <button
