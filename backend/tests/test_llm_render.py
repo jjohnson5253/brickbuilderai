@@ -14,7 +14,9 @@ from pydantic import ValidationError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.requests.llmRender import (
+    DEFAULT_SEGMENTATION_ROUNDS,
     MAX_REFERENCE_IMAGES,
+    MAX_SEGMENTATION_ROUNDS_LIMIT,
     MAX_SPLIT_PIECES,
     SEGMENT_PALETTE,
     VIEWS,
@@ -24,11 +26,14 @@ from src.requests.llmRender import (
     _assignment_schema,
     _build_scene_summary,
     _build_voxel_preview_data_url,
+    _call_openai_for_segmentation_review,
     _extract_thinking_delta,
     _geometric_regions,
     _load_font,
     LlmRenderResponse,
+    llm_render,
     llm_render_stream,
+    _partition_signature,
     _perceptual_colors,
     _project_segments,
     _quantize_colors,
@@ -36,6 +41,7 @@ from src.requests.llmRender import (
     _render_view_tile,
     _rgb_to_lab,
     _segment_voxels,
+    _segmentation_review_loop,
     _segmentation_review_schema,
     _voxel_arrays,
 )
@@ -605,3 +611,275 @@ def test_apply_segmentation_review_skips_unsplittable_segments():
     new_ids, adjustments = _apply_segmentation_review(voxels, segment_ids, review)
     assert adjustments == []
     assert np.array_equal(new_ids, segment_ids)
+
+
+# ---------------------------------------------------------------------------
+# Segmentation verification loop
+# ---------------------------------------------------------------------------
+
+
+GOOD_REVIEW = {"verdict": "good", "merge_groups": [], "split_segments": []}
+MERGE_ALL_REVIEW = {"verdict": "adjust", "merge_groups": [[1, 2]], "split_segments": []}
+SPLIT_FIRST_REVIEW = {
+    "verdict": "adjust",
+    "merge_groups": [],
+    "split_segments": [{"segment_id": 1, "pieces": 2, "reason": "head and body"}],
+}
+
+
+class _ScriptedReviewer:
+    """Returns one scripted review per round and records what it was shown."""
+
+    def __init__(self, *reviews):
+        self.reviews = list(reviews)
+        self.calls = []
+
+    async def __call__(self, scene_summary, preview_url, round_number, previous_rounds):
+        self.calls.append(
+            {
+                "round": round_number,
+                "segment_ids": [segment["id"] for segment in scene_summary["segments"]],
+                "preview_url": preview_url,
+                "previous_rounds": [dict(entry) for entry in previous_rounds],
+            }
+        )
+        review = self.reviews.pop(0)
+        if isinstance(review, Exception):
+            raise review
+        return review
+
+
+def _run_loop(voxels, reviewer, max_rounds=DEFAULT_SEGMENTATION_ROUNDS, **kwargs):
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    scene_summary = _build_scene_summary(voxels, segment_ids)
+    preview_url = _build_voxel_preview_data_url(voxels, segment_ids)
+    return asyncio.run(
+        _segmentation_review_loop(
+            voxels, segment_ids, scene_summary, preview_url, reviewer, max_rounds, **kwargs
+        )
+    )
+
+
+def test_request_validates_max_segmentation_rounds():
+    base = {"xyzrgb_url": "https://example.com/model.xyzrgb", "reference_image_url": "https://example.com/a.png"}
+    assert LlmRenderRequest(**base).max_segmentation_rounds == DEFAULT_SEGMENTATION_ROUNDS
+    assert LlmRenderRequest(**base, max_segmentation_rounds=None).max_segmentation_rounds == DEFAULT_SEGMENTATION_ROUNDS
+    assert LlmRenderRequest(**base, max_segmentation_rounds=1).max_segmentation_rounds == 1
+    with pytest.raises(ValidationError):
+        LlmRenderRequest(**base, max_segmentation_rounds=0)
+    with pytest.raises(ValidationError):
+        LlmRenderRequest(**base, max_segmentation_rounds=MAX_SEGMENTATION_ROUNDS_LIMIT + 1)
+
+
+def test_partition_signature_ignores_labels_but_not_grouping():
+    assert _partition_signature(np.array([1, 1, 2, 2, 3])) == _partition_signature(np.array([3, 3, 1, 1, 2]))
+    assert _partition_signature(np.array([1, 1, 2, 2, 3])) != _partition_signature(np.array([1, 1, 2, 3, 3]))
+    assert _partition_signature(np.array([1, 1, 2])) != _partition_signature(np.array([1, 1, 1]))
+
+
+def test_review_loop_stops_after_one_round_when_segmentation_is_good():
+    voxels = _two_part_model()
+    reviewer = _ScriptedReviewer(GOOD_REVIEW)
+    outcome = _run_loop(voxels, reviewer)
+
+    assert outcome.rounds == 1
+    assert outcome.stop_reason == "good"
+    assert outcome.adjustments == []
+    assert len(reviewer.calls) == 1
+    assert reviewer.calls[0]["previous_rounds"] == []
+
+
+def test_review_loop_re_verifies_adjusted_segmentation():
+    voxels = _two_part_model()
+    reviewer = _ScriptedReviewer(MERGE_ALL_REVIEW, GOOD_REVIEW)
+    thinking = []
+
+    async def on_thinking(delta):
+        thinking.append(delta)
+
+    outcome = _run_loop(voxels, reviewer, on_thinking=on_thinking)
+
+    assert outcome.rounds == 2
+    assert outcome.stop_reason == "good"
+    assert outcome.adjustments == [{"action": "merge", "segment_ids": [1, 2], "into": 1, "round": 1}]
+    assert set(np.unique(outcome.segment_ids).tolist()) == {1}
+    # Round 2 reviewed the *adjusted* model: one segment, a fresh preview and the
+    # history of what round 1 changed.
+    assert reviewer.calls[1]["segment_ids"] == [1]
+    assert reviewer.calls[1]["preview_url"] != reviewer.calls[0]["preview_url"]
+    assert reviewer.calls[1]["previous_rounds"] == [{"round": 1, "adjustments": outcome.adjustments}]
+    assert outcome.scene_summary["segments"][0]["id"] == 1 and len(outcome.scene_summary["segments"]) == 1
+    assert outcome.preview_image_url == reviewer.calls[1]["preview_url"]
+    assert thinking == [
+        f"Checking segmentation (round 1/{DEFAULT_SEGMENTATION_ROUNDS})...\n",
+        f"Checking segmentation (round 2/{DEFAULT_SEGMENTATION_ROUNDS})...\n",
+    ]
+
+
+def test_review_loop_detects_oscillation():
+    voxels = _two_part_model()
+    # Merge head+body, then split them apart again: back to the starting partition.
+    reviewer = _ScriptedReviewer(MERGE_ALL_REVIEW, SPLIT_FIRST_REVIEW, MERGE_ALL_REVIEW)
+    outcome = _run_loop(voxels, reviewer, max_rounds=5)
+
+    assert outcome.rounds == 2
+    assert outcome.stop_reason == "cycle"
+    assert [adjustment["round"] for adjustment in outcome.adjustments] == [1, 2]
+    assert len(reviewer.calls) == 2
+    assert outcome.segment_ids.max() == 2
+    assert _segments_of(voxels, outcome.segment_ids, lambda x, y, z: z < 6) == {1}
+
+
+def test_review_loop_respects_round_cap():
+    voxels = _two_part_model()
+    reviewer = _ScriptedReviewer(MERGE_ALL_REVIEW, GOOD_REVIEW)
+    outcome = _run_loop(voxels, reviewer, max_rounds=1)
+
+    assert outcome.rounds == 1
+    assert outcome.stop_reason == "max_rounds"
+    assert len(reviewer.calls) == 1
+    assert len(outcome.adjustments) == 1
+    # The adjusted state is still what gets handed on for colouring.
+    assert len(outcome.scene_summary["segments"]) == 1
+
+
+def test_review_loop_stops_when_adjust_verdict_applies_nothing():
+    voxels = _two_part_model()
+    reviewer = _ScriptedReviewer(
+        {"verdict": "adjust", "merge_groups": [[1, 99]], "split_segments": []},
+        GOOD_REVIEW,
+    )
+    outcome = _run_loop(voxels, reviewer)
+
+    assert outcome.rounds == 1
+    assert outcome.stop_reason == "no_change"
+    assert outcome.adjustments == []
+    assert len(reviewer.calls) == 1
+
+
+def test_review_loop_keeps_earlier_rounds_when_reviewer_fails():
+    from fastapi import HTTPException
+
+    voxels = _two_part_model()
+    reviewer = _ScriptedReviewer(MERGE_ALL_REVIEW, HTTPException(status_code=502, detail="boom"))
+    outcome = _run_loop(voxels, reviewer)
+
+    assert outcome.rounds == 1
+    assert outcome.stop_reason == "error"
+    assert [adjustment["round"] for adjustment in outcome.adjustments] == [1]
+    assert set(np.unique(outcome.segment_ids).tolist()) == {1}
+
+
+def test_review_loop_unchecked_model_is_left_untouched_on_immediate_failure():
+    from fastapi import HTTPException
+
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    reviewer = _ScriptedReviewer(HTTPException(status_code=504, detail="timeout"))
+    outcome = _run_loop(voxels, reviewer)
+
+    assert outcome.rounds == 0
+    assert outcome.stop_reason == "error"
+    assert np.array_equal(outcome.segment_ids, segment_ids)
+
+
+def test_segmentation_review_prompt_carries_round_history(monkeypatch):
+    module = importlib.import_module("src.requests.llmRender")
+    captured = {}
+
+    async def fake_post(payload, on_thinking=None):
+        captured["payload"] = payload
+        return {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(GOOD_REVIEW)}]}]}
+
+    monkeypatch.setattr(module, "_post_openai_responses", fake_post)
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    scene_summary = _build_scene_summary(voxels, segment_ids)
+    history = [{"round": 1, "adjustments": [{"action": "merge", "segment_ids": [2, 3], "into": 2, "round": 1}]}]
+
+    review = asyncio.run(
+        _call_openai_for_segmentation_review(
+            scene_summary=scene_summary,
+            reference_image_urls=["https://example.com/a.png"],
+            voxel_preview_image_url="data:image/png;base64,AAAA",
+            prompt=None,
+            model="test-model",
+            round_number=2,
+            previous_rounds=history,
+        )
+    )
+
+    assert review == GOOD_REVIEW
+    user_text = json.loads(captured["payload"]["input"][1]["content"][0]["text"])
+    assert user_text["review_round"] == 2
+    assert user_text["previous_rounds"] == history
+    assert any("follow-up review" in rule for rule in user_text["rules"])
+
+    # First rounds carry no history and no follow-up rule.
+    asyncio.run(
+        _call_openai_for_segmentation_review(
+            scene_summary=scene_summary,
+            reference_image_urls=["https://example.com/a.png"],
+            voxel_preview_image_url="data:image/png;base64,AAAA",
+            prompt=None,
+            model="test-model",
+        )
+    )
+    user_text = json.loads(captured["payload"]["input"][1]["content"][0]["text"])
+    assert user_text["review_round"] == 1
+    assert user_text["previous_rounds"] == []
+    assert not any("follow-up review" in rule for rule in user_text["rules"])
+
+
+def test_llm_render_reports_verification_loop_outcome(monkeypatch):
+    module = importlib.import_module("src.requests.llmRender")
+    voxels = _two_part_model()
+    reviews = [MERGE_ALL_REVIEW, GOOD_REVIEW]
+    review_rounds = []
+
+    async def fake_fetch(_url, _max_bytes):
+        return "\n".join(f"{v['x']} {v['y']} {v['z']} {v['r']} {v['g']} {v['b']}" for v in voxels)
+
+    async def fake_review(scene_summary, reference_image_urls, voxel_preview_image_url, prompt, model, round_number, previous_rounds):
+        review_rounds.append(round_number)
+        return reviews.pop(0)
+
+    async def fake_assignments(scene_summary, **_kwargs):
+        return (
+            [{"segment_id": s["id"], "part": "body", "reason": "r", "color": [1, 2, 3]} for s in scene_summary["segments"]],
+            "figure",
+        )
+
+    tracked = {}
+    monkeypatch.setattr(module, "_fetch_text_url", fake_fetch)
+    monkeypatch.setattr(module, "_call_openai_for_segmentation_review", fake_review)
+    monkeypatch.setattr(module, "_call_openai_for_assignments", fake_assignments)
+    monkeypatch.setattr(module, "track_api_call", lambda **kwargs: tracked.update(kwargs))
+
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_url="https://example.com/a.png",
+    )
+    response = asyncio.run(llm_render(request, {"user_id": "tester"}))
+
+    assert review_rounds == [1, 2]
+    assert response.segmentation_rounds == 2
+    assert response.segmentation_stop_reason == "good"
+    assert response.segmentation_adjustments == [{"action": "merge", "segment_ids": [1, 2], "into": 1, "round": 1}]
+    # Colours were assigned to the *verified* (merged) segmentation.
+    assert response.segment_count == 1
+    assert tracked["segmentation_rounds"] == 2
+    assert tracked["segmentation_stop_reason"] == "good"
+
+    # With the check disabled nothing runs and the response says so.
+    unchecked = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_url="https://example.com/a.png",
+        check_segmentation=False,
+    )
+    review_rounds.clear()
+    response = asyncio.run(llm_render(unchecked, {"user_id": "tester"}))
+    assert review_rounds == []
+    assert response.segmentation_rounds == 0
+    assert response.segmentation_stop_reason is None
+    assert response.segment_count == 2

@@ -23,6 +23,7 @@ export interface LlmRenderRequest {
   prompt?: string;
   max_segments?: number;
   check_segmentation?: boolean;
+  max_segmentation_rounds?: number;
 }
 
 export interface LlmRenderAppliedRule {
@@ -41,7 +42,15 @@ export interface LlmRenderSegmentationAdjustment {
   pieces?: number;
   new_segment_ids?: number[];
   reason?: string | null;
+  round?: number;
 }
+
+export type LlmRenderSegmentationStopReason =
+  | 'good'
+  | 'no_change'
+  | 'cycle'
+  | 'max_rounds'
+  | 'error';
 
 export interface LlmRenderResponse {
   xyzrgb_content: string;
@@ -50,6 +59,8 @@ export interface LlmRenderResponse {
   model: string;
   applied_rules: LlmRenderAppliedRule[];
   segmentation_adjustments?: LlmRenderSegmentationAdjustment[];
+  segmentation_rounds?: number;
+  segmentation_stop_reason?: LlmRenderSegmentationStopReason | null;
   preview_image?: string | null;
   message: string;
 }

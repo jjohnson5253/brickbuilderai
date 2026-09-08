@@ -6,6 +6,7 @@ import logging
 import os
 import re
 from collections import defaultdict
+from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -34,6 +35,11 @@ MAX_REFERENCE_IMAGES = 4
 # Ceiling for how many pieces the LLM may ask a single segment to be split into
 # during the segmentation check.
 MAX_SPLIT_PIECES = 4
+# The segmentation check is a loop: review -> adjust -> re-render -> review the
+# adjusted result again. It stops early when the LLM says the segmentation is
+# good, a round changes nothing, or the partition repeats an earlier one.
+DEFAULT_SEGMENTATION_ROUNDS = 3
+MAX_SEGMENTATION_ROUNDS_LIMIT = 5
 COLOR_CLUSTERS = 10
 # Ceiling for extra clusters spent on small, distinct detail colours.
 MAX_COLOR_CLUSTERS = 24
@@ -114,6 +120,7 @@ class LlmRenderRequest(BaseModel):
     max_segments: Optional[int] = DEFAULT_MAX_SEGMENTS
     include_preview: bool = False
     check_segmentation: bool = True
+    max_segmentation_rounds: Optional[int] = DEFAULT_SEGMENTATION_ROUNDS
 
     @validator("xyzrgb_url")
     def validate_url(cls, value: str) -> str:
@@ -175,6 +182,16 @@ class LlmRenderRequest(BaseModel):
             raise ValueError(f"max_segments must be between 2 and {MAX_SEGMENTS_LIMIT}")
         return value
 
+    @validator("max_segmentation_rounds")
+    def validate_max_segmentation_rounds(cls, value: Optional[int]) -> int:
+        if value is None:
+            return DEFAULT_SEGMENTATION_ROUNDS
+        if value < 1 or value > MAX_SEGMENTATION_ROUNDS_LIMIT:
+            raise ValueError(
+                f"max_segmentation_rounds must be between 1 and {MAX_SEGMENTATION_ROUNDS_LIMIT}"
+            )
+        return value
+
 
 class LlmRenderResponse(BaseModel):
     xyzrgb_content: str
@@ -183,6 +200,10 @@ class LlmRenderResponse(BaseModel):
     model: str
     applied_rules: List[Dict[str, Any]]
     segmentation_adjustments: List[Dict[str, Any]] = []
+    # Number of LLM review rounds that ran and why the loop stopped:
+    # "good" | "no_change" | "cycle" | "max_rounds" | "error" (None when unchecked).
+    segmentation_rounds: int = 0
+    segmentation_stop_reason: Optional[str] = None
     preview_image: Optional[str] = None
     message: str = "Successfully recolored xyzrgb"
 
@@ -1252,6 +1273,12 @@ async def _call_openai_for_assignments(
 # are fragments of one part) or split (one segment spans several parts). The
 # splitting itself stays deterministic: the segmenter is re-run on just that
 # segment's voxels with the piece count the LLM chose.
+#
+# The check runs as a verification loop (_segmentation_review_loop): after each
+# round's adjustments the preview is re-rendered and shown to the LLM again, so
+# it can confirm the fix or request further changes, until it returns "good",
+# a round changes nothing, the partition repeats (oscillation) or the round
+# cap is hit.
 # ---------------------------------------------------------------------------
 
 
@@ -1293,9 +1320,12 @@ async def _call_openai_for_segmentation_review(
     voxel_preview_image_url: str,
     prompt: Optional[str],
     model: str,
+    round_number: int = 1,
+    previous_rounds: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     segment_ids = [segment["id"] for segment in scene_summary["segments"]]
     preview_index = len(reference_image_urls) + 1
+    previous_rounds = previous_rounds or []
 
     system_prompt = (
         "You quality-check how a voxel model has been split into segments before it is "
@@ -1305,6 +1335,23 @@ async def _call_openai_for_segmentation_review(
         "move voxels; you can only ask for whole segments to be merged or split. "
         "Return only JSON."
     )
+    rules = [
+        "If the segmentation already matches the reference, return verdict 'good' with empty merge_groups and split_segments.",
+        "Only request a merge when the segments would end up the exact same color; when unsure, leave them separate.",
+        "Never merge a detail segment (is_detail=true) into the part it sits on.",
+        "Only request a split when one segment clearly covers parts with different colors in the reference.",
+        "Use each segment id at most once across merge_groups and split_segments.",
+    ]
+    if previous_rounds:
+        rules.append(
+            "This is a follow-up review: previous_rounds lists the adjustments already "
+            "applied in earlier rounds (their segment ids refer to earlier labellings; "
+            "the model has since been renumbered 1..N by size, so read the current ids "
+            "from the preview and scene_summary). Verify those fixes worked. Do not undo "
+            "them or re-request the same change; only ask for further adjustments if the "
+            "current segmentation still clearly disagrees with the reference, otherwise "
+            "return 'good'."
+        )
     user_prompt = {
         "task": (
             f"{_reference_images_description(reference_image_urls)}. Image "
@@ -1317,13 +1364,9 @@ async def _call_openai_for_segmentation_review(
             "split_segments with how many pieces it should become (the split itself is "
             "re-done algorithmically; you only choose the piece count)."
         ),
-        "rules": [
-            "If the segmentation already matches the reference, return verdict 'good' with empty merge_groups and split_segments.",
-            "Only request a merge when the segments would end up the exact same color; when unsure, leave them separate.",
-            "Never merge a detail segment (is_detail=true) into the part it sits on.",
-            "Only request a split when one segment clearly covers parts with different colors in the reference.",
-            "Use each segment id at most once across merge_groups and split_segments.",
-        ],
+        "rules": rules,
+        "review_round": round_number,
+        "previous_rounds": previous_rounds,
         "optional_user_prompt": prompt,
         "scene_summary": scene_summary,
     }
@@ -1440,6 +1483,95 @@ def _apply_segmentation_review(
     return segment_ids, adjustments
 
 
+def _partition_signature(segment_ids: np.ndarray) -> bytes:
+    """Label-independent fingerprint of a segmentation: two arrays that group the
+    same voxels together produce the same signature even if ids differ."""
+    _, first_index, inverse = np.unique(segment_ids, return_index=True, return_inverse=True)
+    canonical = np.argsort(np.argsort(first_index))[inverse]
+    return canonical.astype(np.int32).tobytes()
+
+
+# Callable that asks the reviewer for a verdict on the current segmentation:
+# (scene_summary, preview_image_url, round_number, previous_rounds) -> review.
+SegmentationReviewer = Callable[
+    [Dict[str, Any], str, int, List[Dict[str, Any]]], Awaitable[Dict[str, Any]]
+]
+
+
+@dataclass
+class SegmentationReviewOutcome:
+    segment_ids: np.ndarray
+    scene_summary: Dict[str, Any]
+    preview_image_url: str
+    adjustments: List[Dict[str, Any]] = field(default_factory=list)
+    rounds: int = 0
+    stop_reason: str = "max_rounds"
+
+
+async def _segmentation_review_loop(
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    scene_summary: Dict[str, Any],
+    preview_image_url: str,
+    reviewer: SegmentationReviewer,
+    max_rounds: int,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> SegmentationReviewOutcome:
+    """Review -> adjust -> re-render -> review again, until the reviewer says
+    "good", a round applies nothing ("no_change"), the partition repeats an
+    earlier one ("cycle"), the reviewer fails ("error") or max_rounds is hit.
+
+    Every adjustment is tagged with the round it was applied in. The check is
+    best-effort: a reviewer failure keeps whatever segmentation was reached so
+    far instead of failing the render."""
+    outcome = SegmentationReviewOutcome(segment_ids, scene_summary, preview_image_url)
+    seen = {_partition_signature(segment_ids)}
+    previous_rounds: List[Dict[str, Any]] = []
+
+    for round_number in range(1, max_rounds + 1):
+        if on_thinking:
+            await on_thinking(f"Checking segmentation (round {round_number}/{max_rounds})...\n")
+        try:
+            review = await reviewer(
+                outcome.scene_summary, outcome.preview_image_url, round_number, previous_rounds
+            )
+        except HTTPException as e:
+            logger.warning(
+                "llmRender segmentation check round %d failed, stopping: %s",
+                round_number,
+                e.detail,
+            )
+            outcome.stop_reason = "error"
+            return outcome
+
+        outcome.rounds = round_number
+        new_ids, applied = _apply_segmentation_review(voxels, outcome.segment_ids, review)
+        if not applied:
+            outcome.stop_reason = "good" if review.get("verdict") == "good" else "no_change"
+            return outcome
+
+        for adjustment in applied:
+            adjustment["round"] = round_number
+        outcome.adjustments.extend(applied)
+        outcome.segment_ids = new_ids
+        outcome.scene_summary = _build_scene_summary(voxels, new_ids)
+        outcome.preview_image_url = _build_voxel_preview_data_url(voxels, new_ids)
+
+        signature = _partition_signature(new_ids)
+        if signature in seen:
+            logger.info(
+                "llmRender segmentation check round %d reproduced an earlier segmentation, stopping",
+                round_number,
+            )
+            outcome.stop_reason = "cycle"
+            return outcome
+        seen.add(signature)
+        previous_rounds.append({"round": round_number, "adjustments": applied})
+
+    outcome.stop_reason = "max_rounds"
+    return outcome
+
+
 # ---------------------------------------------------------------------------
 # Apply
 # ---------------------------------------------------------------------------
@@ -1518,25 +1650,41 @@ async def llm_render(
         reference_image_urls = request.reference_images()
 
         segmentation_adjustments: List[Dict[str, Any]] = []
+        segmentation_rounds = 0
+        segmentation_stop_reason: Optional[str] = None
         if request.check_segmentation:
-            try:
-                review = await _call_openai_for_segmentation_review(
-                    scene_summary=scene_summary,
+
+            async def review_segmentation(
+                current_summary: Dict[str, Any],
+                current_preview_url: str,
+                round_number: int,
+                previous_rounds: List[Dict[str, Any]],
+            ) -> Dict[str, Any]:
+                return await _call_openai_for_segmentation_review(
+                    scene_summary=current_summary,
                     reference_image_urls=reference_image_urls,
-                    voxel_preview_image_url=voxel_preview_image_url,
+                    voxel_preview_image_url=current_preview_url,
                     prompt=request.prompt,
                     model=model,
+                    round_number=round_number,
+                    previous_rounds=previous_rounds,
                 )
-                segment_ids, segmentation_adjustments = _apply_segmentation_review(
-                    voxels, segment_ids, review
-                )
-            except HTTPException as e:
-                # The check is best-effort: fall back to the deterministic
-                # segmentation rather than failing the whole render.
-                logger.warning("llmRender segmentation check failed, skipping: %s", e.detail)
-            if segmentation_adjustments:
-                scene_summary = _build_scene_summary(voxels, segment_ids)
-                voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
+
+            outcome = await _segmentation_review_loop(
+                voxels,
+                segment_ids,
+                scene_summary,
+                voxel_preview_image_url,
+                reviewer=review_segmentation,
+                max_rounds=request.max_segmentation_rounds or DEFAULT_SEGMENTATION_ROUNDS,
+                on_thinking=on_thinking,
+            )
+            segment_ids = outcome.segment_ids
+            scene_summary = outcome.scene_summary
+            voxel_preview_image_url = outcome.preview_image_url
+            segmentation_adjustments = outcome.adjustments
+            segmentation_rounds = outcome.rounds
+            segmentation_stop_reason = outcome.stop_reason
 
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
@@ -1567,6 +1715,8 @@ async def llm_render(
             reference_image_count=len(reference_image_urls),
             segmentation_checked=request.check_segmentation,
             segmentation_adjustments_count=len(segmentation_adjustments),
+            segmentation_rounds=segmentation_rounds,
+            segmentation_stop_reason=segmentation_stop_reason,
         )
 
         return LlmRenderResponse(
@@ -1576,6 +1726,8 @@ async def llm_render(
             model=model,
             applied_rules=applied,
             segmentation_adjustments=segmentation_adjustments,
+            segmentation_rounds=segmentation_rounds,
+            segmentation_stop_reason=segmentation_stop_reason,
             preview_image=voxel_preview_image_url if request.include_preview else None,
             message=f"Recolored {len(applied)} of {segment_count} segments"
             + (f" as '{subject}'" if subject else ""),

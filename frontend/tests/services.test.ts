@@ -7,7 +7,7 @@ import { GetGenerationsByImageApiService } from '../src/services/getGenerationsB
 import { GetPriceApiService } from '../src/services/getPriceApi';
 import { GetUserGenerationsApiService } from '../src/services/getUserGenerationsApi';
 import { LdrToMpdApiService } from '../src/services/ldrToMpdApi';
-import { LlmRenderApiService } from '../src/services/llmRenderApi';
+import { LlmRenderApiService, type LlmRenderResponse } from '../src/services/llmRenderApi';
 import { PromptEditModelApiService } from '../src/services/promptEditModelApi';
 import { ResizeModelApiService } from '../src/services/resizeModelApi';
 import { SendWaitlistEmailApiService } from '../src/services/sendWaitlistEmailApi';
@@ -84,10 +84,21 @@ describe('JSON API service contracts', () => {
   });
 
   it('streams LLM brick-design thinking before returning the result', async () => {
-    const result = { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], message: 'ok' };
+    const result: LlmRenderResponse = {
+      xyzrgb_content: 'xyz',
+      voxel_count: 1,
+      segment_count: 1,
+      model: 'm',
+      applied_rules: [],
+      segmentation_adjustments: [{ action: 'merge', segment_ids: [1, 2], into: 1, round: 1 }],
+      segmentation_rounds: 2,
+      segmentation_stop_reason: 'good',
+      message: 'ok',
+    };
     const thinking = vi.fn();
     const referenceImages = ['image', 'image-side'];
     const stream = sse([
+      'data: {"type":"thinking","delta":"Checking segmentation (round 1/3)...\\n"}\n\n',
       'data: {"type":"thinking","delta":"I see a red "}\n',
       '\ndata: {"type":"thinking","delta":"torso."}\n\n',
       `data: ${JSON.stringify({ type: 'result', data: result })}\n\n`,
@@ -95,7 +106,7 @@ describe('JSON API service contracts', () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ...ok({}), body: stream } as unknown as Response);
 
     await expect(LlmRenderApiService.llmRenderStream('xyz', referenceImages, 'paint', 'tok', thinking)).resolves.toEqual(result);
-    expect(thinking.mock.calls.flat()).toEqual(['I see a red ', 'torso.']);
+    expect(thinking.mock.calls.flat()).toEqual(['Checking segmentation (round 1/3)...\n', 'I see a red ', 'torso.']);
     const [url, options] = vi.mocked(fetch).mock.calls[0];
     expect(String(url).endsWith('/llmRender/stream')).toBe(true);
     expect(options).toMatchObject({

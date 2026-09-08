@@ -97,12 +97,17 @@ one feature (both eyes, all buttons) share a single segment; the scene summary f
 with `is_detail` and `island_count`. Unless `check_segmentation` is false, the LLM then
 reviews the labelled preview against the reference image(s) and may merge segments that
 are fragments of one part or ask for a segment spanning several parts to be re-split
-deterministically; applied changes are reported in `segmentation_adjustments` (segment ids
-there refer to the segmentation the LLM reviewed). A labelled multi-view preview of the
-final segments plus every reference image is sent to OpenAI, which returns one colour per
-segment. `applied_rules` in the response lists each segment's inferred part name, reason
-and colour. Reference images can be given as `reference_image_url`, `reference_image_urls`
-(max 4 combined), or both.
+deterministically. This runs as a verification loop: after each round's adjustments the
+preview is re-rendered and reviewed again (with the earlier rounds' changes in the prompt)
+until the LLM returns `good`, a round changes nothing, the segmentation repeats an earlier
+one, or `max_segmentation_rounds` (default 3, max 5) is reached. Applied changes are
+reported in `segmentation_adjustments` (each tagged with its `round`; segment ids there
+refer to the segmentation the LLM reviewed in that round), alongside `segmentation_rounds`
+and `segmentation_stop_reason` (`good` | `no_change` | `cycle` | `max_rounds` | `error`).
+A labelled multi-view preview of the final segments plus every reference image is sent to
+OpenAI, which returns one colour per segment. `applied_rules` in the response lists each
+segment's inferred part name, reason and colour. Reference images can be given as
+`reference_image_url`, `reference_image_urls` (max 4 combined), or both.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
 (default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
@@ -116,6 +121,7 @@ curl -X POST http://localhost:8002/llmRender \
     "prompt": "match the character colors, preserving the model shape",
     "max_segments": 16,
     "check_segmentation": true,
+    "max_segmentation_rounds": 3,
     "include_preview": false
   }' \
   -o llm_render_response.json
