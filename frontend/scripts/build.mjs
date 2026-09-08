@@ -17,9 +17,9 @@
  * always lose. Spawning `vite build` with an explicit env object is the only
  * way to actually win that precedence.
  *
- * It is intentionally best-effort: any failure (missing config, PR
- * environment not up yet, API error, unexpected schema) is logged and the
- * build proceeds with the default configured backend.
+ * It waits for a newly created PR environment and domain before falling back.
+ * Permanent failures (missing config, API error, unexpected schema) are logged
+ * and the build proceeds with the default configured backend.
  *
  * Required Vercel project env vars for this to activate:
  *   RAILWAY_API_TOKEN            - Railway account or workspace token
@@ -27,8 +27,17 @@
  *   RAILWAY_BACKEND_SERVICE_NAME - name of the backend service in Railway
  *                                  (defaults to "brickai-backend"; only needed
  *                                  if you rename the Railway service)
+ *
+ * Optional tuning:
+ *   RAILWAY_PREVIEW_MAX_ATTEMPTS  - lookup attempts before fallback (default 30)
+ *   RAILWAY_PREVIEW_RETRY_DELAY_MS - delay between attempts in ms (default 5000)
  */
 import { spawnSync } from 'node:child_process';
+import {
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_RETRY_DELAY_MS,
+  resolveRailwayPreviewBackend,
+} from './railway-preview.mjs';
 
 const RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2';
 
@@ -39,6 +48,16 @@ function log(message) {
 function runViteBuild(env) {
   const result = spawnSync('npx', ['vite', 'build'], { stdio: 'inherit', env });
   process.exit(result.status ?? 1);
+}
+
+function readPositiveInteger(value, fallback, name) {
+  if (value === undefined) return fallback;
+
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
+
+  log(`${name} must be a positive integer; using ${fallback}.`);
+  return fallback;
 }
 
 async function main() {
@@ -93,8 +112,7 @@ async function main() {
     }
   `;
 
-  let json;
-  try {
+  async function loadProject() {
     const response = await fetch(RAILWAY_API_URL, {
       method: 'POST',
       headers: {
@@ -103,65 +121,43 @@ async function main() {
       },
       body: JSON.stringify({ query, variables: { projectId } }),
     });
-    json = await response.json();
+    const json = await response.json();
     if (!response.ok || json.errors) {
-      log(`Railway API request failed: ${response.status} ${JSON.stringify(json.errors)}`);
-      runViteBuild(process.env);
-      return;
+      throw new Error(
+        `Railway API request failed: ${response.status} ${JSON.stringify(json.errors)}`,
+      );
     }
-  } catch (err) {
-    log(`Railway API request threw: ${err}`);
-    runViteBuild(process.env);
-    return;
+
+    if (!json?.data?.project) {
+      throw new Error('Railway API response missing project data.');
+    }
+    return json.data.project;
   }
 
-  const project = json?.data?.project;
-  if (!project) {
-    log('Railway API response missing project data; skipping.');
-    runViteBuild(process.env);
-    return;
-  }
+  const maxAttempts = readPositiveInteger(
+    process.env.RAILWAY_PREVIEW_MAX_ATTEMPTS,
+    DEFAULT_MAX_ATTEMPTS,
+    'RAILWAY_PREVIEW_MAX_ATTEMPTS',
+  );
+  const retryDelayMs = readPositiveInteger(
+    process.env.RAILWAY_PREVIEW_RETRY_DELAY_MS,
+    DEFAULT_RETRY_DELAY_MS,
+    'RAILWAY_PREVIEW_RETRY_DELAY_MS',
+  );
 
-  // Railway names PR environments like "pr-<number>" or "<project-name>-pr-<number>"
-  // (observed in practice), so match on a "pr-<number>" suffix rather than an
-  // exact string.
-  const prSuffix = `pr-${prId}`.toLowerCase();
-  const envEdges = project.environments?.edges ?? [];
-  const prEnv = envEdges.find((e) => {
-    const name = e.node?.name?.toLowerCase() ?? '';
-    return name === prSuffix || name.endsWith(`-${prSuffix}`);
+  const backendUrl = await resolveRailwayPreviewBackend({
+    loadProject,
+    prId,
+    serviceName,
+    maxAttempts,
+    retryDelayMs,
+    log,
   });
-  if (!prEnv) {
-    log(
-      `No Railway environment matching "*${prSuffix}" found yet (it may still be ` +
-        `spinning up). Falling back to the default configured backend.`
-    );
-    runViteBuild(process.env);
-    return;
-  }
-  const environmentId = prEnv.node.id;
-
-  const serviceEdges = project.services?.edges ?? [];
-  const backendService = serviceEdges.find((e) => e.node?.name === serviceName);
-  if (!backendService) {
-    log(`No Railway service named "${serviceName}" found in this project; skipping.`);
+  if (!backendUrl) {
     runViteBuild(process.env);
     return;
   }
 
-  const instanceEdges = backendService.node.serviceInstances?.edges ?? [];
-  const instance = instanceEdges.find((e) => e.node?.environmentId === environmentId);
-  const domain =
-    instance?.node?.domains?.serviceDomains?.[0]?.domain ??
-    instance?.node?.domains?.customDomains?.[0]?.domain;
-
-  if (!domain) {
-    log(`No domain found for service "${serviceName}" in environment "pr-${prId}"; skipping.`);
-    runViteBuild(process.env);
-    return;
-  }
-
-  const backendUrl = `https://${domain}`;
   log(`Resolved PR backend to ${backendUrl}; building with it.`);
   runViteBuild({
     ...process.env,

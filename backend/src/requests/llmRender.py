@@ -1,34 +1,60 @@
+import asyncio
 import base64
 import heapq
 import json
 import logging
 import os
 import re
+import uuid
 from collections import defaultdict
+from dataclasses import dataclass, field
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import httpx
 import numpy as np
 from fastapi import HTTPException
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 from scipy import ndimage
 from skimage.segmentation import watershed
 
 from ..utils.posthog_client import track_api_call, track_error
+from ..utils.generation_storage import generation_storage
+from ..utils.reference_views import (
+    REFERENCE_VIEW_NAMES,
+    generate_missing_reference_views,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_XYZRGB_BYTES = 8 * 1024 * 1024
 MAX_VOXELS = 350_000
 MAX_GRID_CELLS = 60_000_000
+# The model used for /llmRender is swappable per-request (LlmRenderRequest.model)
+# or via env var, and can name either an OpenAI or an Anthropic model -
+# _model_provider() below decides which API a given model name is sent to.
 DEFAULT_MODEL = os.getenv("OPENAI_LLM_RENDER_MODEL", "gpt-5.6-sol")
 DEFAULT_REASONING_EFFORT = os.getenv("OPENAI_LLM_RENDER_REASONING_EFFORT", "medium")
 OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_LLM_RENDER_TIMEOUT_SECONDS", "240"))
 
+ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_MAX_TOKENS = int(os.getenv("ANTHROPIC_LLM_RENDER_MAX_TOKENS", "8192"))
+ANTHROPIC_TIMEOUT_SECONDS = float(
+    os.getenv("ANTHROPIC_LLM_RENDER_TIMEOUT_SECONDS", str(OPENAI_TIMEOUT_SECONDS))
+)
+
 DEFAULT_MAX_SEGMENTS = 16
 MAX_SEGMENTS_LIMIT = 24
+MAX_REFERENCE_IMAGES = 4
+# Ceiling for how many pieces the LLM may ask a single segment to be split into
+# during the segmentation check.
+MAX_SPLIT_PIECES = 4
+# The segmentation check is a loop: review -> adjust -> re-render -> review the
+# adjusted result again. It stops early when the LLM says the segmentation is
+# good, a round changes nothing, or the partition repeats an earlier one.
+DEFAULT_SEGMENTATION_ROUNDS = 3
+MAX_SEGMENTATION_ROUNDS_LIMIT = 5
 COLOR_CLUSTERS = 10
 # Ceiling for extra clusters spent on small, distinct detail colours.
 MAX_COLOR_CLUSTERS = 24
@@ -91,22 +117,70 @@ VIEWS: List[Dict[str, Any]] = [
 AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
+def _validate_http_url(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("URL is required")
+    if not value.startswith(("http://", "https://")):
+        raise ValueError("URL must start with http:// or https://")
+    return value
+
+
 class LlmRenderRequest(BaseModel):
+    generation_id: str
     xyzrgb_url: str
-    reference_image_url: str
+    reference_image_url: Optional[str] = None
+    reference_image_urls: Optional[List[str]] = None
     prompt: Optional[str] = None
     model: Optional[str] = None
     max_segments: Optional[int] = DEFAULT_MAX_SEGMENTS
     include_preview: bool = False
+    check_segmentation: bool = True
+    max_segmentation_rounds: Optional[int] = DEFAULT_SEGMENTATION_ROUNDS
 
-    @validator("xyzrgb_url", "reference_image_url")
+    @validator("generation_id")
+    def validate_generation_id(cls, value: str) -> str:
+        try:
+            parsed = uuid.UUID((value or "").strip())
+        except (ValueError, AttributeError):
+            raise ValueError("generation_id must be a UUID")
+        return str(parsed)
+
+    @validator("xyzrgb_url")
     def validate_url(cls, value: str) -> str:
-        value = (value or "").strip()
-        if not value:
-            raise ValueError("URL is required")
-        if not value.startswith(("http://", "https://")):
-            raise ValueError("URL must start with http:// or https://")
-        return value
+        return _validate_http_url(value)
+
+    @validator("reference_image_url")
+    def validate_reference_image_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return _validate_http_url(value)
+
+    @validator("reference_image_urls", always=True)
+    def validate_reference_image_urls(
+        cls, value: Optional[List[str]], values: Dict[str, Any]
+    ) -> Optional[List[str]]:
+        urls = [_validate_http_url(url) for url in (value or [])]
+        primary = values.get("reference_image_url")
+        combined = ([primary] if primary else []) + urls
+        deduped = list(dict.fromkeys(combined))
+        if not deduped:
+            raise ValueError(
+                "At least one reference image is required "
+                "(reference_image_url or reference_image_urls)"
+            )
+        if len(deduped) > MAX_REFERENCE_IMAGES:
+            raise ValueError(
+                f"At most {MAX_REFERENCE_IMAGES} reference images are allowed"
+            )
+        return urls or None
+
+    def reference_images(self) -> List[str]:
+        """All reference image URLs, primary first, without duplicates."""
+        urls = ([self.reference_image_url] if self.reference_image_url else []) + (
+            self.reference_image_urls or []
+        )
+        return list(dict.fromkeys(urls))
 
     @validator("prompt")
     def validate_prompt(cls, value: Optional[str]) -> Optional[str]:
@@ -132,6 +206,16 @@ class LlmRenderRequest(BaseModel):
             raise ValueError(f"max_segments must be between 2 and {MAX_SEGMENTS_LIMIT}")
         return value
 
+    @validator("max_segmentation_rounds")
+    def validate_max_segmentation_rounds(cls, value: Optional[int]) -> int:
+        if value is None:
+            return DEFAULT_SEGMENTATION_ROUNDS
+        if value < 1 or value > MAX_SEGMENTATION_ROUNDS_LIMIT:
+            raise ValueError(
+                f"max_segmentation_rounds must be between 1 and {MAX_SEGMENTATION_ROUNDS_LIMIT}"
+            )
+        return value
+
 
 class LlmRenderResponse(BaseModel):
     xyzrgb_content: str
@@ -139,7 +223,13 @@ class LlmRenderResponse(BaseModel):
     segment_count: int
     model: str
     applied_rules: List[Dict[str, Any]]
+    segmentation_adjustments: List[Dict[str, Any]] = []
+    # Number of LLM review rounds that ran and why the loop stopped:
+    # "good" | "no_change" | "cycle" | "max_rounds" | "error" (None when unchecked).
+    segmentation_rounds: int = 0
+    segmentation_stop_reason: Optional[str] = None
     preview_image: Optional[str] = None
+    reference_images: Dict[str, str] = Field(default_factory=dict)
     message: str = "Successfully recolored xyzrgb"
 
 
@@ -968,6 +1058,23 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     return parsed
 
 
+def _extract_visible_text_delta(event: Dict[str, Any]) -> Optional[str]:
+    if event.get("type") not in {
+        "response.reasoning_summary_text.delta",
+        "response.output_text.delta",
+    }:
+        return None
+    delta = event.get("delta")
+    return delta if isinstance(delta, str) and delta else None
+
+
+def _extract_thinking_delta(event: Dict[str, Any]) -> Optional[str]:
+    if event.get("type") != "response.reasoning_summary_text.delta":
+        return None
+    delta = event.get("delta")
+    return delta if isinstance(delta, str) and delta else None
+
+
 def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
     return {
         "type": "object",
@@ -1000,13 +1107,11 @@ def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
     }
 
 
-async def _call_openai_for_assignments(
-    scene_summary: Dict[str, Any],
-    reference_image_url: str,
-    voxel_preview_image_url: str,
-    prompt: Optional[str],
-    model: str,
-) -> Tuple[List[Dict[str, Any]], str]:
+async def _post_openai_responses(
+    payload: Dict[str, Any],
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+    delta_extractor: Callable[[Dict[str, Any]], Optional[str]] = _extract_thinking_delta,
+) -> Dict[str, Any]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -1014,19 +1119,362 @@ async def _call_openai_for_assignments(
             detail="OPENAI_API_KEY not configured. Set OPENAI_API_KEY and restart the backend server.",
         )
 
+    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS, connect=15.0)
+    response_json: Optional[Dict[str, Any]] = None
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if payload.get("stream"):
+                async with client.stream(
+                    "POST",
+                    "https://api.openai.com/v1/responses",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data == "[DONE]":
+                            continue
+                        try:
+                            event = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = delta_extractor(event)
+                        if delta and on_thinking:
+                            await on_thinking(delta)
+                        if event.get("type") == "response.completed" and isinstance(
+                            event.get("response"), dict
+                        ):
+                            response_json = event["response"]
+                        elif event.get("type") == "error":
+                            message = (event.get("error") or {}).get("message", "OpenAI stream failed")
+                            raise HTTPException(status_code=502, detail=message)
+            else:
+                response = await client.post(
+                    "https://api.openai.com/v1/responses",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+                response.raise_for_status()
+                response_json = response.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("OpenAI llmRender request failed: %s", e.response.text)
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI request failed: HTTP {e.response.status_code}",
+        )
+    except httpx.TimeoutException as e:
+        logger.error(
+            "OpenAI llmRender request timed out after %ss (%s)",
+            OPENAI_TIMEOUT_SECONDS,
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"OpenAI request timed out after {OPENAI_TIMEOUT_SECONDS:.0f}s "
+                f"(model={payload.get('model')}, reasoning={DEFAULT_REASONING_EFFORT}). "
+                "Lower OPENAI_LLM_RENDER_REASONING_EFFORT or raise OPENAI_LLM_RENDER_TIMEOUT_SECONDS."
+            ),
+        )
+    except httpx.HTTPError as e:
+        # httpx transport errors often stringify to "", so include the type name.
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI request failed: {type(e).__name__}: {e}".rstrip(": "),
+        )
+
+    if response_json is None:
+        raise HTTPException(status_code=502, detail="OpenAI stream ended without a completed response")
+    if response_json.get("status") == "incomplete":
+        reason = (response_json.get("incomplete_details") or {}).get("reason", "unknown")
+        raise HTTPException(status_code=502, detail=f"OpenAI response was incomplete: {reason}")
+    return response_json
+
+
+def _model_provider(model: str) -> str:
+    """Which API a model name should be sent to. Anthropic models are named
+    "claude-..." (e.g. "claude-fable-5"); everything else is assumed to be an
+    OpenAI model. This is the single place that decides where a `model`
+    string (from the request or OPENAI_LLM_RENDER_MODEL) is routed, so
+    swapping models is just a matter of changing that string."""
+    return "anthropic" if (model or "").strip().lower().startswith("claude") else "openai"
+
+
+def _reference_image_content(reference_image_urls: List[str]) -> List[Dict[str, Any]]:
+    return [
+        {"type": "input_image", "image_url": url, "detail": "high"}
+        for url in reference_image_urls
+    ]
+
+
+def _anthropic_image_block(url: str) -> Dict[str, Any]:
+    """Anthropic requires base64 data URLs to be sent as source.type=base64
+    (raw media type + data), and only accepts source.type=url for actual
+    https:// URLs. reference images are https URLs but the voxel preview is
+    always a data: URL, so both paths are needed here."""
+    if url.startswith("data:"):
+        header, _, data = url.partition(",")
+        media_type = header[len("data:"):].split(";")[0] or "image/png"
+        return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+    return {"type": "image", "source": {"type": "url", "url": url}}
+
+
+def _reference_image_content_anthropic(reference_image_urls: List[str]) -> List[Dict[str, Any]]:
+    return [_anthropic_image_block(url) for url in reference_image_urls]
+
+
+def _anthropic_tool_payload(
+    *,
+    model: str,
+    system_prompt: str,
+    user_text: str,
+    reference_image_urls: List[str],
+    voxel_preview_image_url: str,
+    schema: Dict[str, Any],
+    schema_name: str,
+    stream: bool = False,
+) -> Dict[str, Any]:
+    """Build an Anthropic Messages API payload equivalent to the OpenAI
+    Responses payloads below: the model is asked (not forced) to call a tool
+    matching the schema, so the parsed result arrives as that tool call's
+    `input` rather than JSON embedded in free text. tool_choice is left as
+    "auto" rather than forced: testing showed Claude Fable 5 essentially never
+    produces a visible thinking block when tool use is forced, but does think
+    (sometimes) when it is free to choose - see _extract_anthropic_tool_json
+    for the plain-text JSON fallback this requires. Adaptive thinking with
+    "summarized" display is enabled so any reasoning is surfaced, like
+    OpenAI's reasoning summaries."""
+    tool_system_prompt = (
+        f"{system_prompt}\n\nAlways give your final answer by calling the "
+        f"`{schema_name}` tool; never reply with plain text."
+    )
+    return {
+        "model": model,
+        "max_tokens": ANTHROPIC_MAX_TOKENS,
+        "system": tool_system_prompt,
+        "thinking": {"type": "adaptive", "display": "summarized"},
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_text},
+                    *_reference_image_content_anthropic(reference_image_urls),
+                    _anthropic_image_block(voxel_preview_image_url),
+                ],
+            }
+        ],
+        "tools": [
+            {
+                "name": schema_name,
+                "description": f"Return the {schema_name} result as structured JSON.",
+                "input_schema": schema,
+            }
+        ],
+        "tool_choice": {"type": "auto"},
+        "stream": stream,
+    }
+
+
+def _extract_anthropic_tool_json(response_json: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
+    for block in response_json.get("content", []):
+        if block.get("type") == "tool_use" and block.get("name") == tool_name:
+            result = block.get("input")
+            if isinstance(result, dict):
+                return result
+    # tool_choice is "auto" (see _anthropic_tool_payload) so thinking can
+    # happen; the model occasionally answers in plain text anyway, so fall
+    # back to parsing JSON out of any text block.
+    for block in response_json.get("content", []):
+        text = block.get("text")
+        if block.get("type") == "text" and isinstance(text, str) and text.strip():
+            return _extract_json_object(text)
+    raise HTTPException(
+        status_code=502, detail="Anthropic response did not contain the expected tool call"
+    )
+
+
+def _accumulate_anthropic_stream_content(
+    content_blocks: List[Dict[str, Any]], json_buffers: Dict[int, str], event: Dict[str, Any]
+) -> None:
+    """Rebuild the non-streaming `content` array shape from an Anthropic SSE
+    event: tool_use inputs stream as incremental JSON fragments
+    (input_json_delta) that must be concatenated and parsed once the block
+    closes."""
+    event_type = event.get("type")
+    if event_type == "content_block_start":
+        index = event.get("index", len(content_blocks))
+        while len(content_blocks) <= index:
+            content_blocks.append({})
+        block = dict(event.get("content_block") or {})
+        content_blocks[index] = block
+        if block.get("type") == "tool_use":
+            json_buffers[index] = ""
+    elif event_type == "content_block_delta":
+        index = event.get("index")
+        delta = event.get("delta") or {}
+        delta_type = delta.get("type")
+        if delta_type == "input_json_delta" and index in json_buffers:
+            json_buffers[index] += delta.get("partial_json") or ""
+        elif delta_type == "text_delta" and 0 <= (index or -1) < len(content_blocks):
+            # tool_choice is "auto" (see _anthropic_tool_payload), so the model
+            # occasionally answers in plain text instead of calling the tool;
+            # accumulate that text so _extract_anthropic_tool_json can fall
+            # back to parsing JSON out of it.
+            block = content_blocks[index]
+            block["text"] = (block.get("text") or "") + (delta.get("text") or "")
+    elif event_type == "content_block_stop":
+        index = event.get("index")
+        if index in json_buffers:
+            raw = json_buffers[index]
+            try:
+                content_blocks[index]["input"] = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=502, detail="Anthropic tool_use input was invalid JSON"
+                )
+
+
+def _extract_anthropic_thinking_delta(event: Dict[str, Any]) -> Optional[str]:
+    if event.get("type") != "content_block_delta":
+        return None
+    delta = event.get("delta") or {}
+    if delta.get("type") != "thinking_delta":
+        return None
+    text = delta.get("thinking")
+    return text if isinstance(text, str) and text else None
+
+
+async def _post_anthropic_messages(
+    payload: Dict[str, Any],
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY not configured. Set ANTHROPIC_API_KEY and restart the backend server.",
+        )
+
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": ANTHROPIC_API_VERSION,
+        "Content-Type": "application/json",
+    }
+    # Workspace-scoped API keys require this header to say which workspace to
+    # bill/run against.
+    workspace_id = os.getenv("ANTHROPIC_WORKSPACE_ID")
+    if workspace_id:
+        headers["anthropic-workspace-id"] = workspace_id
+
+    timeout = httpx.Timeout(ANTHROPIC_TIMEOUT_SECONDS, connect=15.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if payload.get("stream"):
+                content_blocks: List[Dict[str, Any]] = []
+                json_buffers: Dict[int, str] = {}
+                async with client.stream(
+                    "POST",
+                    "https://api.anthropic.com/v1/messages",
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if not data:
+                            continue
+                        try:
+                            event = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        if event.get("type") == "error":
+                            message = (event.get("error") or {}).get(
+                                "message", "Anthropic stream failed"
+                            )
+                            raise HTTPException(status_code=502, detail=message)
+                        delta = _extract_anthropic_thinking_delta(event)
+                        if delta and on_thinking:
+                            await on_thinking(delta)
+                        _accumulate_anthropic_stream_content(content_blocks, json_buffers, event)
+                return {"content": content_blocks}
+
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("Anthropic llmRender request failed: %s", e.response.text)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Anthropic request failed: HTTP {e.response.status_code}",
+        )
+    except httpx.TimeoutException as e:
+        logger.error(
+            "Anthropic llmRender request timed out after %ss (%s)",
+            ANTHROPIC_TIMEOUT_SECONDS,
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Anthropic request timed out after {ANTHROPIC_TIMEOUT_SECONDS:.0f}s "
+                f"(model={payload.get('model')}). Raise ANTHROPIC_LLM_RENDER_TIMEOUT_SECONDS."
+            ),
+        )
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Anthropic request failed: {type(e).__name__}: {e}".rstrip(": "),
+        )
+
+
+def _reference_images_description(reference_image_urls: List[str]) -> str:
+    count = len(reference_image_urls)
+    if count == 1:
+        return "Image 1 is the reference"
+    return (
+        f"Images 1-{count} are reference photos of the same subject "
+        "(possibly from different angles); cross-check them against each other"
+    )
+
+
+async def _call_openai_for_assignments(
+    scene_summary: Dict[str, Any],
+    reference_image_urls: List[str],
+    voxel_preview_image_url: str,
+    prompt: Optional[str],
+    model: str,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Tuple[List[Dict[str, Any]], str]:
     segment_ids = [segment["id"] for segment in scene_summary["segments"]]
+    preview_index = len(reference_image_urls) + 1
 
     system_prompt = (
         "You recolor voxel models so they match a reference image. The model has been "
         "pre-split into numbered segments; your job is to decide which part of the "
         "reference object each segment is, and give it that part's color. "
-        "The reference image is the ONLY source of colors. The colors in the voxel "
+        "The reference images are the ONLY source of colors. The colors in the voxel "
         "preview are arbitrary segment IDs, not real colors. Never change geometry. "
         "Return only JSON."
     )
     user_prompt = {
         "task": (
-            "Image 1 is the reference. Image 2 shows the voxel model from four cameras "
+            f"{_reference_images_description(reference_image_urls)}. Image "
+            f"{preview_index} shows the voxel model from four cameras "
             "with every segment drawn in a flat ID color and labelled with its number "
             "(legend at the bottom). Steps: (1) identify the subject and its major "
             "colored parts in the reference image; (2) work out which preview view "
@@ -1047,6 +1495,182 @@ async def _call_openai_for_assignments(
         "scene_summary": scene_summary,
     }
 
+    if _model_provider(model) == "anthropic":
+        payload = _anthropic_tool_payload(
+            model=model,
+            system_prompt=system_prompt,
+            user_text=json.dumps(user_prompt),
+            reference_image_urls=reference_image_urls,
+            voxel_preview_image_url=voxel_preview_image_url,
+            schema=_assignment_schema(segment_ids),
+            schema_name="voxel_segment_colors",
+            stream=True,
+        )
+        response_json = await _post_anthropic_messages(payload, on_thinking=on_thinking)
+        parsed = _extract_anthropic_tool_json(response_json, "voxel_segment_colors")
+    else:
+        payload = {
+            "model": model,
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": system_prompt}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": json.dumps(user_prompt)},
+                        *_reference_image_content(reference_image_urls),
+                        {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
+                    ],
+                },
+            ],
+            "reasoning": {"effort": DEFAULT_REASONING_EFFORT, "summary": "auto"},
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "voxel_segment_colors",
+                    "schema": _assignment_schema(segment_ids),
+                }
+            },
+            "stream": True,
+        }
+
+        response_json = await _post_openai_responses(
+            payload, on_thinking=on_thinking, delta_extractor=_extract_visible_text_delta
+        )
+        parsed = _extract_json_object(_extract_response_text(response_json))
+
+    assignments = parsed.get("assignments", [])
+    if not isinstance(assignments, list):
+        raise HTTPException(status_code=502, detail="OpenAI assignments must be an array")
+    subject = parsed.get("subject") if isinstance(parsed.get("subject"), str) else ""
+    return assignments, subject
+
+
+# ---------------------------------------------------------------------------
+# Segmentation check
+#
+# The deterministic segmentation only sees colour structure and geometry; it
+# cannot know that a hat and hair are different parts or that two fragments are
+# one shirt. Before colors are assigned, the LLM reviews the labelled preview
+# against the reference image(s) and may ask for segments to be merged (they
+# are fragments of one part) or split (one segment spans several parts). The
+# splitting itself stays deterministic: the segmenter is re-run on just that
+# segment's voxels with the piece count the LLM chose.
+#
+# The check runs as a verification loop (_segmentation_review_loop): after each
+# round's adjustments the preview is re-rendered and shown to the LLM again, so
+# it can confirm the fix or request further changes, until it returns "good",
+# a round changes nothing, the partition repeats (oscillation) or the round
+# cap is hit.
+# ---------------------------------------------------------------------------
+
+
+def _segmentation_review_schema(segment_ids: List[int]) -> Dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "verdict": {"type": "string", "enum": ["good", "adjust"]},
+            "merge_groups": {
+                "type": "array",
+                "items": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {"type": "integer", "enum": segment_ids},
+                },
+            },
+            "split_segments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "segment_id": {"type": "integer", "enum": segment_ids},
+                        "pieces": {"type": "integer", "minimum": 2, "maximum": MAX_SPLIT_PIECES},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["segment_id", "pieces", "reason"],
+                },
+            },
+        },
+        "required": ["verdict", "merge_groups", "split_segments"],
+    }
+
+
+async def _call_openai_for_segmentation_review(
+    scene_summary: Dict[str, Any],
+    reference_image_urls: List[str],
+    voxel_preview_image_url: str,
+    prompt: Optional[str],
+    model: str,
+    round_number: int = 1,
+    previous_rounds: Optional[List[Dict[str, Any]]] = None,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> Dict[str, Any]:
+    segment_ids = [segment["id"] for segment in scene_summary["segments"]]
+    preview_index = len(reference_image_urls) + 1
+    previous_rounds = previous_rounds or []
+
+    system_prompt = (
+        "You quality-check how a voxel model has been split into segments before it is "
+        "recolored to match reference images. A good segmentation gives every "
+        "distinctly-colored part of the subject its own segment: no segment spans "
+        "differently-colored parts, and no part is shattered into fragments. You cannot "
+        "move voxels; you can only ask for whole segments to be merged or split. "
+        "Return only JSON."
+    )
+    rules = [
+        "If the segmentation already matches the reference, return verdict 'good' with empty merge_groups and split_segments.",
+        "Only request a merge when the segments would end up the exact same color; when unsure, leave them separate.",
+        "Never merge a detail segment (is_detail=true) into the part it sits on.",
+        "Only request a split when one segment clearly covers parts with different colors in the reference.",
+        "Use each segment id at most once across merge_groups and split_segments.",
+    ]
+    if previous_rounds:
+        rules.append(
+            "This is a follow-up review: previous_rounds lists the adjustments already "
+            "applied in earlier rounds (their segment ids refer to earlier labellings; "
+            "the model has since been renumbered 1..N by size, so read the current ids "
+            "from the preview and scene_summary). Verify those fixes worked. Do not undo "
+            "them or re-request the same change; only ask for further adjustments if the "
+            "current segmentation still clearly disagrees with the reference, otherwise "
+            "return 'good'."
+        )
+    user_prompt = {
+        "task": (
+            f"{_reference_images_description(reference_image_urls)}. Image "
+            f"{preview_index} shows the voxel model from four cameras with every "
+            "segment drawn in a flat ID color and labelled with its number (legend at "
+            "the bottom); those colors are arbitrary segment IDs, not real colors. "
+            "Check the segmentation against the reference: report groups of segments "
+            "that are fragments of one uniformly-colored part in merge_groups, and any "
+            "segment that clearly spans several differently-colored parts in "
+            "split_segments with how many pieces it should become (the split itself is "
+            "re-done algorithmically; you only choose the piece count)."
+        ),
+        "rules": rules,
+        "review_round": round_number,
+        "previous_rounds": previous_rounds,
+        "optional_user_prompt": prompt,
+        "scene_summary": scene_summary,
+    }
+
+    if _model_provider(model) == "anthropic":
+        payload = _anthropic_tool_payload(
+            model=model,
+            system_prompt=system_prompt,
+            user_text=json.dumps(user_prompt),
+            reference_image_urls=reference_image_urls,
+            voxel_preview_image_url=voxel_preview_image_url,
+            schema=_segmentation_review_schema(segment_ids),
+            schema_name="voxel_segmentation_review",
+            stream=True,
+        )
+        response_json = await _post_anthropic_messages(payload, on_thinking=on_thinking)
+        return _extract_anthropic_tool_json(response_json, "voxel_segmentation_review")
+
     payload = {
         "model": model,
         "input": [
@@ -1058,71 +1682,202 @@ async def _call_openai_for_assignments(
                 "role": "user",
                 "content": [
                     {"type": "input_text", "text": json.dumps(user_prompt)},
-                    {"type": "input_image", "image_url": reference_image_url, "detail": "high"},
+                    *_reference_image_content(reference_image_urls),
                     {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
                 ],
             },
         ],
-        "reasoning": {"effort": DEFAULT_REASONING_EFFORT},
+        "reasoning": {"effort": DEFAULT_REASONING_EFFORT, "summary": "auto"},
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "voxel_segment_colors",
-                "schema": _assignment_schema(segment_ids),
+                "name": "voxel_segmentation_review",
+                "schema": _segmentation_review_schema(segment_ids),
             }
         },
+        "stream": True,
     }
 
-    timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS, connect=15.0)
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
-                "https://api.openai.com/v1/responses",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
+    response_json = await _post_openai_responses(
+        payload, on_thinking=on_thinking, delta_extractor=_extract_visible_text_delta
+    )
+    return _extract_json_object(_extract_response_text(response_json))
+
+
+def _apply_segmentation_review(
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    review: Dict[str, Any],
+) -> Tuple[np.ndarray, List[Dict[str, Any]]]:
+    """Apply the LLM's segmentation verdict: merge fragment groups into one
+    segment and re-split segments that span several parts. Segment ids in the
+    returned adjustments refer to the segmentation the LLM was shown; when any
+    adjustment is applied, the final ids are renumbered 1..N by descending size,
+    matching the contract of the initial segmentation."""
+    segment_ids = segment_ids.copy()
+    adjustments: List[Dict[str, Any]] = []
+    alive = {int(s) for s in np.unique(segment_ids)}
+
+    merge_groups = review.get("merge_groups")
+    for group in merge_groups if isinstance(merge_groups, list) else []:
+        if not isinstance(group, list):
+            continue
+        ids: List[int] = []
+        for raw in group:
+            try:
+                sid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if sid in alive and sid not in ids:
+                ids.append(sid)
+        if len(ids) < 2:
+            continue
+        target = min(ids)
+        for sid in ids:
+            if sid == target:
+                continue
+            segment_ids[segment_ids == sid] = target
+            alive.discard(sid)
+        adjustments.append({"action": "merge", "segment_ids": sorted(ids), "into": target})
+
+    split_requests = review.get("split_segments")
+    for raw in split_requests if isinstance(split_requests, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            sid = int(raw.get("segment_id"))
+            pieces = int(raw.get("pieces"))
+        except (TypeError, ValueError):
+            continue
+        if sid not in alive:
+            continue
+        budget = MAX_SEGMENTS_LIMIT - len(alive) + 1
+        pieces = min(pieces, MAX_SPLIT_PIECES, budget)
+        member_indices = np.nonzero(segment_ids == sid)[0]
+        if pieces < 2 or len(member_indices) < pieces:
+            continue
+        sub_ids = _segment_voxels([voxels[i] for i in member_indices.tolist()], pieces)
+        piece_count = int(sub_ids.max())
+        if piece_count < 2:
+            # The deterministic segmenter found nothing to split on.
+            continue
+        new_ids: List[int] = []
+        next_id = max(alive) + 1
+        for piece in range(2, piece_count + 1):
+            segment_ids[member_indices[sub_ids == piece]] = next_id
+            alive.add(next_id)
+            new_ids.append(next_id)
+            next_id += 1
+        adjustments.append(
+            {
+                "action": "split",
+                "segment_id": sid,
+                "pieces": piece_count,
+                "new_segment_ids": new_ids,
+                "reason": raw.get("reason"),
+            }
+        )
+
+    if adjustments:
+        unique, counts = np.unique(segment_ids, return_counts=True)
+        order = unique[np.argsort(-counts, kind="stable")]
+        remap = {int(old): index + 1 for index, old in enumerate(order.tolist())}
+        segment_ids = np.vectorize(remap.__getitem__)(segment_ids).astype(np.int32)
+    return segment_ids, adjustments
+
+
+def _partition_signature(segment_ids: np.ndarray) -> bytes:
+    """Label-independent fingerprint of a segmentation: two arrays that group the
+    same voxels together produce the same signature even if ids differ."""
+    _, first_index, inverse = np.unique(segment_ids, return_index=True, return_inverse=True)
+    canonical = np.argsort(np.argsort(first_index))[inverse]
+    return canonical.astype(np.int32).tobytes()
+
+
+# Callable that asks the reviewer for a verdict on the current segmentation:
+# (scene_summary, preview_image_url, round_number, previous_rounds, on_thinking) -> review.
+SegmentationReviewer = Callable[
+    [Dict[str, Any], str, int, List[Dict[str, Any]], Optional[Callable[[str], Awaitable[None]]]],
+    Awaitable[Dict[str, Any]],
+]
+
+
+@dataclass
+class SegmentationReviewOutcome:
+    segment_ids: np.ndarray
+    scene_summary: Dict[str, Any]
+    preview_image_url: str
+    adjustments: List[Dict[str, Any]] = field(default_factory=list)
+    rounds: int = 0
+    stop_reason: str = "max_rounds"
+
+
+async def _segmentation_review_loop(
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    scene_summary: Dict[str, Any],
+    preview_image_url: str,
+    reviewer: SegmentationReviewer,
+    max_rounds: int,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> SegmentationReviewOutcome:
+    """Review -> adjust -> re-render -> review again, until the reviewer says
+    "good", a round applies nothing ("no_change"), the partition repeats an
+    earlier one ("cycle"), the reviewer fails ("error") or max_rounds is hit.
+
+    Every adjustment is tagged with the round it was applied in. The check is
+    best-effort: a reviewer failure keeps whatever segmentation was reached so
+    far instead of failing the render."""
+    outcome = SegmentationReviewOutcome(segment_ids, scene_summary, preview_image_url)
+    seen = {_partition_signature(segment_ids)}
+    previous_rounds: List[Dict[str, Any]] = []
+
+    for round_number in range(1, max_rounds + 1):
+        if on_thinking:
+            await on_thinking(f"Checking segmentation (round {round_number}/{max_rounds})...\n")
+        try:
+            review = await reviewer(
+                outcome.scene_summary,
+                outcome.preview_image_url,
+                round_number,
+                previous_rounds,
+                on_thinking,
             )
-            response.raise_for_status()
-    except httpx.HTTPStatusError as e:
-        logger.error("OpenAI llmRender request failed: %s", e.response.text)
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenAI request failed: HTTP {e.response.status_code}",
-        )
-    except httpx.TimeoutException as e:
-        logger.error(
-            "OpenAI llmRender request timed out after %ss (%s)",
-            OPENAI_TIMEOUT_SECONDS,
-            type(e).__name__,
-        )
-        raise HTTPException(
-            status_code=504,
-            detail=(
-                f"OpenAI request timed out after {OPENAI_TIMEOUT_SECONDS:.0f}s "
-                f"(model={model}, reasoning={DEFAULT_REASONING_EFFORT}). "
-                "Lower OPENAI_LLM_RENDER_REASONING_EFFORT or raise OPENAI_LLM_RENDER_TIMEOUT_SECONDS."
-            ),
-        )
-    except httpx.HTTPError as e:
-        # httpx transport errors often stringify to "", so include the type name.
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenAI request failed: {type(e).__name__}: {e}".rstrip(": "),
-        )
+        except HTTPException as e:
+            logger.warning(
+                "llmRender segmentation check round %d failed, stopping: %s",
+                round_number,
+                e.detail,
+            )
+            outcome.stop_reason = "error"
+            return outcome
 
-    response_json = response.json()
-    if response_json.get("status") == "incomplete":
-        reason = (response_json.get("incomplete_details") or {}).get("reason", "unknown")
-        raise HTTPException(status_code=502, detail=f"OpenAI response was incomplete: {reason}")
+        outcome.rounds = round_number
+        new_ids, applied = _apply_segmentation_review(voxels, outcome.segment_ids, review)
+        if not applied:
+            outcome.stop_reason = "good" if review.get("verdict") == "good" else "no_change"
+            return outcome
 
-    parsed = _extract_json_object(_extract_response_text(response_json))
-    assignments = parsed.get("assignments", [])
-    if not isinstance(assignments, list):
-        raise HTTPException(status_code=502, detail="OpenAI assignments must be an array")
-    subject = parsed.get("subject") if isinstance(parsed.get("subject"), str) else ""
-    return assignments, subject
+        for adjustment in applied:
+            adjustment["round"] = round_number
+        outcome.adjustments.extend(applied)
+        outcome.segment_ids = new_ids
+        outcome.scene_summary = _build_scene_summary(voxels, new_ids)
+        outcome.preview_image_url = _build_voxel_preview_data_url(voxels, new_ids)
+
+        signature = _partition_signature(new_ids)
+        if signature in seen:
+            logger.info(
+                "llmRender segmentation check round %d reproduced an earlier segmentation, stopping",
+                round_number,
+            )
+            outcome.stop_reason = "cycle"
+            return outcome
+        seen.add(signature)
+        previous_rounds.append({"round": round_number, "adjustments": applied})
+
+    outcome.stop_reason = "max_rounds"
+    return outcome
 
 
 # ---------------------------------------------------------------------------
@@ -1184,24 +1939,107 @@ def _serialize_xyzrgb(voxels: List[Dict[str, int]]) -> str:
     ) + "\n"
 
 
-async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderResponse:
+async def llm_render(
+    request: LlmRenderRequest,
+    auth_info: dict,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> LlmRenderResponse:
     endpoint = "/llmRender"
     user_id = auth_info.get("user_email") or auth_info.get("user_id") or "anonymous"
     model = request.model or DEFAULT_MODEL
     max_segments = request.max_segments or DEFAULT_MAX_SEGMENTS
 
     try:
+        if on_thinking:
+            await on_thinking("Loading model...\n")
+
+        if generation_storage is None:
+            raise HTTPException(status_code=503, detail="Generation storage is not configured")
+        generation = await generation_storage.get_generation(request.generation_id)
+        if not generation:
+            raise HTTPException(status_code=404, detail="Generation not found")
+
+        existing_reference_images = generation.get("reference_images") or {}
+        reference_images = await generate_missing_reference_views(
+            request.reference_images()[0],
+            existing_reference_images,
+        )
+        generated_reference_images = {
+            name: url
+            for name, url in reference_images.items()
+            if existing_reference_images.get(name) != url
+        }
+        if generated_reference_images:
+            stored_reference_images = await generation_storage.store_reference_images(
+                request.generation_id,
+                generated_reference_images,
+            )
+            reference_images.update(stored_reference_images)
+
         xyzrgb_content = await _fetch_text_url(request.xyzrgb_url, MAX_XYZRGB_BYTES)
+
+        if on_thinking:
+            await on_thinking("Analyzing voxel geometry...\n")
         voxels = _parse_xyzrgb(xyzrgb_content)
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
+
+        if on_thinking:
+            await on_thinking("Rendering model preview...\n")
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
+
+        reference_image_urls = list(
+            dict.fromkeys(request.reference_images() + list(reference_images.values()))
+        )
+
+        segmentation_adjustments: List[Dict[str, Any]] = []
+        segmentation_rounds = 0
+        segmentation_stop_reason: Optional[str] = None
+        if request.check_segmentation:
+
+            async def review_segmentation(
+                current_summary: Dict[str, Any],
+                current_preview_url: str,
+                round_number: int,
+                previous_rounds: List[Dict[str, Any]],
+                thinking_callback: Optional[Callable[[str], Awaitable[None]]],
+            ) -> Dict[str, Any]:
+                return await _call_openai_for_segmentation_review(
+                    scene_summary=current_summary,
+                    reference_image_urls=reference_image_urls,
+                    voxel_preview_image_url=current_preview_url,
+                    prompt=request.prompt,
+                    model=model,
+                    round_number=round_number,
+                    previous_rounds=previous_rounds,
+                    on_thinking=thinking_callback,
+                )
+
+            outcome = await _segmentation_review_loop(
+                voxels,
+                segment_ids,
+                scene_summary,
+                voxel_preview_image_url,
+                reviewer=review_segmentation,
+                max_rounds=request.max_segmentation_rounds or DEFAULT_SEGMENTATION_ROUNDS,
+                on_thinking=on_thinking,
+            )
+            segment_ids = outcome.segment_ids
+            scene_summary = outcome.scene_summary
+            voxel_preview_image_url = outcome.preview_image_url
+            segmentation_adjustments = outcome.adjustments
+            segmentation_rounds = outcome.rounds
+            segmentation_stop_reason = outcome.stop_reason
+
+        if on_thinking:
+            await on_thinking("Comparing with reference images...\n\n")
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
-            reference_image_url=request.reference_image_url,
+            reference_image_urls=reference_image_urls,
             voxel_preview_image_url=voxel_preview_image_url,
             prompt=request.prompt,
             model=model,
+            on_thinking=on_thinking,
         )
         recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
 
@@ -1221,6 +2059,11 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             voxel_count=len(voxels),
             segment_count=segment_count,
             assignments_count=len(applied),
+            reference_image_count=len(reference_image_urls),
+            segmentation_checked=request.check_segmentation,
+            segmentation_adjustments_count=len(segmentation_adjustments),
+            segmentation_rounds=segmentation_rounds,
+            segmentation_stop_reason=segmentation_stop_reason,
         )
 
         return LlmRenderResponse(
@@ -1229,7 +2072,11 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             segment_count=segment_count,
             model=model,
             applied_rules=applied,
+            segmentation_adjustments=segmentation_adjustments,
+            segmentation_rounds=segmentation_rounds,
+            segmentation_stop_reason=segmentation_stop_reason,
             preview_image=voxel_preview_image_url if request.include_preview else None,
+            reference_images=reference_images,
             message=f"Recolored {len(applied)} of {segment_count} segments"
             + (f" as '{subject}'" if subject else ""),
         )
@@ -1244,3 +2091,42 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             user_id=user_id,
         )
         raise HTTPException(status_code=500, detail=f"llmRender failed: {e}")
+
+
+async def llm_render_stream(
+    request: LlmRenderRequest,
+    auth_info: dict,
+) -> AsyncIterator[str]:
+    queue: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue()
+
+    async def on_thinking(delta: str) -> None:
+        await queue.put({"type": "thinking", "delta": delta})
+
+    async def run() -> None:
+        try:
+            result = await llm_render(request, auth_info, on_thinking)
+            data = result.model_dump() if hasattr(result, "model_dump") else result.dict()
+            await queue.put({"type": "result", "data": data})
+        except HTTPException as exc:
+            await queue.put({"type": "error", "detail": exc.detail})
+        except Exception:
+            logger.exception("llmRender stream failed")
+            await queue.put({"type": "error", "detail": "LLM render failed"})
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(run())
+    try:
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+        await task
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass

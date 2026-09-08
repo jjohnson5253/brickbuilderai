@@ -38,6 +38,7 @@ import { UpdateModelApiService, UpdateModelResponse } from "../services/updateMo
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import { trackGeneratedModelAiEditClick } from "../utils/generatedModelAnalytics";
 import { getGeneratedModelPath } from "../utils/generationRoutes";
+import { LlmDesignNotes } from "../components/LlmDesignNotes";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
@@ -249,6 +250,7 @@ export default function GeneratedModel() {
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
   const [isLlmEditing, setIsLlmEditing] = React.useState(false);
   const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
+  const [llmThinking, setLlmThinking] = React.useState("");
   
   // Voxel editor state
   const [showVoxelEditor, setShowVoxelEditor] = React.useState(false);
@@ -313,11 +315,6 @@ export default function GeneratedModel() {
   // in the sections below the 3D preview only after the scene is ready.
   const [sceneReady, setSceneReady] = React.useState<boolean>(false);
 
-  // True once the user has clicked the Edit Model button at least once. Used
-  // to permanently stop the attention pulse on that button so it doesn't keep
-  // pulsing after the user has discovered the feature (even if they later exit
-  // edit mode).
-  const [hasClickedEditModel, setHasClickedEditModel] = React.useState<boolean>(false);
   const [hasExitedVoxelEditor, setHasExitedVoxelEditor] = React.useState<boolean>(false);
   const [previewPngDataUrl, setPreviewPngDataUrl] = React.useState<string | null>(null);
   const previewUploadWaitersRef = React.useRef<Map<string, Array<{ resolve: () => void; reject: (error: unknown) => void }>>>(new Map());
@@ -1579,26 +1576,33 @@ export default function GeneratedModel() {
 
     setIsLlmEditing(true);
     setLlmEditError(null);
+    setLlmThinking("");
 
     try {
-      let referenceImageUrl = processedImageUrl;
-      if (!referenceImageUrl) {
-        const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
-        referenceImageUrl = generation.processed_image_url || generation.external_image_url;
-        if (generation.processed_image_url) {
-          setProcessedImageUrl(generation.processed_image_url);
+      // Give the LLM every available reference image (processed + original) so
+      // it can cross-check the segmentation and colors between them.
+      const referenceImageUrls: string[] = processedImageUrl ? [processedImageUrl] : [];
+      const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
+      for (const url of [generation.processed_image_url, generation.external_image_url]) {
+        if (url && !referenceImageUrls.includes(url)) {
+          referenceImageUrls.push(url);
         }
       }
+      if (!processedImageUrl && generation.processed_image_url) {
+        setProcessedImageUrl(generation.processed_image_url);
+      }
 
-      if (!referenceImageUrl) {
+      if (referenceImageUrls.length === 0) {
         throw new Error('No reference image found for this generation');
       }
 
-      const llmResponse = await LlmRenderApiService.llmRender(
+      const llmResponse = await LlmRenderApiService.llmRenderStream(
+        currentGenerationId,
         xyzrgbUrl,
-        referenceImageUrl,
+        referenceImageUrls,
         'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
-        accessToken || undefined
+        accessToken || undefined,
+        (delta) => setLlmThinking((current) => current + delta),
       );
 
       setXyzrgbContent(llmResponse.xyzrgb_content);
@@ -1700,10 +1704,6 @@ export default function GeneratedModel() {
       action: showVoxelEditor ? 'exit_editor' : 'enter_editor',
       is_demo_model: isDemoModel,
     });
-
-    // Stop the attention pulse permanently once the user has discovered the
-    // Edit Model button, so it doesn't keep pulsing after they exit edit mode.
-    setHasClickedEditModel(true);
 
     // If already in edit mode, check for unsaved changes before exiting
     if (showVoxelEditor) {
@@ -2273,7 +2273,7 @@ export default function GeneratedModel() {
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
-              Not what you were expecting? Press "Edit" to color and shape your model!
+              Not what you were expecting? Press "Manual Edit" to color and shape your model!
             </p>
           )}
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
@@ -2286,7 +2286,7 @@ export default function GeneratedModel() {
                     guardUnsavedChanges(() => { void handleLlmEditModel(); });
                   }}
                   disabled={isLlmEditing || isSavePolling || xyzrgbLoading || !xyzrgbUrl || !currentGenerationId}
-                  className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-[#f44336] text-white font-semibold border-2 border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 transition-all duration-150 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50 attention-pulse"
               >
                   {isLlmEditing ? (
                     <>
@@ -2300,11 +2300,12 @@ export default function GeneratedModel() {
                     </>
                   )}
               </button>
+              <LlmDesignNotes notes={llmThinking} />
 
-              {/* Edit Model button — white with grey border, turns red on hover */}
+              {/* Manual Edit button — white with grey border, turns red on hover */}
               <button
                 type="button"
-                aria-label="Edit model"
+                aria-label="Manual edit model"
                 onClick={handleEditModelClick}
                 disabled={xyzrgbLoading}
                 className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold border-2 transition-all duration-150 ${
@@ -2312,9 +2313,7 @@ export default function GeneratedModel() {
                     ? 'border-[#f44336] bg-[#f44336] text-white shadow-lg shadow-[#f44336]/25 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2'
                     : xyzrgbLoading
                       ? 'bg-white text-black border-gray-300 cursor-not-allowed opacity-70'
-                      : !hasClickedEditModel
-                        ? 'bg-[#f44336] text-white border-[#f44336] shadow-lg shadow-[#f44336]/25 cursor-pointer hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
-                        : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
+                      : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
                 }`}
             >
                 {xyzrgbLoading ? (
@@ -2325,7 +2324,7 @@ export default function GeneratedModel() {
                 ) : (
                   <>
                     <Pencil size={16} />
-                    {showVoxelEditor ? 'Exit Block Editor' : 'Edit'}
+                    {showVoxelEditor ? 'Exit Block Editor' : 'Manual Edit'}
                   </>
                 )}
               </button>

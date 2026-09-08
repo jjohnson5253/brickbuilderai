@@ -316,6 +316,42 @@ class GenerationStorage:
         except Exception as e:
             logger.error(f"Failed to store image data for generation {generation_id}")
             # Don't raise - this shouldn't break the main flow
+
+    async def store_reference_images(
+        self,
+        generation_id: str,
+        reference_images: Dict[str, str],
+    ) -> Dict[str, str]:
+        """Copy directional references into generation storage and persist their URLs."""
+        timestamp = int(time.time())
+        stored_images: Dict[str, str] = {}
+        for view_name, source_url in reference_images.items():
+            stored_images[view_name] = await self._download_and_upload_from_url(
+                source_url=source_url,
+                file_path=(
+                    f"generations/{generation_id}/reference_"
+                    f"{view_name}_{timestamp}.png"
+                ),
+                content_type="image/png",
+            )
+
+        generation = await self.get_generation(generation_id)
+        if not generation:
+            raise ValueError(f"Generation {generation_id} was not found")
+        merged_images = {
+            **(generation.get("reference_images") or {}),
+            **stored_images,
+        }
+        result = (
+            self.client.table("generations")
+            .update({"reference_images": merged_images})
+            .eq("id", generation_id)
+            .execute()
+        )
+        if not result.data:
+            raise ValueError(f"Generation {generation_id} was not found")
+        logger.info("Stored %d reference views for generation %s", len(stored_images), generation_id)
+        return stored_images
     
     async def store_model_file(
         self,
