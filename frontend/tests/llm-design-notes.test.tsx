@@ -10,7 +10,7 @@ describe('LlmDesignNotes', () => {
       <LlmDesignNotes notes="Use red bricks for the torso." />,
     );
 
-    expect(markup).toContain('AI design notes');
+    expect(markup).toContain('AI output');
     expect(markup).toContain('Use red bricks for the torso.');
   });
 

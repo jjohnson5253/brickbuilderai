@@ -969,8 +969,11 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     return parsed
 
 
-def _extract_thinking_delta(event: Dict[str, Any]) -> Optional[str]:
-    if event.get("type") != "response.reasoning_summary_text.delta":
+def _extract_visible_text_delta(event: Dict[str, Any]) -> Optional[str]:
+    if event.get("type") not in {
+        "response.reasoning_summary_text.delta",
+        "response.output_text.delta",
+    }:
         return None
     delta = event.get("delta")
     return delta if isinstance(delta, str) and delta else None
@@ -1031,8 +1034,6 @@ async def _call_openai_for_assignments(
         "reference object each segment is, and give it that part's color. "
         "The reference image is the ONLY source of colors. The colors in the voxel "
         "preview are arbitrary segment IDs, not real colors. Never change geometry. "
-        "Describe your reasoning summary as concise, first-person brick-design observations "
-        "that a model builder can follow, such as identifying parts and their colors. "
         "Return only JSON."
     )
     user_prompt = {
@@ -1109,7 +1110,7 @@ async def _call_openai_for_assignments(
                         event = json.loads(data)
                     except json.JSONDecodeError:
                         continue
-                    delta = _extract_thinking_delta(event)
+                    delta = _extract_visible_text_delta(event)
                     if delta and on_thinking:
                         await on_thinking(delta)
                     if event.get("type") == "response.completed" and isinstance(event.get("response"), dict):
@@ -1228,11 +1229,22 @@ async def llm_render(
     max_segments = request.max_segments or DEFAULT_MAX_SEGMENTS
 
     try:
+        if on_thinking:
+            await on_thinking("Loading model...\n")
         xyzrgb_content = await _fetch_text_url(request.xyzrgb_url, MAX_XYZRGB_BYTES)
+
+        if on_thinking:
+            await on_thinking("Analyzing voxel geometry...\n")
         voxels = _parse_xyzrgb(xyzrgb_content)
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
+
+        if on_thinking:
+            await on_thinking("Rendering model preview...\n")
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
+
+        if on_thinking:
+            await on_thinking("Comparing with reference image...\n\n")
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
             reference_image_url=request.reference_image_url,
