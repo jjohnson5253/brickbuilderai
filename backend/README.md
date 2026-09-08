@@ -121,7 +121,10 @@ model per-request instead via the `model` field. Any OpenAI model name is sent
 to OpenAI; a `claude-...` model name (e.g. `claude-fable-5`) is sent to
 Anthropic's Messages API instead, and requires `ANTHROPIC_API_KEY` (see also
 `ANTHROPIC_LLM_RENDER_MAX_TOKENS`, default `8192`, and
-`ANTHROPIC_LLM_RENDER_TIMEOUT_SECONDS`, default `240`).
+`ANTHROPIC_LLM_RENDER_TIMEOUT_SECONDS`, default `240`). If the Anthropic key is
+scoped to a workspace, also set `ANTHROPIC_WORKSPACE_ID` (from the Anthropic
+Console under Settings > Workspaces), or requests fail with
+"API key is not scoped to a workspace".
 ```bash
 curl -X POST http://localhost:8002/llmRender \
   -H "Content-Type: application/json" \

@@ -1001,6 +1001,19 @@ def test_model_provider_routes_claude_to_anthropic():
     assert module._model_provider("") == "openai"
 
 
+def test_anthropic_image_block_uses_base64_for_data_urls_and_url_for_https():
+    module = importlib.import_module("src.requests.llmRender")
+
+    data_block = module._anthropic_image_block("data:image/png;base64,AAAA")
+    assert data_block == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"},
+    }
+
+    https_block = module._anthropic_image_block("https://example.com/a.png")
+    assert https_block == {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+
+
 def test_segmentation_review_uses_anthropic_for_claude_model(monkeypatch):
     module = importlib.import_module("src.requests.llmRender")
     captured = {}
@@ -1036,7 +1049,13 @@ def test_segmentation_review_uses_anthropic_for_claude_model(monkeypatch):
     assert review == GOOD_REVIEW
     assert captured["payload"]["model"] == "claude-fable-5"
     assert captured["payload"]["tool_choice"] == {"type": "tool", "name": "voxel_segmentation_review"}
-    assert captured["payload"]["messages"][0]["content"][0]["type"] == "text"
+    content = captured["payload"]["messages"][0]["content"]
+    assert content[0]["type"] == "text"
+    assert content[1] == {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+    assert content[2] == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"},
+    }
 
 
 def test_call_for_assignments_uses_anthropic_for_claude_model(monkeypatch):

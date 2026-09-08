@@ -1216,11 +1216,20 @@ def _reference_image_content(reference_image_urls: List[str]) -> List[Dict[str, 
     ]
 
 
+def _anthropic_image_block(url: str) -> Dict[str, Any]:
+    """Anthropic requires base64 data URLs to be sent as source.type=base64
+    (raw media type + data), and only accepts source.type=url for actual
+    https:// URLs. reference images are https URLs but the voxel preview is
+    always a data: URL, so both paths are needed here."""
+    if url.startswith("data:"):
+        header, _, data = url.partition(",")
+        media_type = header[len("data:"):].split(";")[0] or "image/png"
+        return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+    return {"type": "image", "source": {"type": "url", "url": url}}
+
+
 def _reference_image_content_anthropic(reference_image_urls: List[str]) -> List[Dict[str, Any]]:
-    return [
-        {"type": "image", "source": {"type": "url", "url": url}}
-        for url in reference_image_urls
-    ]
+    return [_anthropic_image_block(url) for url in reference_image_urls]
 
 
 def _anthropic_tool_payload(
@@ -1247,7 +1256,7 @@ def _anthropic_tool_payload(
                 "content": [
                     {"type": "text", "text": user_text},
                     *_reference_image_content_anthropic(reference_image_urls),
-                    {"type": "image", "source": {"type": "url", "url": voxel_preview_image_url}},
+                    _anthropic_image_block(voxel_preview_image_url),
                 ],
             }
         ],
