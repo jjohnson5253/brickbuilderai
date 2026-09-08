@@ -17,6 +17,7 @@ const getApiUrl = () => {
 const API_BASE_URL = getApiUrl();
 
 export interface LlmRenderRequest {
+  generation_id: string;
   xyzrgb_url: string;
   reference_image_url: string;
   prompt?: string;
@@ -38,11 +39,13 @@ export interface LlmRenderResponse {
   model: string;
   applied_rules: LlmRenderAppliedRule[];
   preview_image?: string | null;
+  reference_images: Record<'front' | 'back' | 'side' | 'top', string>;
   message: string;
 }
 
 export class LlmRenderApiService {
   static async llmRender(
+    generationId: string,
     xyzrgbUrl: string,
     referenceImageUrl: string,
     prompt?: string,
@@ -59,6 +62,7 @@ export class LlmRenderApiService {
     }
 
     const requestBody: LlmRenderRequest = {
+      generation_id: generationId,
       xyzrgb_url: xyzrgbUrl,
       reference_image_url: referenceImageUrl,
       prompt,
@@ -84,6 +88,7 @@ export class LlmRenderApiService {
   }
 
   static async llmRenderStream(
+    generationId: string,
     xyzrgbUrl: string,
     referenceImageUrl: string,
     prompt?: string,
@@ -99,6 +104,7 @@ export class LlmRenderApiService {
       method: 'POST',
       headers,
       body: JSON.stringify({
+        generation_id: generationId,
         xyzrgb_url: xyzrgbUrl,
         reference_image_url: referenceImageUrl,
         prompt,

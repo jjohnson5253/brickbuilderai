@@ -1,8 +1,8 @@
 import logging
-from typing import Optional
+from typing import Dict, Optional
 from datetime import datetime, timedelta
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import HTTPException
 
 from ..utils.generation_storage import generation_storage
@@ -26,6 +26,7 @@ class GetGenerationResponse(BaseModel):
     external_image_url: Optional[str] = None  # Available during processing and completed
     processed_image_url: Optional[str] = None  # Available when image processing is done
     preview_image_url: Optional[str] = None  # User-uploaded preview image, if set
+    reference_images: Dict[str, str] = Field(default_factory=dict)
     xyzrgb_url: Optional[str] = None
     problematic_xyzrgb_url: Optional[str] = None
     error_message: Optional[str] = None  # Only when failed
@@ -67,6 +68,7 @@ async def get_generation(request: GetGenerationRequest) -> GetGenerationResponse
         external_image_url = generation.get("external_image_url")
         processed_image_url = generation.get("processed_image_url")
         preview_image_url = generation.get("preview_image_url")
+        reference_images = generation.get("reference_images") or {}
         xyzrgb_url = generation.get("xyzrgb_url")
         problematic_xyzrgb_url = generation.get("problematic_xyzrgb_url")
         error_message = generation.get("error_message")
@@ -113,6 +115,7 @@ async def get_generation(request: GetGenerationRequest) -> GetGenerationResponse
             external_image_url=external_image_url,
             processed_image_url=processed_image_url,
             preview_image_url=preview_image_url,
+            reference_images=reference_images,
             xyzrgb_url=xyzrgb_url,
             problematic_xyzrgb_url=problematic_xyzrgb_url,
             error_message=error_message,

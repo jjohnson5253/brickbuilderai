@@ -12,6 +12,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.requests.llmRender import (
+    LlmRenderRequest,
     SEGMENT_PALETTE,
     VIEWS,
     _apply_assignments,
@@ -22,7 +23,6 @@ from src.requests.llmRender import (
     _geometric_regions,
     _load_font,
     LlmRenderResponse,
-    LlmRenderRequest,
     llm_render,
     llm_render_stream,
     _perceptual_colors,
@@ -33,6 +33,8 @@ from src.requests.llmRender import (
     _segment_voxels,
     _voxel_arrays,
 )
+
+llm_render_module = importlib.import_module("src.requests.llmRender")
 
 
 def _block(x_range, y_range, z_range, color):
@@ -457,7 +459,24 @@ def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
 
 def test_llm_render_reports_progress_before_model_thinking(monkeypatch):
     module = importlib.import_module("src.requests.llmRender")
+    generation_id = "d7f8fdb4-b010-4ef5-bd68-069aa20f96a4"
     voxel = {"x": 0, "y": 0, "z": 0, "r": 0, "g": 0, "b": 0}
+    reference_images = {
+        name: f"https://example.com/{name}.png"
+        for name in ("front", "back", "side", "top")
+    }
+
+    class FakeStorage:
+        async def get_generation(self, requested_id):
+            assert requested_id == generation_id
+            return {"reference_images": reference_images}
+
+    async def fake_generate(_primary_url, existing):
+        assert existing == reference_images
+        return reference_images
+
+    monkeypatch.setattr(module, "generation_storage", FakeStorage())
+    monkeypatch.setattr(module, "generate_missing_reference_views", fake_generate)
     monkeypatch.setattr(module, "_fetch_text_url", lambda *_args: asyncio.sleep(0, result="xyz"))
     monkeypatch.setattr(module, "_parse_xyzrgb", lambda _content: [voxel])
     monkeypatch.setattr(module, "_segment_voxels", lambda *_args: np.array([1]))
@@ -483,6 +502,7 @@ def test_llm_render_reports_progress_before_model_thinking(monkeypatch):
         updates.append(delta)
 
     request = LlmRenderRequest(
+        generation_id=generation_id,
         xyzrgb_url="https://example.com/model.xyzrgb",
         reference_image_url="https://example.com/reference.png",
     )
@@ -521,3 +541,70 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def test_llm_render_generates_stores_and_sends_missing_reference_views(monkeypatch):
+    generation_id = "d7f8fdb4-b010-4ef5-bd68-069aa20f96a4"
+    front_url = "https://storage.example/front.png"
+    generated = {
+        "front": front_url,
+        "back": "https://fal.example/back.png",
+        "side": "https://fal.example/side.png",
+        "top": "https://fal.example/top.png",
+    }
+    stored = {
+        name: f"https://supabase.example/{name}.png"
+        for name in ("back", "side", "top")
+    }
+    observed = {}
+
+    class FakeStorage:
+        async def get_generation(self, requested_id):
+            assert requested_id == generation_id
+            return {"reference_images": {"front": front_url}}
+
+        async def store_reference_images(self, requested_id, images):
+            assert requested_id == generation_id
+            observed["stored"] = images
+            return stored
+
+    async def fake_generate(primary_url, existing):
+        observed["generate"] = (primary_url, existing)
+        return generated.copy()
+
+    async def fake_openai(**kwargs):
+        observed["openai_references"] = kwargs["reference_images"]
+        return ([{"segment_id": 1, "part": "body", "reason": "shape", "color": [1, 2, 3]}], "subject")
+
+    monkeypatch.setattr(llm_render_module, "generation_storage", FakeStorage())
+    monkeypatch.setattr(llm_render_module, "generate_missing_reference_views", fake_generate)
+
+    async def fake_fetch(*_args):
+        return "0 0 0 10 20 30\n"
+
+    monkeypatch.setattr(llm_render_module, "_fetch_text_url", fake_fetch)
+    monkeypatch.setattr(llm_render_module, "_call_openai_for_assignments", fake_openai)
+    monkeypatch.setattr(llm_render_module, "track_api_call", lambda **_kwargs: None)
+
+    response = asyncio.run(
+        llm_render_module.llm_render(
+            LlmRenderRequest(
+                generation_id=generation_id,
+                xyzrgb_url="https://example.com/model.xyzrgb",
+                reference_image_url="https://example.com/primary.png",
+            ),
+            {"user_id": "user"},
+        )
+    )
+
+    assert observed["generate"] == (
+        "https://example.com/primary.png",
+        {"front": front_url},
+    )
+    assert observed["stored"] == {
+        "back": generated["back"],
+        "side": generated["side"],
+        "top": generated["top"],
+    }
+    assert observed["openai_references"] == {"front": front_url, **stored}
+    assert response.reference_images == {"front": front_url, **stored}
