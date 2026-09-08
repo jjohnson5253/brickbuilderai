@@ -96,6 +96,34 @@ describe('JSON API service contracts', () => {
     await expect(LlmRenderApiService.llmRenderStream('xyz', 'image', 'paint', 'tok', thinking)).resolves.toEqual(result);
     expect(thinking.mock.calls.flat()).toEqual(['I see a red ', 'torso.']);
     expect(String(vi.mocked(fetch).mock.calls[0][0]).endsWith('/llmRender/stream')).toBe(true);
+  });
+
+  it('sends the segment mapping when saving a segmented model', async () => {
+    const segmentMapping = [{
+      segment_id: 1,
+      ldraw_color: 4,
+      color_name: 'Red',
+      color: [201, 26, 9] as [number, number, number],
+      voxel_count: 12,
+      part: 'body',
+      reason: 'large lower block',
+    }];
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ generation_id: 'g2' }) as unknown as Response);
+
+    await UpdateModelApiService.updateModel(
+      'g1',
+      '0 0 0 12 34 56',
+      'tok',
+      '0 0 0 201 26 9',
+      segmentMapping,
+    );
+
+    expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      generation_id: 'g1',
+      xyzrgb_content: '0 0 0 12 34 56',
+      segment_xyzrgb_content: '0 0 0 201 26 9',
+      segment_mapping: segmentMapping,
+    });
 
     vi.mocked(fetch).mockResolvedValueOnce({
       ...ok({}),

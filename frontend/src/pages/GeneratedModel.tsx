@@ -1609,7 +1609,9 @@ export default function GeneratedModel() {
       const updateResponse = await UpdateModelApiService.updateModel(
         currentGenerationId,
         llmResponse.xyzrgb_content,
-        accessToken || undefined
+        accessToken || undefined,
+        llmResponse.segment_xyzrgb_content,
+        llmResponse.segment_mapping,
       );
 
       await handleUpdatedModelStarted(updateResponse, {

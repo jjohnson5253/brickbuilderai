@@ -358,6 +358,7 @@ class GenerationStorage:
             file_extensions = {
                 "glb": ".glb",
                 "ldr": ".ldr", 
+                "segment_ldr": ".ldr",
                 "mpd": ".mpd",
                 "ply": ".ply",
                 "ply_ldr_colors": ".ply",
@@ -371,6 +372,7 @@ class GenerationStorage:
             content_types = {
                 "glb": "model/gltf-binary",
                 "ldr": "text/plain",
+                "segment_ldr": "text/plain",
                 "mpd": "text/plain",
                 "ply": "model/ply",
                 "ply_ldr_colors": "model/ply",

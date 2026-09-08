@@ -1,12 +1,13 @@
 import logging
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime, timedelta
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import HTTPException
 
 from ..utils.generation_storage import generation_storage
 from ..utils.posthog_client import track_error
+from .llmRender import SegmentMapping
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ class GetGenerationResponse(BaseModel):
     preview_image_url: Optional[str] = None  # User-uploaded preview image, if set
     xyzrgb_url: Optional[str] = None
     problematic_xyzrgb_url: Optional[str] = None
+    segment_ldr_url: Optional[str] = None
+    segment_mapping: List[SegmentMapping] = Field(default_factory=list)
     error_message: Optional[str] = None  # Only when failed
 
 
@@ -69,6 +72,8 @@ async def get_generation(request: GetGenerationRequest) -> GetGenerationResponse
         preview_image_url = generation.get("preview_image_url")
         xyzrgb_url = generation.get("xyzrgb_url")
         problematic_xyzrgb_url = generation.get("problematic_xyzrgb_url")
+        segment_ldr_url = generation.get("segment_ldr_url")
+        segment_mapping = generation.get("segment_mapping") or []
         error_message = generation.get("error_message")
         ldr_url = generation.get("ldr_url")
         mpd_url = generation.get("mpd_url")
@@ -115,6 +120,8 @@ async def get_generation(request: GetGenerationRequest) -> GetGenerationResponse
             preview_image_url=preview_image_url,
             xyzrgb_url=xyzrgb_url,
             problematic_xyzrgb_url=problematic_xyzrgb_url,
+            segment_ldr_url=segment_ldr_url,
+            segment_mapping=segment_mapping,
             error_message=error_message,
             mpd_url=mpd_url
         )

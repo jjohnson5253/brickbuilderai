@@ -32,6 +32,7 @@ export interface GetGenerationResponse {
   mpd_url: string | null;
   xyzrgb_url: string | null;
   problematic_xyzrgb_url: string | null;
+  segment_ldr_url: string | null;
   error_message: string | null;
   is_community?: boolean | null;
 }
@@ -44,6 +45,7 @@ export interface CompletedGeneration {
   mpd_url: string | null;
   xyzrgb_url: string | null;
   problematic_xyzrgb_url: string | null;
+  segment_ldr_url: string | null;
 }
 
 export class GetGenerationApiService {
@@ -123,6 +125,7 @@ export class GetGenerationApiService {
           mpd_url: response.mpd_url,
           xyzrgb_url: response.xyzrgb_url,
           problematic_xyzrgb_url: response.problematic_xyzrgb_url,
+          segment_ldr_url: response.segment_ldr_url,
         };
       }
 

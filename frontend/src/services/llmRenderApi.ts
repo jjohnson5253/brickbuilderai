@@ -31,12 +31,24 @@ export interface LlmRenderAppliedRule {
   changed_voxels: number;
 }
 
+export interface SegmentMapping {
+  segment_id: number;
+  ldraw_color: number;
+  color_name: string;
+  color: [number, number, number];
+  voxel_count: number;
+  part?: string | null;
+  reason?: string | null;
+}
+
 export interface LlmRenderResponse {
   xyzrgb_content: string;
+  segment_xyzrgb_content: string;
   voxel_count: number;
   segment_count: number;
   model: string;
   applied_rules: LlmRenderAppliedRule[];
+  segment_mapping: SegmentMapping[];
   preview_image?: string | null;
   message: string;
 }

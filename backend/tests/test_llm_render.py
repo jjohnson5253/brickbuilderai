@@ -21,7 +21,9 @@ from src.requests.llmRender import (
     _extract_thinking_delta,
     _geometric_regions,
     _load_font,
+    LlmRenderRequest,
     LlmRenderResponse,
+    llm_render,
     llm_render_stream,
     _perceptual_colors,
     _project_segments,
@@ -29,6 +31,7 @@ from src.requests.llmRender import (
     _render_view_tile,
     _rgb_to_lab,
     _segment_voxels,
+    _segment_colored_voxels,
     _voxel_arrays,
 )
 
@@ -422,10 +425,12 @@ def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
         await on_thinking("I see separate arms and a torso.")
         return LlmRenderResponse(
             xyzrgb_content="0 0 0 255 0 0\n",
+            segment_xyzrgb_content="0 0 0 201 26 9\n",
             voxel_count=1,
             segment_count=1,
             model="test-model",
             applied_rules=[],
+            segment_mapping=[],
         )
 
     module = importlib.import_module("src.requests.llmRender")
@@ -441,6 +446,7 @@ def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
     assert events[0] == {"type": "thinking", "delta": "I see separate arms and a torso."}
     assert events[1]["type"] == "result"
     assert events[1]["data"]["xyzrgb_content"] == "0 0 0 255 0 0\n"
+    assert events[1]["data"]["segment_xyzrgb_content"] == "0 0 0 201 26 9\n"
 
 
 def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
@@ -466,3 +472,74 @@ def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():
     assert all((v["r"], v["g"], v["b"]) == (255, 0, 50) for v in head)
     # Geometry untouched.
     assert [(v["x"], v["y"], v["z"]) for v in recolored] == [(v["x"], v["y"], v["z"]) for v in voxels]
+
+
+def test_segment_colored_voxels_uses_distinct_ldraw_colors_and_keeps_mapping():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    assignments = [
+        {"segment_id": 1, "part": "body", "reason": "large lower block"},
+        {"segment_id": 2, "part": "head", "reason": "top block"},
+    ]
+
+    colored, mapping = _segment_colored_voxels(voxels, segment_ids, assignments)
+
+    assert [(entry.segment_id, entry.ldraw_color) for entry in mapping] == [(1, 4), (2, 1)]
+    assert [entry.part for entry in mapping] == ["body", "head"]
+    assert [entry.voxel_count for entry in mapping] == [
+        int((segment_ids == 1).sum()),
+        int((segment_ids == 2).sum()),
+    ]
+    assert {
+        (voxel["r"], voxel["g"], voxel["b"])
+        for voxel in colored
+        if voxel["z"] < 6
+    } == {SEGMENT_PALETTE[0]}
+    assert {
+        (voxel["r"], voxel["g"], voxel["b"])
+        for voxel in colored
+        if voxel["z"] >= 6
+    } == {SEGMENT_PALETTE[1]}
+
+
+def test_llm_render_returns_semantic_and_segment_colorings(monkeypatch):
+    voxels = _two_part_model()
+    xyzrgb_content = "\n".join(
+        f"{v['x']} {v['y']} {v['z']} {v['r']} {v['g']} {v['b']}" for v in voxels
+    )
+
+    async def fake_fetch(*_args):
+        return xyzrgb_content
+
+    async def fake_assignments(**_kwargs):
+        return [
+            {"segment_id": 1, "part": "body", "reason": "lower", "color": [12, 34, 56]},
+            {"segment_id": 2, "part": "head", "reason": "upper", "color": [78, 90, 123]},
+        ], "figure"
+
+    module = importlib.import_module("src.requests.llmRender")
+    monkeypatch.setattr(module, "_fetch_text_url", fake_fetch)
+    monkeypatch.setattr(module, "_call_openai_for_assignments", fake_assignments)
+    monkeypatch.setattr(module, "track_api_call", lambda **_kwargs: None)
+
+    response = asyncio.run(
+        llm_render(
+            LlmRenderRequest(
+                xyzrgb_url="https://example.com/model.xyzrgb",
+                reference_image_url="https://example.com/reference.png",
+            ),
+            {},
+        )
+    )
+
+    semantic_colors = {
+        tuple(map(int, line.split()[3:6]))
+        for line in response.xyzrgb_content.splitlines()
+    }
+    segment_colors = {
+        tuple(map(int, line.split()[3:6]))
+        for line in response.segment_xyzrgb_content.splitlines()
+    }
+    assert semantic_colors == {(12, 34, 56), (78, 90, 123)}
+    assert segment_colors == {SEGMENT_PALETTE[0], SEGMENT_PALETTE[1]}
+    assert [entry.part for entry in response.segment_mapping] == ["body", "head"]

@@ -2,10 +2,10 @@ import logging
 import tempfile
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import HTTPException, Depends
 
 from ..utils.generation_storage import generation_storage
@@ -14,6 +14,7 @@ from ..utils.posthog_client import track_api_call, track_error
 from ..utils.conversions.glb2brick import glb2brick
 from ..utils.auth import get_user_with_optional_auth, handle_auth_and_tracking
 from ..utils.pack_ldraw_model import LDrawPacker
+from .llmRender import SegmentMapping
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,8 @@ logger = logging.getLogger(__name__)
 class UpdateModelRequest(BaseModel):
     generation_id: str
     xyzrgb_content: str
+    segment_xyzrgb_content: Optional[str] = None
+    segment_mapping: List[SegmentMapping] = Field(default_factory=list)
 
 
 class UpdateModelResponse(BaseModel):
@@ -32,6 +35,7 @@ async def process_update_model_task(
     generation_id: str,
     original_generation_id: str,
     xyzrgb_content: str,
+    segment_xyzrgb_content: Optional[str],
     generation: dict,
     user_email: str,
     is_developer: bool
@@ -55,21 +59,27 @@ async def process_update_model_task(
     heartbeat_task = asyncio.create_task(heartbeat())
     
     try:
-        # Write xyzrgb content to a temp file and run glb2brick to generate LDR
+        # Generate the primary LLM-recolored model and, when supplied, a second
+        # diagnostic model whose colors identify segment boundaries.
         with tempfile.TemporaryDirectory() as temp_dir:
-            temp_xyzrgb_path = Path(temp_dir) / f"{generation_id}.xyzrgb"
-            temp_xyzrgb_path.write_text(xyzrgb_content)
-            
-            # Run glb2brick with the xyzrgb file in executor to avoid blocking event loop
-            # Use a dummy GLB path inside the temp dir so output files land there too
-            dummy_glb_path = str(Path(temp_dir) / "unused.glb")
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: glb2brick(
-                    glb_path=dummy_glb_path,
-                    xyzrgb_path=str(temp_xyzrgb_path),
-                    auto_adjust_brick_count=False
+            async def generate_ldr(content: str, name: str):
+                xyzrgb_path = Path(temp_dir) / f"{name}.xyzrgb"
+                xyzrgb_path.write_text(content)
+                dummy_glb_path = str(Path(temp_dir) / f"{name}.glb")
+                return await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: glb2brick(
+                        glb_path=dummy_glb_path,
+                        xyzrgb_path=str(xyzrgb_path),
+                        auto_adjust_brick_count=False
+                    )
                 )
+
+            result = await generate_ldr(xyzrgb_content, "recolored")
+            segment_result = (
+                await generate_ldr(segment_xyzrgb_content, "segments")
+                if segment_xyzrgb_content
+                else None
             )
             
             # Read the generated LDR file
@@ -78,6 +88,13 @@ async def process_update_model_task(
                 raise Exception("Failed to generate LDR file")
             
             ldr_content = ldr_file_path.read_text()
+
+            segment_ldr_content = None
+            if segment_result:
+                segment_ldr_file_path = Path(segment_result['ldr_file'])
+                if not segment_ldr_file_path.exists():
+                    raise Exception("Failed to generate segment LDR file")
+                segment_ldr_content = segment_ldr_file_path.read_text()
             
             # Pack LDR to MPD
             logger.info("Packing LDR to MPD")
@@ -133,6 +150,13 @@ async def process_update_model_task(
                 file_content=ldr_content,
                 file_type="ldr"
             )
+
+            if segment_ldr_content:
+                await generation_storage.store_model_file(
+                    generation_id=generation_id,
+                    file_content=segment_ldr_content,
+                    file_type="segment_ldr"
+                )
             
             # Store MPD file
             await generation_storage.store_model_file(
@@ -187,11 +211,14 @@ async def process_update_model_task(
         # Clean up tmp artifacts written by glb2brick (vox / problematic xyzrgb
         # land in backend/tmp, outside the TemporaryDirectory used above).
         try:
-            result_paths = locals().get('result') or {}
-            for key in ('ldr_file', 'vox_file', 'xyzrgb_file', 'problematic_xyzrgb_file'):
-                p = result_paths.get(key)
-                if p and Path(p).exists():
-                    Path(p).unlink()
+            for result_paths in (
+                locals().get('result') or {},
+                locals().get('segment_result') or {},
+            ):
+                for key in ('ldr_file', 'vox_file', 'xyzrgb_file', 'problematic_xyzrgb_file'):
+                    p = result_paths.get(key)
+                    if p and Path(p).exists():
+                        Path(p).unlink()
         except Exception as cleanup_e:
             logger.warning(f"Failed to clean up temporary files: {cleanup_e}")
 
@@ -261,6 +288,11 @@ async def update_model(request: UpdateModelRequest, auth_info: dict) -> UpdateMo
         )
         
         logger.info(f"Created new generation record: {new_generation_id}")
+
+        if request.segment_mapping:
+            generation_storage.client.table("generations").update({
+                "segment_mapping": [mapping.dict() for mapping in request.segment_mapping],
+            }).eq("id", new_generation_id).execute()
         
         # Store xyzrgb file immediately and update status to ldr_processing
         await generation_storage.store_model_file(
@@ -276,6 +308,7 @@ async def update_model(request: UpdateModelRequest, auth_info: dict) -> UpdateMo
             generation_id=new_generation_id,
             original_generation_id=request.generation_id,
             xyzrgb_content=request.xyzrgb_content,
+            segment_xyzrgb_content=request.segment_xyzrgb_content,
             generation=generation,
             user_email=user_email,
             is_developer=is_developer

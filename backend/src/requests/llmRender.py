@@ -70,15 +70,35 @@ THICKNESS_RATIO = 0.6
 # geometric regions, so same-coloured parts are the last thing to be merged.
 GEOMETRY_SPLIT_PENALTY = 30.0
 
-# Distinct ID colors used only to label segments in the preview sent to the LLM.
-SEGMENT_PALETTE: List[Tuple[int, int, int]] = [
-    (230, 25, 75), (60, 180, 75), (255, 225, 25), (0, 130, 200),
-    (245, 130, 48), (145, 30, 180), (70, 240, 240), (240, 50, 230),
-    (210, 245, 60), (250, 190, 212), (0, 128, 128), (220, 190, 255),
-    (170, 110, 40), (255, 250, 200), (128, 0, 0), (170, 255, 195),
-    (128, 128, 0), (255, 215, 180), (0, 0, 128), (128, 128, 128),
-    (255, 105, 180), (0, 200, 120), (180, 60, 0), (90, 90, 255),
+# Exact RGB values from gobrick_colors.csv. This keeps the colors distinct
+# after the RGB-to-LDraw conversion used to generate the saved LDR.
+SEGMENT_COLORS: List[Tuple[int, str, Tuple[int, int, int]]] = [
+    (4, "Red", (201, 26, 9)),
+    (1, "Blue", (0, 85, 191)),
+    (10, "Bright Green", (75, 159, 74)),
+    (14, "Yellow", (242, 205, 55)),
+    (25, "Orange", (254, 138, 24)),
+    (29, "Bright Pink", (228, 173, 200)),
+    (26, "Magenta", (146, 57, 120)),
+    (212, "Bright Light Blue", (159, 195, 233)),
+    (322, "Medium Azure", (54, 174, 191)),
+    (27, "Lime", (187, 233, 11)),
+    (191, "Bright Light Orange", (248, 187, 61)),
+    (30, "Medium Lavender", (172, 120, 186)),
+    (85, "Dark Purple", (63, 54, 145)),
+    (226, "Bright Light Yellow", (255, 240, 58)),
+    (321, "Dark Azure", (7, 139, 201)),
+    (73, "Medium Blue", (90, 147, 219)),
+    (272, "Dark Blue", (10, 52, 99)),
+    (2, "Green", (35, 120, 65)),
+    (288, "Dark Green", (24, 70, 50)),
+    (378, "Sand Green", (160, 188, 172)),
+    (484, "Dark Orange", (169, 85, 0)),
+    (320, "Dark Red", (114, 14, 15)),
+    (5, "Dark Pink", (200, 112, 160)),
+    (323, "Light Aqua", (173, 195, 192)),
 ]
+SEGMENT_PALETTE: List[Tuple[int, int, int]] = [color[2] for color in SEGMENT_COLORS]
 
 # Camera placements. The brick pipeline is Z-up and rotates the Y-up GLB +90 deg
 # about X, so the GLB front (+Z) ends up facing -Y. Each view is defined by
@@ -109,6 +129,7 @@ class LlmRenderRequest(BaseModel):
             raise ValueError("URL must start with http:// or https://")
         return value
 
+
     @validator("prompt")
     def validate_prompt(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
@@ -134,12 +155,24 @@ class LlmRenderRequest(BaseModel):
         return value
 
 
+class SegmentMapping(BaseModel):
+    segment_id: int
+    ldraw_color: int
+    color_name: str
+    color: Tuple[int, int, int]
+    voxel_count: int
+    part: Optional[str] = None
+    reason: Optional[str] = None
+
+
 class LlmRenderResponse(BaseModel):
     xyzrgb_content: str
+    segment_xyzrgb_content: str
     voxel_count: int
     segment_count: int
     model: str
     applied_rules: List[Dict[str, Any]]
+    segment_mapping: List[SegmentMapping]
     preview_image: Optional[str] = None
     message: str = "Successfully recolored xyzrgb"
 
@@ -1217,6 +1250,40 @@ def _serialize_xyzrgb(voxels: List[Dict[str, int]]) -> str:
     ) + "\n"
 
 
+def _segment_colored_voxels(
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    assignments: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, int]], List[SegmentMapping]]:
+    assignment_by_id = {
+        assignment["segment_id"]: assignment
+        for assignment in assignments
+        if isinstance(assignment, dict) and isinstance(assignment.get("segment_id"), int)
+    }
+    colored = [voxel.copy() for voxel in voxels]
+    mapping: List[SegmentMapping] = []
+
+    for segment_id in sorted(int(value) for value in np.unique(segment_ids)):
+        ldraw_color, color_name, color = SEGMENT_COLORS[(segment_id - 1) % len(SEGMENT_COLORS)]
+        members = np.nonzero(segment_ids == segment_id)[0]
+        for index in members.tolist():
+            colored[index]["r"], colored[index]["g"], colored[index]["b"] = color
+        assignment = assignment_by_id.get(segment_id, {})
+        mapping.append(
+            SegmentMapping(
+                segment_id=segment_id,
+                ldraw_color=ldraw_color,
+                color_name=color_name,
+                color=color,
+                voxel_count=int(len(members)),
+                part=assignment.get("part"),
+                reason=assignment.get("reason"),
+            )
+        )
+
+    return colored, mapping
+
+
 async def llm_render(
     request: LlmRenderRequest,
     auth_info: dict,
@@ -1242,6 +1309,9 @@ async def llm_render(
             on_thinking=on_thinking,
         )
         recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        segment_colored, segment_mapping = _segment_colored_voxels(
+            voxels, segment_ids, assignments
+        )
 
         segment_count = int(segment_ids.max())
         if len(applied) < segment_count:
@@ -1263,10 +1333,12 @@ async def llm_render(
 
         return LlmRenderResponse(
             xyzrgb_content=_serialize_xyzrgb(recolored),
+            segment_xyzrgb_content=_serialize_xyzrgb(segment_colored),
             voxel_count=len(recolored),
             segment_count=segment_count,
             model=model,
             applied_rules=applied,
+            segment_mapping=segment_mapping,
             preview_image=voxel_preview_image_url if request.include_preview else None,
             message=f"Recolored {len(applied)} of {segment_count} segments"
             + (f" as '{subject}'" if subject else ""),
