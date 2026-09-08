@@ -1595,6 +1595,7 @@ export default function GeneratedModel() {
       }
 
       const llmResponse = await LlmRenderApiService.llmRender(
+        currentGenerationId,
         xyzrgbUrl,
         referenceImageUrl,
         'Recolor the voxel model to semantically match the reference image while preserving the model shape.',

@@ -85,7 +85,9 @@ curl -X POST http://localhost:8002/promptEditModel \
   -o edited_model_response.json
 ```
 #### /llmRender
-Recolor an existing xyzrgb file to better match a reference image. Requires `OPENAI_API_KEY`.
+Recolor an existing xyzrgb file to better match a reference image. Requires
+`OPENAI_API_KEY` and, when the generation does not already have all directional
+references, `FAL_KEY`.
 
 The model is first split server-side into up to `max_segments` (default 16) contiguous
 segments. Splitting combines colour structure (clustered in CIELAB with lightness
@@ -95,7 +97,11 @@ a head and torso still split). Small high-contrast features (eyes, mouth, button
 jewelry, shirt patterns) are protected from speckle removal, and same-coloured pieces of
 one feature (both eyes, all buttons) share a single segment; the scene summary flags these
 with `is_detail` and `island_count`. A labelled multi-view preview of those
-segments plus the reference image is sent to OpenAI, which returns one colour per segment.
+segments plus the primary reference image is sent to OpenAI, which returns one colour per segment.
+Before rendering, the endpoint loads any saved front, back, side, and top reference
+images for the generation. Missing views are created with Nano Banana Lite Edit,
+copied to Supabase Storage, saved in `generations.reference_images`, and included in
+the OpenAI request.
 `applied_rules` in the response lists each segment's inferred part name, reason and colour.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
@@ -105,6 +111,7 @@ curl -X POST http://localhost:8002/llmRender \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <your DEVELOPER_API_KEY>" \
   -d '{
+    "generation_id": "00000000-0000-0000-0000-000000000000",
     "xyzrgb_url": "https://example.com/model.xyzrgb",
     "reference_image_url": "https://example.com/reference.png",
     "prompt": "match the character colors, preserving the model shape",
@@ -123,6 +130,35 @@ curl -X POST http://localhost:8002/estimatePrice \
 ```
 
 ## Testing
+### Run LLM render against the local backend
+
+Start the backend first with `uv run local_run.py`. Its `.env` must contain
+`OPENAI_API_KEY`, `FAL_KEY`, and your Supabase settings. Then pass the UUID of an
+existing completed generation; the command automatically uses that generation's
+`xyzrgb_url` and processed reference image:
+
+```bash
+uv run python -m src.cli.llm_render YOUR_GENERATION_UUID
+```
+
+If `DEVELOPER_API_KEY` is set in `backend/.env` or your shell, it is sent
+automatically. Otherwise, pass it explicitly with `--api-key`. Successful runs create
+`llm_render_response.json` and `llm_render_output.xyzrgb` in the current directory.
+
+You can override the saved inputs or target a deployed backend:
+
+```bash
+uv run python -m src.cli.llm_render YOUR_GENERATION_UUID \
+  --api-url https://your-backend.example.com \
+  --api-key "$DEVELOPER_API_KEY" \
+  --xyzrgb-url https://example.com/model.xyzrgb \
+  --reference-image-url https://example.com/reference.png \
+  --include-preview
+```
+
+Run `uv run python -m src.cli.llm_render --help` for all output, prompt, and
+segment options.
+
 ### Run glb2brick from cmd line to bypass .glb generation
 ```bash
 uv run python -m src.utils.conversions.glb2brick ./test-files/glb/pikachu.glb --voxel-size 30

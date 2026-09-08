@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from collections import defaultdict
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,11 +13,16 @@ import httpx
 import numpy as np
 from fastapi import HTTPException
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 from scipy import ndimage
 from skimage.segmentation import watershed
 
 from ..utils.posthog_client import track_api_call, track_error
+from ..utils.generation_storage import generation_storage
+from ..utils.reference_views import (
+    REFERENCE_VIEW_NAMES,
+    generate_missing_reference_views,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +98,21 @@ AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
 
 
 class LlmRenderRequest(BaseModel):
+    generation_id: str
     xyzrgb_url: str
     reference_image_url: str
     prompt: Optional[str] = None
     model: Optional[str] = None
     max_segments: Optional[int] = DEFAULT_MAX_SEGMENTS
     include_preview: bool = False
+
+    @validator("generation_id")
+    def validate_generation_id(cls, value: str) -> str:
+        try:
+            parsed = uuid.UUID((value or "").strip())
+        except (ValueError, AttributeError):
+            raise ValueError("generation_id must be a UUID")
+        return str(parsed)
 
     @validator("xyzrgb_url", "reference_image_url")
     def validate_url(cls, value: str) -> str:
@@ -140,6 +155,7 @@ class LlmRenderResponse(BaseModel):
     model: str
     applied_rules: List[Dict[str, Any]]
     preview_image: Optional[str] = None
+    reference_images: Dict[str, str] = Field(default_factory=dict)
     message: str = "Successfully recolored xyzrgb"
 
 
@@ -1003,6 +1019,7 @@ def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
 async def _call_openai_for_assignments(
     scene_summary: Dict[str, Any],
     reference_image_url: str,
+    reference_images: Dict[str, str],
     voxel_preview_image_url: str,
     prompt: Optional[str],
     model: str,
@@ -1026,7 +1043,8 @@ async def _call_openai_for_assignments(
     )
     user_prompt = {
         "task": (
-            "Image 1 is the reference. Image 2 shows the voxel model from four cameras "
+            "The first image is the primary reference, followed by labelled front, back, "
+            "side, and top references. The final image shows the voxel model from four cameras "
             "with every segment drawn in a flat ID color and labelled with its number "
             "(legend at the bottom). Steps: (1) identify the subject and its major "
             "colored parts in the reference image; (2) work out which preview view "
@@ -1047,6 +1065,29 @@ async def _call_openai_for_assignments(
         "scene_summary": scene_summary,
     }
 
+    reference_content: List[Dict[str, Any]] = [
+        {"type": "input_text", "text": json.dumps(user_prompt)},
+        {"type": "input_text", "text": "Primary reference image:"},
+        {"type": "input_image", "image_url": reference_image_url, "detail": "high"},
+    ]
+    for view_name in REFERENCE_VIEW_NAMES:
+        reference_content.extend(
+            [
+                {"type": "input_text", "text": f"{view_name.title()} reference image:"},
+                {
+                    "type": "input_image",
+                    "image_url": reference_images[view_name],
+                    "detail": "high",
+                },
+            ]
+        )
+    reference_content.extend(
+        [
+            {"type": "input_text", "text": "Labelled four-camera voxel preview:"},
+            {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
+        ]
+    )
+
     payload = {
         "model": model,
         "input": [
@@ -1056,11 +1097,7 @@ async def _call_openai_for_assignments(
             },
             {
                 "role": "user",
-                "content": [
-                    {"type": "input_text", "text": json.dumps(user_prompt)},
-                    {"type": "input_image", "image_url": reference_image_url, "detail": "high"},
-                    {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
-                ],
+                "content": reference_content,
             },
         ],
         "reasoning": {"effort": DEFAULT_REASONING_EFFORT},
@@ -1191,6 +1228,29 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
     max_segments = request.max_segments or DEFAULT_MAX_SEGMENTS
 
     try:
+        if generation_storage is None:
+            raise HTTPException(status_code=503, detail="Generation storage is not configured")
+        generation = await generation_storage.get_generation(request.generation_id)
+        if not generation:
+            raise HTTPException(status_code=404, detail="Generation not found")
+
+        existing_reference_images = generation.get("reference_images") or {}
+        reference_images = await generate_missing_reference_views(
+            request.reference_image_url,
+            existing_reference_images,
+        )
+        generated_reference_images = {
+            name: url
+            for name, url in reference_images.items()
+            if existing_reference_images.get(name) != url
+        }
+        if generated_reference_images:
+            stored_reference_images = await generation_storage.store_reference_images(
+                request.generation_id,
+                generated_reference_images,
+            )
+            reference_images.update(stored_reference_images)
+
         xyzrgb_content = await _fetch_text_url(request.xyzrgb_url, MAX_XYZRGB_BYTES)
         voxels = _parse_xyzrgb(xyzrgb_content)
         segment_ids = _segment_voxels(voxels, max_segments)
@@ -1199,6 +1259,7 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
             reference_image_url=request.reference_image_url,
+            reference_images=reference_images,
             voxel_preview_image_url=voxel_preview_image_url,
             prompt=request.prompt,
             model=model,
@@ -1230,6 +1291,7 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             model=model,
             applied_rules=applied,
             preview_image=voxel_preview_image_url if request.include_preview else None,
+            reference_images=reference_images,
             message=f"Recolored {len(applied)} of {segment_count} segments"
             + (f" as '{subject}'" if subject else ""),
         )

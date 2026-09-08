@@ -289,9 +289,10 @@ async def llm_render_endpoint(
     """
     Recolor an xyzrgb voxel model to better match a reference image.
 
-    The endpoint fetches xyzrgb_url, summarizes the voxel shape for spatial
-    reasoning, sends that summary plus reference_image_url to OpenAI, applies
-    the returned semantic recoloring rules, and returns updated xyzrgb content.
+    The endpoint fills any missing directional references with Nano Banana Lite,
+    stores them on the generation, fetches xyzrgb_url, summarizes the voxel shape,
+    sends the summary and references to OpenAI, applies the returned semantic
+    recoloring rules, and returns updated xyzrgb content.
     """
     return await llm_render(request, auth_info)
 
