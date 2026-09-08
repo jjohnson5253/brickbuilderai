@@ -1607,6 +1607,7 @@ async def _call_openai_for_segmentation_review(
     model: str,
     round_number: int = 1,
     previous_rounds: Optional[List[Dict[str, Any]]] = None,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> Dict[str, Any]:
     segment_ids = [segment["id"] for segment in scene_summary["segments"]]
     preview_index = len(reference_image_urls) + 1
@@ -1665,8 +1666,9 @@ async def _call_openai_for_segmentation_review(
             voxel_preview_image_url=voxel_preview_image_url,
             schema=_segmentation_review_schema(segment_ids),
             schema_name="voxel_segmentation_review",
+            stream=True,
         )
-        response_json = await _post_anthropic_messages(payload)
+        response_json = await _post_anthropic_messages(payload, on_thinking=on_thinking)
         return _extract_anthropic_tool_json(response_json, "voxel_segmentation_review")
 
     payload = {
@@ -1685,7 +1687,7 @@ async def _call_openai_for_segmentation_review(
                 ],
             },
         ],
-        "reasoning": {"effort": DEFAULT_REASONING_EFFORT},
+        "reasoning": {"effort": DEFAULT_REASONING_EFFORT, "summary": "auto"},
         "text": {
             "format": {
                 "type": "json_schema",
@@ -1693,9 +1695,12 @@ async def _call_openai_for_segmentation_review(
                 "schema": _segmentation_review_schema(segment_ids),
             }
         },
+        "stream": True,
     }
 
-    response_json = await _post_openai_responses(payload)
+    response_json = await _post_openai_responses(
+        payload, on_thinking=on_thinking, delta_extractor=_extract_visible_text_delta
+    )
     return _extract_json_object(_extract_response_text(response_json))
 
 
@@ -1790,9 +1795,10 @@ def _partition_signature(segment_ids: np.ndarray) -> bytes:
 
 
 # Callable that asks the reviewer for a verdict on the current segmentation:
-# (scene_summary, preview_image_url, round_number, previous_rounds) -> review.
+# (scene_summary, preview_image_url, round_number, previous_rounds, on_thinking) -> review.
 SegmentationReviewer = Callable[
-    [Dict[str, Any], str, int, List[Dict[str, Any]]], Awaitable[Dict[str, Any]]
+    [Dict[str, Any], str, int, List[Dict[str, Any]], Optional[Callable[[str], Awaitable[None]]]],
+    Awaitable[Dict[str, Any]],
 ]
 
 
@@ -1831,7 +1837,11 @@ async def _segmentation_review_loop(
             await on_thinking(f"Checking segmentation (round {round_number}/{max_rounds})...\n")
         try:
             review = await reviewer(
-                outcome.scene_summary, outcome.preview_image_url, round_number, previous_rounds
+                outcome.scene_summary,
+                outcome.preview_image_url,
+                round_number,
+                previous_rounds,
+                on_thinking,
             )
         except HTTPException as e:
             logger.warning(
@@ -1992,6 +2002,7 @@ async def llm_render(
                 current_preview_url: str,
                 round_number: int,
                 previous_rounds: List[Dict[str, Any]],
+                thinking_callback: Optional[Callable[[str], Awaitable[None]]],
             ) -> Dict[str, Any]:
                 return await _call_openai_for_segmentation_review(
                     scene_summary=current_summary,
@@ -2001,6 +2012,7 @@ async def llm_render(
                     model=model,
                     round_number=round_number,
                     previous_rounds=previous_rounds,
+                    on_thinking=thinking_callback,
                 )
 
             outcome = await _segmentation_review_loop(

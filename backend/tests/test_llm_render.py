@@ -791,7 +791,7 @@ class _ScriptedReviewer:
         self.reviews = list(reviews)
         self.calls = []
 
-    async def __call__(self, scene_summary, preview_url, round_number, previous_rounds):
+    async def __call__(self, scene_summary, preview_url, round_number, previous_rounds, on_thinking=None):
         self.calls.append(
             {
                 "round": round_number,
@@ -948,7 +948,7 @@ def test_segmentation_review_prompt_carries_round_history(monkeypatch):
     module = importlib.import_module("src.requests.llmRender")
     captured = {}
 
-    async def fake_post(payload, on_thinking=None):
+    async def fake_post(payload, on_thinking=None, delta_extractor=None):
         captured["payload"] = payload
         return {"output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(GOOD_REVIEW)}]}]}
 
@@ -1084,7 +1084,7 @@ def test_segmentation_review_uses_anthropic_for_claude_model(monkeypatch):
     module = importlib.import_module("src.requests.llmRender")
     captured = {}
 
-    async def fake_post_anthropic(payload):
+    async def fake_post_anthropic(payload, on_thinking=None):
         captured["payload"] = payload
         return {
             "content": [
@@ -1186,7 +1186,7 @@ def test_llm_render_reports_verification_loop_outcome(monkeypatch):
     async def fake_fetch(_url, _max_bytes):
         return "\n".join(f"{v['x']} {v['y']} {v['z']} {v['r']} {v['g']} {v['b']}" for v in voxels)
 
-    async def fake_review(scene_summary, reference_image_urls, voxel_preview_image_url, prompt, model, round_number, previous_rounds):
+    async def fake_review(scene_summary, reference_image_urls, voxel_preview_image_url, prompt, model, round_number, previous_rounds, on_thinking=None):
         review_rounds.append(round_number)
         return reviews.pop(0)
 
