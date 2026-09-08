@@ -19,7 +19,6 @@ from src.requests.llmRender import (
     _build_scene_summary,
     _build_voxel_preview_data_url,
     _extract_visible_text_delta,
-    _format_segment_inventory,
     _geometric_regions,
     _load_font,
     LlmRenderResponse,
@@ -372,20 +371,6 @@ def test_build_scene_summary_describes_segments_without_colors():
         assert "color" not in segment
 
 
-def test_format_segment_inventory_prints_all_detected_segments():
-    scene_summary = {
-        "segments": [
-            {"id": 1, "voxel_count": 80, "is_detail": False},
-            {"id": 2, "voxel_count": 5, "is_detail": True},
-        ]
-    }
-
-    inventory = _format_segment_inventory(scene_summary)
-
-    assert "semantic names are assigned by OpenAI below" in inventory
-    assert json.loads(inventory[inventory.index("[") :]) == scene_summary["segments"]
-
-
 def test_project_segments_front_view_shows_head_above_body():
     voxels = _two_part_model()
     segment_ids = _segment_voxels(voxels, max_segments=16)
@@ -506,10 +491,6 @@ def test_llm_render_reports_progress_before_model_thinking(monkeypatch):
     assert updates == [
         "Loading model...\n",
         "Analyzing voxel geometry...\n",
-        (
-            "Detected segments (semantic names are assigned by OpenAI below):\n"
-            '[\n  {\n    "id": 1\n  }\n]\n\n'
-        ),
         "Rendering model preview...\n",
         "Comparing with reference image...\n\n",
         "The main body should use red bricks.",

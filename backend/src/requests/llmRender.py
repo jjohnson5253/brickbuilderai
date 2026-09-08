@@ -781,14 +781,6 @@ def _build_scene_summary(
     }
 
 
-def _format_segment_inventory(scene_summary: Dict[str, Any]) -> str:
-    segments = scene_summary.get("segments", [])
-    return (
-        "Detected segments (semantic names are assigned by OpenAI below):\n"
-        f"{json.dumps(segments, indent=2)}\n\n"
-    )
-
-
 # ---------------------------------------------------------------------------
 # Preview rendering
 # ---------------------------------------------------------------------------
@@ -1248,7 +1240,6 @@ async def llm_render(
         scene_summary = _build_scene_summary(voxels, segment_ids)
 
         if on_thinking:
-            await on_thinking(_format_segment_inventory(scene_summary))
             await on_thinking("Rendering model preview...\n")
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
 
