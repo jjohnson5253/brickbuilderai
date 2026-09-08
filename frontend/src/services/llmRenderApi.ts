@@ -22,10 +22,18 @@ export interface LlmRenderRequest {
   reference_image_url?: string;
   reference_image_urls?: string[];
   prompt?: string;
+  model?: string;
   max_segments?: number;
   check_segmentation?: boolean;
   max_segmentation_rounds?: number;
 }
+
+// Model used for /llmRender calls. Any OpenAI model name is routed to OpenAI
+// by the backend; a "claude-..." name (like this one) is routed to Anthropic
+// instead. Override via VITE_LLM_RENDER_MODEL to swap models without a code
+// change.
+const LLM_RENDER_MODEL = import.meta.env.VITE_LLM_RENDER_MODEL || 'claude-fable-5';
+
 
 export interface LlmRenderAppliedRule {
   segment_id: number;
@@ -92,6 +100,7 @@ export class LlmRenderApiService {
         ? referenceImageUrls
         : [referenceImageUrls],
       prompt,
+      model: LLM_RENDER_MODEL,
     };
 
     const response = await fetch(url, {
@@ -136,6 +145,7 @@ export class LlmRenderApiService {
           ? referenceImageUrls
           : [referenceImageUrls],
         prompt,
+        model: LLM_RENDER_MODEL,
       } satisfies LlmRenderRequest),
     });
 

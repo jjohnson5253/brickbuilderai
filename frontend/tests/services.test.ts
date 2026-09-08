@@ -43,7 +43,7 @@ describe('JSON API service contracts', () => {
     ['model', () => UpdateModelApiService.updateModel('g1', '0 0 0', 'tok'), '/updateModel', { generation_id: 'g1', xyzrgb_content: '0 0 0' }, { generation_id: 'g1', success: true }],
     ['username', () => UpdateUsernameApiService.updateUsername('builder', 'tok'), '/updateUsername', { username: 'builder' }, { username: 'builder' }],
     ['ldr', () => LdrToMpdApiService.convertLdrToMpd('ldr', 'castle', 'tok'), '/ldrToMpd', { ldr_content: 'ldr', model_name: 'castle' }, { mpd_content: 'mpd', message: 'ok' }],
-    ['llm render', () => LlmRenderApiService.llmRender('generation', 'xyz', ['image', 'image2'], 'paint', 'tok'), '/llmRender', { generation_id: 'generation', xyzrgb_url: 'xyz', reference_image_urls: ['image', 'image2'], prompt: 'paint' }, { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], reference_images: {}, message: 'ok' }],
+    ['llm render', () => LlmRenderApiService.llmRender('generation', 'xyz', ['image', 'image2'], 'paint', 'tok'), '/llmRender', { generation_id: 'generation', xyzrgb_url: 'xyz', reference_image_urls: ['image', 'image2'], prompt: 'paint', model: 'claude-fable-5' }, { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], reference_images: {}, message: 'ok' }],
   ];
 
   it.each(cases)('%s sends the documented request and returns JSON', async (_name, invoke, endpoint, body, result) => {
@@ -116,6 +116,7 @@ describe('JSON API service contracts', () => {
         xyzrgb_url: 'xyz',
         reference_image_urls: referenceImages,
         prompt: 'paint',
+        model: 'claude-fable-5',
       }),
     });
 

@@ -992,6 +992,190 @@ def test_segmentation_review_prompt_carries_round_history(monkeypatch):
     assert not any("follow-up review" in rule for rule in user_text["rules"])
 
 
+def test_model_provider_routes_claude_to_anthropic():
+    module = importlib.import_module("src.requests.llmRender")
+
+    assert module._model_provider("claude-fable-5") == "anthropic"
+    assert module._model_provider("Claude-Opus-4.7") == "anthropic"
+    assert module._model_provider("gpt-5.6-sol") == "openai"
+    assert module._model_provider("") == "openai"
+
+
+def test_anthropic_image_block_uses_base64_for_data_urls_and_url_for_https():
+    module = importlib.import_module("src.requests.llmRender")
+
+    data_block = module._anthropic_image_block("data:image/png;base64,AAAA")
+    assert data_block == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"},
+    }
+
+    https_block = module._anthropic_image_block("https://example.com/a.png")
+    assert https_block == {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+
+
+def test_extract_anthropic_tool_json_falls_back_to_text_block():
+    from fastapi import HTTPException
+
+    module = importlib.import_module("src.requests.llmRender")
+
+    # tool_choice is "auto" (see _anthropic_tool_payload), so a response that
+    # skips the tool call and answers in plain text must still be parsed.
+    response = {"content": [{"type": "text", "text": 'noise {"subject": "robot"} more noise'}]}
+    assert module._extract_anthropic_tool_json(response, "voxel_segment_colors") == {
+        "subject": "robot"
+    }
+
+    with pytest.raises(HTTPException):
+        module._extract_anthropic_tool_json({"content": []}, "voxel_segment_colors")
+
+
+def test_post_anthropic_messages_streams_thinking_and_rebuilds_tool_call(monkeypatch):
+    import httpx
+
+    module = importlib.import_module("src.requests.llmRender")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    sse_events = [
+        {"type": "message_start", "message": {"id": "msg_1"}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "Looking at "}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "the robot's arm."}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig"}},
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "tool_use", "id": "toolu_1", "name": "voxel_segment_colors", "input": {}},
+        },
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": '{"subject"'}},
+        {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": ': "robot"}'}},
+        {"type": "content_block_stop", "index": 1},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+        {"type": "message_stop"},
+    ]
+    body = "".join(f"data: {json.dumps(event)}\n\n" for event in sse_events)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-api-key"] == "test-key"
+        return httpx.Response(200, content=body.encode())
+
+    original_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kwargs: original_async_client(transport=httpx.MockTransport(handler)),
+    )
+
+    deltas = []
+
+    async def on_thinking(delta: str) -> None:
+        deltas.append(delta)
+
+    payload = {"model": "claude-fable-5", "stream": True}
+    result = asyncio.run(module._post_anthropic_messages(payload, on_thinking=on_thinking))
+
+    assert deltas == ["Looking at ", "the robot's arm."]
+    assert result["content"][1]["type"] == "tool_use"
+    assert result["content"][1]["input"] == {"subject": "robot"}
+
+
+def test_segmentation_review_uses_anthropic_for_claude_model(monkeypatch):
+    module = importlib.import_module("src.requests.llmRender")
+    captured = {}
+
+    async def fake_post_anthropic(payload):
+        captured["payload"] = payload
+        return {
+            "content": [
+                {"type": "tool_use", "name": "voxel_segmentation_review", "input": GOOD_REVIEW}
+            ]
+        }
+
+    async def fail_post_openai(payload, on_thinking=None, delta_extractor=None):
+        raise AssertionError("OpenAI path should not be used for a claude model")
+
+    monkeypatch.setattr(module, "_post_anthropic_messages", fake_post_anthropic)
+    monkeypatch.setattr(module, "_post_openai_responses", fail_post_openai)
+
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    scene_summary = _build_scene_summary(voxels, segment_ids)
+
+    review = asyncio.run(
+        module._call_openai_for_segmentation_review(
+            scene_summary=scene_summary,
+            reference_image_urls=["https://example.com/a.png"],
+            voxel_preview_image_url="data:image/png;base64,AAAA",
+            prompt=None,
+            model="claude-fable-5",
+        )
+    )
+
+    assert review == GOOD_REVIEW
+    assert captured["payload"]["model"] == "claude-fable-5"
+    assert captured["payload"]["tool_choice"] == {"type": "auto"}
+    content = captured["payload"]["messages"][0]["content"]
+    assert content[0]["type"] == "text"
+    assert content[1] == {"type": "image", "source": {"type": "url", "url": "https://example.com/a.png"}}
+    assert content[2] == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"},
+    }
+
+
+def test_call_for_assignments_uses_anthropic_for_claude_model(monkeypatch):
+    module = importlib.import_module("src.requests.llmRender")
+    captured = {}
+    thinking_deltas = []
+    fake_assignments = {
+        "subject": "a robot",
+        "assignments": [{"segment_id": 1, "part": "body", "reason": "r", "color": [1, 2, 3]}],
+    }
+
+    async def fake_post_anthropic(payload, on_thinking=None):
+        captured["payload"] = payload
+        if on_thinking:
+            await on_thinking("Looking at the reference image...")
+        return {
+            "content": [
+                {"type": "tool_use", "name": "voxel_segment_colors", "input": fake_assignments}
+            ]
+        }
+
+    async def fail_post_openai(payload, on_thinking=None, delta_extractor=None):
+        raise AssertionError("OpenAI path should not be used for a claude model")
+
+    monkeypatch.setattr(module, "_post_anthropic_messages", fake_post_anthropic)
+    monkeypatch.setattr(module, "_post_openai_responses", fail_post_openai)
+
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    scene_summary = _build_scene_summary(voxels, segment_ids)
+
+    async def on_thinking(delta: str) -> None:
+        thinking_deltas.append(delta)
+
+    assignments, subject = asyncio.run(
+        module._call_openai_for_assignments(
+            scene_summary=scene_summary,
+            reference_image_urls=["https://example.com/a.png"],
+            voxel_preview_image_url="data:image/png;base64,AAAA",
+            prompt=None,
+            model="claude-fable-5",
+            on_thinking=on_thinking,
+        )
+    )
+
+    assert subject == "a robot"
+    assert assignments == fake_assignments["assignments"]
+    assert captured["payload"]["model"] == "claude-fable-5"
+    assert captured["payload"]["tool_choice"] == {"type": "auto"}
+    assert captured["payload"]["stream"] is True
+    assert captured["payload"]["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert thinking_deltas == ["Looking at the reference image..."]
+
+
 def test_llm_render_reports_verification_loop_outcome(monkeypatch):
     module = importlib.import_module("src.requests.llmRender")
     generation_id = "d7f8fdb4-b010-4ef5-bd68-069aa20f96a4"
