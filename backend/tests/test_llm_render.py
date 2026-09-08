@@ -18,13 +18,17 @@ from src.requests.llmRender import (
     MAX_REFERENCE_IMAGES,
     MAX_SEGMENTATION_ROUNDS_LIMIT,
     MAX_SPLIT_PIECES,
+    MAX_SEMANTIC_REGIONS,
+    MAX_SEMANTIC_SPLITS,
     SEGMENT_PALETTE,
     VIEWS,
     LlmRenderRequest,
+    SegmentationColoring,
     _apply_assignments,
     _apply_segmentation_review,
     _assignment_schema,
     _build_scene_summary,
+    _build_segmentation_review_preview_data_url,
     _build_voxel_preview_data_url,
     _call_openai_for_segmentation_review,
     _extract_thinking_delta,
@@ -415,6 +419,24 @@ def test_build_voxel_preview_data_url_returns_labelled_png():
     assert (140, 200, 90) not in colors
 
 
+def test_segmentation_review_preview_shows_ids_and_current_colors():
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    rules = [
+        {"segment_id": 1, "color": [230, 20, 30]},
+        {"segment_id": 2, "color": [20, 40, 230]},
+    ]
+
+    data_url = _build_segmentation_review_preview_data_url(voxels, segment_ids, rules)
+
+    image = Image.open(BytesIO(base64.b64decode(data_url.split(",", 1)[1])))
+    colors = {color for _, color in image.getcolors(maxcolors=image.width * image.height)}
+    assert SEGMENT_PALETTE[0] in colors
+    assert SEGMENT_PALETTE[1] in colors
+    assert (230, 20, 30) in colors
+    assert (20, 40, 230) in colors
+
+
 def test_assignment_schema_requires_every_segment():
     schema = _assignment_schema([1, 2, 3])
     assignments = schema["properties"]["assignments"]
@@ -698,7 +720,23 @@ def test_segmentation_review_schema_limits_ids_and_pieces():
     split_items = schema["properties"]["split_segments"]["items"]
     assert split_items["properties"]["segment_id"]["enum"] == [1, 2, 3]
     assert split_items["properties"]["pieces"]["maximum"] == MAX_SPLIT_PIECES
-    assert set(schema["required"]) == {"verdict", "merge_groups", "split_segments"}
+    semantic_splits = schema["properties"]["semantic_splits"]
+    assert semantic_splits["maxItems"] == MAX_SEMANTIC_SPLITS
+    semantic_item = semantic_splits["items"]
+    assert semantic_item["properties"]["segment_id"]["enum"] == [1, 2, 3]
+    assert semantic_item["properties"]["view"]["enum"] == [view["name"] for view in VIEWS]
+    assert semantic_item["properties"]["selection"]["enum"] == ["surface", "through"]
+    assert semantic_item["properties"]["regions"]["maxItems"] == MAX_SEMANTIC_REGIONS
+    color_correction = schema["properties"]["color_corrections"]["items"]
+    assert color_correction["properties"]["segment_id"]["enum"] == [1, 2, 3]
+    assert color_correction["properties"]["color"]["items"]["maximum"] == 255
+    assert set(schema["required"]) == {
+        "verdict",
+        "merge_groups",
+        "split_segments",
+        "semantic_splits",
+        "color_corrections",
+    }
 
 
 def test_apply_segmentation_review_merges_fragments_and_renumbers():
@@ -770,17 +808,137 @@ def test_apply_segmentation_review_skips_unsplittable_segments():
     assert np.array_equal(new_ids, segment_ids)
 
 
+def test_apply_segmentation_review_adds_semantic_details_to_all_white_surface():
+    voxels = _block((0, 10), (0, 5), (0, 10), (255, 255, 255))
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    assert set(segment_ids.tolist()) == {1}
+
+    review = {
+        "verdict": "adjust",
+        "merge_groups": [],
+        "split_segments": [],
+        "semantic_splits": [
+            {
+                "segment_id": 1,
+                "part": "eyes",
+                "view": "front",
+                "selection": "surface",
+                "shape": "ellipse",
+                "regions": [
+                    {"center": [0.28, 0.7], "size": [0.24, 0.3]},
+                    {"center": [0.72, 0.7], "size": [0.24, 0.3]},
+                ],
+                "reason": "Pikachu has two dark eyes high on the face",
+            }
+        ],
+    }
+
+    new_ids, adjustments = _apply_segmentation_review(voxels, segment_ids, review)
+
+    assert set(new_ids.tolist()) == {1, 2}
+    assert adjustments[0]["action"] == "semantic_split"
+    assert adjustments[0]["part"] == "eyes"
+    assert adjustments[0]["selected_voxels"] > 1
+    coords, _ = _voxel_arrays(voxels)
+    eye_coords = coords[new_ids == 2]
+    assert set(eye_coords[:, 1].tolist()) == {0}  # frontmost surface only
+    assert set(eye_coords[:, 0].tolist()) <= {2, 3, 6, 7}
+    assert _build_scene_summary(voxels, new_ids)["segments"][1]["island_count"] == 2
+
+
+def test_apply_segmentation_review_selects_all_white_3d_part_through_silhouette():
+    body = _block((0, 10), (0, 5), (0, 10), (255, 255, 255))
+    tail = _block((10, 15), (0, 5), (3, 6), (255, 255, 255))
+    voxels = body + tail
+    segment_ids = np.ones(len(voxels), dtype=np.int32)
+    review = {
+        "verdict": "adjust",
+        "merge_groups": [],
+        "split_segments": [],
+        "semantic_splits": [
+            {
+                "segment_id": 1,
+                "part": "tail",
+                "view": "front",
+                "selection": "through",
+                "shape": "rectangle",
+                "regions": [{"center": [0.9, 0.45], "size": [0.22, 0.36]}],
+                "reason": "the tail has a distinct silhouette to the right of the body",
+            }
+        ],
+        "color_corrections": [],
+    }
+
+    new_ids, adjustments = _apply_segmentation_review(voxels, segment_ids, review)
+
+    assert adjustments[0]["action"] == "semantic_split"
+    assert adjustments[0]["selection"] == "through"
+    coords, _ = _voxel_arrays(voxels)
+    selected = coords[new_ids == 2]
+    assert selected[:, 0].min() >= 12
+    assert set(selected[:, 1].tolist()) == set(range(5))
+
+
+def test_apply_segmentation_review_ignores_invalid_semantic_masks():
+    voxels = _block((0, 4), (0, 4), (0, 4), (255, 255, 255))
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    review = {
+        "verdict": "adjust",
+        "merge_groups": [],
+        "split_segments": [],
+        "semantic_splits": [
+            {
+                "segment_id": 1,
+                "part": "bad",
+                "view": "diagonal",
+                "selection": "surface",
+                "shape": "ellipse",
+                "regions": [{"center": [0.5, 0.5], "size": [0.2, 0.2]}],
+                "reason": "invalid view",
+            },
+            {
+                "segment_id": 1,
+                "part": "bad",
+                "view": "front",
+                "selection": "surface",
+                "shape": "ellipse",
+                "regions": [{"center": [float("nan"), 0.5], "size": [0.2, 0.2]}],
+                "reason": "non-finite coordinate",
+            },
+        ],
+    }
+
+    new_ids, adjustments = _apply_segmentation_review(voxels, segment_ids, review)
+
+    assert adjustments == []
+    assert np.array_equal(new_ids, segment_ids)
+
+
 # ---------------------------------------------------------------------------
 # Segmentation verification loop
 # ---------------------------------------------------------------------------
 
 
-GOOD_REVIEW = {"verdict": "good", "merge_groups": [], "split_segments": []}
-MERGE_ALL_REVIEW = {"verdict": "adjust", "merge_groups": [[1, 2]], "split_segments": []}
+GOOD_REVIEW = {
+    "verdict": "good",
+    "merge_groups": [],
+    "split_segments": [],
+    "semantic_splits": [],
+    "color_corrections": [],
+}
+MERGE_ALL_REVIEW = {
+    "verdict": "adjust",
+    "merge_groups": [[1, 2]],
+    "split_segments": [],
+    "semantic_splits": [],
+    "color_corrections": [],
+}
 SPLIT_FIRST_REVIEW = {
     "verdict": "adjust",
     "merge_groups": [],
     "split_segments": [{"segment_id": 1, "pieces": 2, "reason": "head and body"}],
+    "semantic_splits": [],
+    "color_corrections": [],
 }
 
 
@@ -875,6 +1033,144 @@ def test_review_loop_re_verifies_adjusted_segmentation():
         f"Checking segmentation (round 1/{DEFAULT_SEGMENTATION_ROUNDS})...\n",
         f"Checking segmentation (round 2/{DEFAULT_SEGMENTATION_ROUNDS})...\n",
     ]
+
+
+def test_review_loop_colors_before_review_and_recolors_adjustments():
+    voxels = _two_part_model()
+    colorizer_calls = []
+    reviewer_calls = []
+    reviews = [MERGE_ALL_REVIEW, GOOD_REVIEW]
+
+    async def colorizer(segment_ids, scene_summary, preview_url):
+        segment_count = len(scene_summary["segments"])
+        colorizer_calls.append((segment_count, preview_url))
+        assignments = [
+            {
+                "segment_id": segment["id"],
+                "part": "figure",
+                "reason": "reference",
+                "color": [20 * segment["id"], 40, 60],
+            }
+            for segment in scene_summary["segments"]
+        ]
+        recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        return SegmentationColoring(recolored, applied, "figure", f"colored-{segment_count}")
+
+    async def reviewer(scene_summary, preview_url, round_number, previous_rounds):
+        reviewer_calls.append(
+            (round_number, preview_url, len(scene_summary["current_coloring"]), previous_rounds)
+        )
+        return reviews.pop(0)
+
+    outcome = _run_loop(voxels, reviewer, colorizer=colorizer)
+
+    assert [call[0] for call in colorizer_calls] == [2, 1]
+    assert [(call[0], call[1], call[2]) for call in reviewer_calls] == [
+        (1, "colored-2", 2),
+        (2, "colored-1", 1),
+    ]
+    assert outcome.coloring is not None
+    assert len(outcome.coloring.applied_rules) == 1
+    assert outcome.coloring.subject == "figure"
+
+
+def test_review_loop_recolors_final_adjustment_at_round_cap():
+    voxels = _two_part_model()
+    colorizer_segment_counts = []
+
+    async def colorizer(segment_ids, scene_summary, _preview_url):
+        count = len(scene_summary["segments"])
+        colorizer_segment_counts.append(count)
+        assignments = [
+            {
+                "segment_id": segment["id"],
+                "part": "figure",
+                "reason": "reference",
+                "color": [1, 2, 3],
+            }
+            for segment in scene_summary["segments"]
+        ]
+        recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        return SegmentationColoring(recolored, applied, "figure", "colored")
+
+    outcome = _run_loop(
+        voxels,
+        _ScriptedReviewer(MERGE_ALL_REVIEW),
+        max_rounds=1,
+        colorizer=colorizer,
+    )
+
+    assert outcome.stop_reason == "max_rounds"
+    assert colorizer_segment_counts == [2, 1]
+    assert outcome.coloring is not None
+    assert len(outcome.coloring.applied_rules) == 1
+
+
+def test_review_loop_applies_and_rechecks_color_corrections_without_resegmenting():
+    voxels = _two_part_model()
+    colorizer_calls = []
+    reviewed_colors = []
+    reviews = [
+        {
+            "verdict": "adjust",
+            "merge_groups": [],
+            "split_segments": [],
+            "semantic_splits": [],
+            "color_corrections": [
+                {
+                    "segment_id": 2,
+                    "part": "head",
+                    "reason": "the reference head is blue",
+                    "color": [20, 40, 220],
+                }
+            ],
+        },
+        GOOD_REVIEW,
+    ]
+
+    async def colorizer(segment_ids, scene_summary, _preview_url):
+        colorizer_calls.append(len(scene_summary["segments"]))
+        assignments = [
+            {
+                "segment_id": segment["id"],
+                "part": "body",
+                "reason": "initial proposal",
+                "color": [120, 30, 20],
+            }
+            for segment in scene_summary["segments"]
+        ]
+        recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        return SegmentationColoring(recolored, applied, "figure", "initial-colors")
+
+    async def reviewer(scene_summary, preview_url, _round_number, _previous_rounds):
+        reviewed_colors.append(
+            (
+                preview_url,
+                {rule["segment_id"]: rule["color"] for rule in scene_summary["current_coloring"]},
+            )
+        )
+        return reviews.pop(0)
+
+    outcome = _run_loop(voxels, reviewer, colorizer=colorizer)
+
+    assert colorizer_calls == [2]
+    assert reviewed_colors[0][1][2] == [120, 30, 20]
+    assert reviewed_colors[1][1][2] == [20, 40, 220]
+    assert reviewed_colors[1][0] != reviewed_colors[0][0]
+    assert outcome.adjustments == [
+        {
+            "action": "recolor",
+            "segment_id": 2,
+            "from_color": [120, 30, 20],
+            "color": [20, 40, 220],
+            "part": "head",
+            "reason": "the reference head is blue",
+            "round": 1,
+        }
+    ]
+    assert outcome.coloring is not None
+    head = [voxel for voxel in outcome.coloring.recolored_voxels if voxel["z"] >= 6]
+    assert all((voxel["r"], voxel["g"], voxel["b"]) == (20, 40, 220) for voxel in head)
 
 
 def test_review_loop_detects_oscillation():
@@ -975,6 +1271,12 @@ def test_segmentation_review_prompt_carries_round_history(monkeypatch):
     assert user_text["review_round"] == 2
     assert user_text["previous_rounds"] == history
     assert any("follow-up review" in rule for rule in user_text["rules"])
+    assert any("same color" in rule for rule in user_text["rules"])
+    assert any("semantic_splits" in rule for rule in user_text["rules"])
+    assert any("color_corrections" in rule for rule in user_text["rules"])
+    system_text = captured["payload"]["input"][0]["content"][0]["text"]
+    assert "geometry, silhouette, topology" in system_text
+    assert "completely uniform" in system_text
 
     # First rounds carry no history and no follow-up rule.
     asyncio.run(

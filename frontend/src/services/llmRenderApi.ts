@@ -44,12 +44,20 @@ export interface LlmRenderAppliedRule {
 }
 
 export interface LlmRenderSegmentationAdjustment {
-  action: 'merge' | 'split';
+  action: 'merge' | 'split' | 'semantic_split' | 'recolor';
   segment_ids?: number[];
   into?: number;
   segment_id?: number;
   pieces?: number;
   new_segment_ids?: number[];
+  new_segment_id?: number;
+  part?: string | null;
+  view?: 'front' | 'back' | 'left side' | 'top';
+  selection?: 'surface' | 'through';
+  shape?: 'ellipse' | 'rectangle';
+  selected_voxels?: number;
+  from_color?: [number, number, number] | null;
+  color?: [number, number, number];
   reason?: string | null;
   round?: number;
 }

@@ -50,6 +50,11 @@ MAX_REFERENCE_IMAGES = 4
 # Ceiling for how many pieces the LLM may ask a single segment to be split into
 # during the segmentation check.
 MAX_SPLIT_PIECES = 4
+# A semantic split can group several disconnected instances into one segment
+# (for example both eyes). Keeping these limits small bounds both the
+# structured response and the amount of detail the reviewer can add per round.
+MAX_SEMANTIC_SPLITS = 8
+MAX_SEMANTIC_REGIONS = 4
 # The segmentation check is a loop: review -> adjust -> re-render -> review the
 # adjusted result again. It stops early when the LLM says the segmentation is
 # good, a round changes nothing, or the partition repeats an earlier one.
@@ -308,17 +313,16 @@ def _voxel_arrays(voxels: List[Dict[str, int]]) -> Tuple[np.ndarray, np.ndarray]
 # ---------------------------------------------------------------------------
 # Segmentation
 #
-# The existing voxel colors are usually wrong in hue but right in *structure*:
-# neighbouring voxels with similar colors almost always belong to the same
-# semantic part. We exploit that to pre-split the model into a small number of
-# contiguous segments, and then ask the LLM to label each segment rather than
-# guess coordinates.
+# Geometry supplies the primary candidate parts. Existing voxel colors are only
+# supporting evidence: they are often useful for small surface details, but may
+# have the wrong hue or be completely uniform.
 #
-# Colour alone fails when adjacent parts share a colour (hat on hair, arm on
-# torso), so the model is also split geometrically: a distance-transform
-# watershed finds thick "cores" and the thin necks between them. Components
-# are the intersection of colour regions and geometric regions, and the
-# merging phases prefer to merge across shading before merging across a neck.
+# A distance-transform watershed finds thick "cores" and the thin necks between
+# them, so an all-white model can still separate parts such as a head, ears,
+# limbs, or a tail. Colour regions are intersected with those geometric regions
+# to retain any useful detail evidence. The LLM review can then add semantic
+# semantic regions that have neither a neck nor a source-colour boundary, such
+# as ears, a tail, eyes, or cheeks on an all-white character.
 # ---------------------------------------------------------------------------
 
 
@@ -858,8 +862,8 @@ def _build_scene_summary(
         ),
         "normalized_coordinates": "center/extent are 0..1 across the voxel bounds (0=min, 1=max)",
         "details": (
-            "is_detail marks small, high-contrast features (eyes, mouth, buttons, logos, "
-            "jewelry, patterns) that were deliberately kept as their own segments. "
+            "is_detail marks small features (eyes, mouth, buttons, logos, jewelry, "
+            "patterns) retained from source contrast or added by semantic splits. "
             "island_count > 1 means the segment is several matching pieces sharing one "
             "colour, e.g. both eyes or all buttons; center/extent then span all pieces."
         ),
@@ -882,10 +886,10 @@ def _load_font(size: int) -> ImageFont.ImageFont:
         return ImageFont.load_default()
 
 
-def _project_segments(
-    coords: np.ndarray, segment_ids: np.ndarray, view: Dict[str, Any]
-) -> np.ndarray:
-    """Return a 2D array (rows, cols) of segment ids for the visible voxel per pixel (0 = empty)."""
+def _project_visible_indices(
+    coords: np.ndarray, view: Dict[str, Any]
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+    """Map each occupied projection pixel to its visible voxel index."""
     low = coords.min(0)
     high = coords.max(0)
     h, v, d = AXIS_INDEX[view["h"]], AXIS_INDEX[view["v"]], AXIS_INDEX[view["d"]]
@@ -903,8 +907,17 @@ def _project_segments(
     _, first = np.unique(pixel_key[order], return_index=True)
     visible = order[first]
 
+    return visible, px[visible], py[visible], width, height
+
+
+def _project_segments(
+    coords: np.ndarray, segment_ids: np.ndarray, view: Dict[str, Any]
+) -> np.ndarray:
+    """Return a 2D array (rows, cols) of segment ids for the visible voxel per pixel (0 = empty)."""
+    visible, px, py, width, height = _project_visible_indices(coords, view)
+
     image = np.zeros((height, width), dtype=np.int32)
-    image[py[visible], px[visible]] = segment_ids[visible]
+    image[py, px] = segment_ids[visible]
     return image
 
 
@@ -914,13 +927,22 @@ def _render_view_tile(
     view: Dict[str, Any],
     tile: int,
     font: ImageFont.ImageFont,
+    segment_colors: Optional[Dict[int, Tuple[int, int, int]]] = None,
 ) -> Image.Image:
     projection = _project_segments(coords, segment_ids, view)
     height, width = projection.shape
     scale = max(1, min(tile // width, tile // height))
 
-    palette = np.array([(255, 255, 255)] + SEGMENT_PALETTE, dtype=np.uint8)
-    rgb = palette[np.clip(projection, 0, len(SEGMENT_PALETTE))]
+    background = (255, 255, 255) if segment_colors is None else (226, 230, 236)
+    rgb = np.full((height, width, 3), background, dtype=np.uint8)
+    for segment_id in np.unique(projection):
+        if segment_id == 0:
+            continue
+        if segment_colors is None:
+            color = SEGMENT_PALETTE[(int(segment_id) - 1) % len(SEGMENT_PALETTE)]
+        else:
+            color = segment_colors.get(int(segment_id), (160, 160, 160))
+        rgb[projection == segment_id] = color
     image = Image.fromarray(rgb, "RGB")
     if scale > 1:
         image = image.resize((width * scale, height * scale), Image.NEAREST)
@@ -931,7 +953,7 @@ def _render_view_tile(
         )
         scale = ratio
 
-    canvas = Image.new("RGB", (tile, tile), "white")
+    canvas = Image.new("RGB", (tile, tile), background)
     offset = ((tile - image.width) // 2, (tile - image.height) // 2)
     canvas.paste(image, offset)
     draw = ImageDraw.Draw(canvas)
@@ -973,9 +995,11 @@ def _render_view_tile(
     return canvas
 
 
-def _build_voxel_preview_data_url(
-    voxels: List[Dict[str, int]], segment_ids: np.ndarray
-) -> str:
+def _build_voxel_preview_image(
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    segment_colors: Optional[Dict[int, Tuple[int, int, int]]] = None,
+) -> Image.Image:
     coords, _ = _voxel_arrays(voxels)
     tile = PREVIEW_TILE_SIZE
     title_height = 26
@@ -1006,21 +1030,84 @@ def _build_voxel_preview_data_url(
         y = row * (tile + title_height + gap)
         draw.text((x + 4, y + 4), f"{view['name']} (camera at {view['camera']})", fill=(0, 0, 0), font=title_font)
         composite.paste(
-            _render_view_tile(coords, segment_ids, view, tile, label_font), (x, y + title_height)
+            _render_view_tile(
+                coords,
+                segment_ids,
+                view,
+                tile,
+                label_font,
+                segment_colors=segment_colors,
+            ),
+            (x, y + title_height),
         )
 
     legend_top = composite.height - legend_height + 8
     for index, segment_id in enumerate(unique_segments):
         x = 4 + (index % legend_per_row) * legend_item_width
         y = legend_top + (index // legend_per_row) * (swatch + 8)
-        color = SEGMENT_PALETTE[(segment_id - 1) % len(SEGMENT_PALETTE)]
+        color = (
+            SEGMENT_PALETTE[(segment_id - 1) % len(SEGMENT_PALETTE)]
+            if segment_colors is None
+            else segment_colors.get(segment_id, (160, 160, 160))
+        )
         draw.rectangle([x, y, x + swatch, y + swatch], fill=color, outline=(0, 0, 0))
         draw.text((x + swatch + 3, y), str(segment_id), fill=(0, 0, 0), font=label_font)
 
+    return composite
+
+
+def _image_data_url(image: Image.Image) -> str:
+    """Encode an in-memory preview as a PNG data URL."""
+
     buffer = BytesIO()
-    composite.save(buffer, format="PNG", optimize=True)
+    image.save(buffer, format="PNG", optimize=True)
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
+
+
+def _build_voxel_preview_data_url(
+    voxels: List[Dict[str, int]], segment_ids: np.ndarray
+) -> str:
+    return _image_data_url(_build_voxel_preview_image(voxels, segment_ids))
+
+
+def _build_segmentation_review_preview_data_url(
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    applied_rules: List[Dict[str, Any]],
+) -> str:
+    """Pair the unambiguous ID segmentation with its currently proposed colors."""
+    segment_colors: Dict[int, Tuple[int, int, int]] = {}
+    for rule in applied_rules:
+        color = _coerce_rgb(rule.get("color"))
+        try:
+            segment_id = int(rule.get("segment_id"))
+        except (TypeError, ValueError):
+            continue
+        if color is not None:
+            segment_colors[segment_id] = color
+
+    id_preview = _build_voxel_preview_image(voxels, segment_ids)
+    color_preview = _build_voxel_preview_image(voxels, segment_ids, segment_colors)
+    header = 34
+    gap = 10
+    composite = Image.new(
+        "RGB",
+        (id_preview.width + color_preview.width + gap, max(id_preview.height, color_preview.height) + header),
+        "white",
+    )
+    draw = ImageDraw.Draw(composite)
+    title_font = _load_font(18)
+    draw.text((6, 7), "SEGMENT IDS (arbitrary colors)", fill=(0, 0, 0), font=title_font)
+    draw.text(
+        (id_preview.width + gap + 6, 7),
+        "CURRENT PROPOSED COLORS",
+        fill=(0, 0, 0),
+        font=title_font,
+    )
+    composite.paste(id_preview, (0, header))
+    composite.paste(color_preview, (id_preview.width + gap, header))
+    return _image_data_url(composite)
 
 
 # ---------------------------------------------------------------------------
@@ -1490,6 +1577,7 @@ async def _call_openai_for_assignments(
             "Small segments are usually details (eyes, buttons, logos, trim); look for matching details in the reference.",
             "Segments with is_detail=true are small high-contrast features (eyes, mouth, jewelry, buttons, logos, shirt patterns) that were kept on purpose; give them the colour of the matching detail in the reference, not the colour of the part they sit on.",
             "A segment with island_count > 1 is several matching pieces (e.g. both eyes, all buttons); colour it as that repeated feature.",
+            "When scene_summary includes semantic_hints, use the reviewer-provided part identity for those newly created segments and verify its color against the reference.",
         ],
         "optional_user_prompt": prompt,
         "scene_summary": scene_summary,
@@ -1551,23 +1639,39 @@ async def _call_openai_for_assignments(
 # ---------------------------------------------------------------------------
 # Segmentation check
 #
-# The deterministic segmentation only sees colour structure and geometry; it
-# cannot know that a hat and hair are different parts or that two fragments are
-# one shirt. Before colors are assigned, the LLM reviews the labelled preview
-# against the reference image(s) and may ask for segments to be merged (they
-# are fragments of one part) or split (one segment spans several parts). The
-# splitting itself stays deterministic: the segmenter is re-run on just that
-# segment's voxels with the piece count the LLM chose.
+# The candidate segmenter sees geometry plus weak source-colour evidence, but it
+# cannot know that a hat and hair are different parts or place eyes on an
+# all-white face. The LLM reviews both labelled IDs and proposed reference
+# colors. It can merge fragments, ask the geometry segmenter to split separate
+# 3D forms, or paint normalized semantic masks through a form or onto its
+# surface when the source has no usable boundary.
 #
-# The check runs as a verification loop (_segmentation_review_loop): after each
-# round's adjustments the preview is re-rendered and shown to the LLM again, so
-# it can confirm the fix or request further changes, until it returns "good",
-# a round changes nothing, the partition repeats (oscillation) or the round
-# cap is hit.
+# The check runs as a verification loop (_segmentation_review_loop): each
+# adjusted partition is recolored and re-rendered before the next review, so the
+# LLM confirms both segment boundaries and final colors.
 # ---------------------------------------------------------------------------
 
 
 def _segmentation_review_schema(segment_ids: List[int]) -> Dict[str, Any]:
+    semantic_region_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "center": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {"type": "number", "minimum": 0, "maximum": 1},
+            },
+            "size": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {"type": "number", "minimum": 0.001, "maximum": 1},
+            },
+        },
+        "required": ["center", "size"],
+    }
     return {
         "type": "object",
         "additionalProperties": False,
@@ -1594,8 +1698,71 @@ def _segmentation_review_schema(segment_ids: List[int]) -> Dict[str, Any]:
                     "required": ["segment_id", "pieces", "reason"],
                 },
             },
+            "semantic_splits": {
+                "type": "array",
+                "maxItems": MAX_SEMANTIC_SPLITS,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "segment_id": {"type": "integer", "enum": segment_ids},
+                        "part": {"type": "string"},
+                        "view": {
+                            "type": "string",
+                            "enum": [view["name"] for view in VIEWS],
+                        },
+                        "selection": {
+                            "type": "string",
+                            "enum": ["surface", "through"],
+                        },
+                        "shape": {"type": "string", "enum": ["ellipse", "rectangle"]},
+                        "regions": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": MAX_SEMANTIC_REGIONS,
+                            "items": semantic_region_schema,
+                        },
+                        "reason": {"type": "string"},
+                    },
+                    "required": [
+                        "segment_id",
+                        "part",
+                        "view",
+                        "selection",
+                        "shape",
+                        "regions",
+                        "reason",
+                    ],
+                },
+            },
+            "color_corrections": {
+                "type": "array",
+                "maxItems": MAX_SEGMENTS_LIMIT,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "segment_id": {"type": "integer", "enum": segment_ids},
+                        "part": {"type": "string"},
+                        "reason": {"type": "string"},
+                        "color": {
+                            "type": "array",
+                            "minItems": 3,
+                            "maxItems": 3,
+                            "items": {"type": "integer", "minimum": 0, "maximum": 255},
+                        },
+                    },
+                    "required": ["segment_id", "part", "reason", "color"],
+                },
+            },
         },
-        "required": ["verdict", "merge_groups", "split_segments"],
+        "required": [
+            "verdict",
+            "merge_groups",
+            "split_segments",
+            "semantic_splits",
+            "color_corrections",
+        ],
     }
 
 
@@ -1611,21 +1778,28 @@ async def _call_openai_for_segmentation_review(
     segment_ids = [segment["id"] for segment in scene_summary["segments"]]
     preview_index = len(reference_image_urls) + 1
     previous_rounds = previous_rounds or []
+    has_current_coloring = "current_coloring" in scene_summary
 
     system_prompt = (
-        "You quality-check how a voxel model has been split into segments before it is "
-        "recolored to match reference images. A good segmentation gives every "
-        "distinctly-colored part of the subject its own segment: no segment spans "
-        "differently-colored parts, and no part is shattered into fragments. You cannot "
-        "move voxels; you can only ask for whole segments to be merged or split. "
-        "Return only JSON."
+        "You create and quality-check semantic segmentation for a voxel model that must "
+        "match reference images. Treat the voxel geometry, silhouette, topology, and the "
+        "expected location of recognizable parts as primary evidence. Existing source "
+        "voxel colors are weak hints only: they may be wrong or completely uniform. A "
+        "good segmentation gives every reference-color region its own segment without "
+        "shattering one semantic part into fragments. You cannot move voxels. Return only JSON."
     )
     rules = [
-        "If the segmentation already matches the reference, return verdict 'good' with empty merge_groups and split_segments.",
+        "If both the segmentation and current proposed colors match the reference, return verdict 'good' with empty merge_groups, split_segments, semantic_splits, and color_corrections.",
+        "Infer parts from shape and relative location even when every source voxel has the same color. For a character, look for the head, body, limbs, ears, tail, eyes, mouth, cheeks, markings, and other subject-specific features visible in the references.",
         "Only request a merge when the segments would end up the exact same color; when unsure, leave them separate.",
         "Never merge a detail segment (is_detail=true) into the part it sits on.",
-        "Only request a split when one segment clearly covers parts with different colors in the reference.",
-        "Use each segment id at most once across merge_groups and split_segments.",
+        "Use split_segments for separate 3D forms that geometry can recover, such as a head and torso joined by a neck or an ear attached to a head.",
+        "Use semantic_splits when a recognizable part has no geometric or source-color boundary. Use selection='through' for a 3D form selected from its silhouette, such as an ear or tail; use selection='surface' for a marking painted on the visible surface, such as eyes, cheeks, a mouth, or a logo. All regions in one semantic split become one segment and must represent instances that should share one color.",
+        "semantic_splits coordinates are normalized across the full named preview view. center and size are [horizontal, vertical], horizontal is 0 at the image left and 1 at the right, and vertical is 0 at the bottom and 1 at the top. Use tight ellipses or rectangles and select the current segment that contains the feature. Choose the view where the feature is clearest and does not overlap unrelated parts.",
+        "Use color_corrections when a current proposed segment color is wrong but its boundary is already correct. Give the representative reference RGB color, not a shadow average.",
+        "When requesting any merge, split_segments, or semantic_splits, leave color_corrections empty because all resulting segments will be recolored before the next review.",
+        "Only request a split when one segment clearly covers semantic parts or regions with different colors in the reference.",
+        "Use each segment id at most once across merge_groups and split_segments. A segment may be the source for multiple non-overlapping semantic_splits when it contains several differently-colored features.",
     ]
     if previous_rounds:
         rules.append(
@@ -1640,14 +1814,18 @@ async def _call_openai_for_segmentation_review(
     user_prompt = {
         "task": (
             f"{_reference_images_description(reference_image_urls)}. Image "
-            f"{preview_index} shows the voxel model from four cameras with every "
-            "segment drawn in a flat ID color and labelled with its number (legend at "
-            "the bottom); those colors are arbitrary segment IDs, not real colors. "
-            "Check the segmentation against the reference: report groups of segments "
-            "that are fragments of one uniformly-colored part in merge_groups, and any "
-            "segment that clearly spans several differently-colored parts in "
-            "split_segments with how many pieces it should become (the split itself is "
-            "re-done algorithmically; you only choose the piece count)."
+            f"{preview_index} shows the voxel model from four cameras. "
+            + (
+                "Its left panel uses arbitrary segment-ID colors and its right panel shows "
+                "the current proposed reference colors; both panels label segment numbers. "
+                "Check both the semantic boundaries and the proposed colors. "
+                if has_current_coloring
+                else "Every segment is drawn in an arbitrary ID color and labelled with its number. "
+            )
+            + "Report fragments of one same-color part in merge_groups. Use split_segments "
+            "when a segment spans separable 3D forms (the geometry algorithm chooses the "
+            "boundary from the requested piece count), and semantic_splits when the reference "
+            "requires a localized color region that is absent from the current segmentation."
         ),
         "rules": rules,
         "review_round": round_number,
@@ -1697,6 +1875,81 @@ async def _call_openai_for_segmentation_review(
 
     response_json = await _post_openai_responses(payload)
     return _extract_json_object(_extract_response_text(response_json))
+
+
+def _normalized_semantic_region_indices(
+    coords: np.ndarray,
+    source_mask: np.ndarray,
+    view_name: str,
+    selection: str,
+    shape: str,
+    regions: Any,
+) -> np.ndarray:
+    """Resolve normalized 2D regions to voxels in a source segment.
+
+    Region coordinates use the full model projection: horizontal increases from
+    left to right in the labelled preview and vertical increases bottom to top.
+    A surface selection paints only the frontmost voxel per covered pixel; a
+    through selection includes the full camera ray to isolate a 3D form from a
+    clear silhouette.
+    """
+    view = next((candidate for candidate in VIEWS if candidate["name"] == view_name), None)
+    if (
+        view is None
+        or selection not in {"surface", "through"}
+        or shape not in {"ellipse", "rectangle"}
+        or not isinstance(regions, list)
+    ):
+        return np.empty(0, dtype=np.int64)
+
+    low = coords.min(0)
+    high = coords.max(0)
+    h, v = AXIS_INDEX[view["h"]], AXIS_INDEX[view["v"]]
+    width = int(high[h] - low[h] + 1)
+    height = int(high[v] - low[v] + 1)
+    if selection == "surface":
+        visible, px, py, _, _ = _project_visible_indices(coords, view)
+        candidates = visible[source_mask[visible]]
+    else:
+        candidates = np.nonzero(source_mask)[0]
+    if len(candidates) == 0:
+        return np.empty(0, dtype=np.int64)
+
+    px = coords[candidates, h] - low[h]
+    if view["flip_h"]:
+        px = (width - 1) - px
+    py = high[v] - coords[candidates, v]
+    horizontal = px.astype(np.float64) / max(1, width - 1)
+    vertical = 1.0 - py.astype(np.float64) / max(1, height - 1)
+    selected = np.zeros(len(candidates), dtype=bool)
+
+    for raw_region in regions[:MAX_SEMANTIC_REGIONS]:
+        if not isinstance(raw_region, dict):
+            continue
+        center = raw_region.get("center")
+        size = raw_region.get("size")
+        if not isinstance(center, list) or not isinstance(size, list):
+            continue
+        if len(center) != 2 or len(size) != 2:
+            continue
+        try:
+            center_h, center_v = (float(value) for value in center)
+            width_fraction, height_fraction = (float(value) for value in size)
+        except (TypeError, ValueError):
+            continue
+        if not all(np.isfinite(value) for value in (center_h, center_v, width_fraction, height_fraction)):
+            continue
+        if not (0.0 <= center_h <= 1.0 and 0.0 <= center_v <= 1.0):
+            continue
+        if not (0.0 < width_fraction <= 1.0 and 0.0 < height_fraction <= 1.0):
+            continue
+
+        dx = np.abs(horizontal - center_h) / (width_fraction / 2.0)
+        dy = np.abs(vertical - center_v) / (height_fraction / 2.0)
+        inside = dx * dx + dy * dy <= 1.0 if shape == "ellipse" else (dx <= 1.0) & (dy <= 1.0)
+        selected |= inside
+
+    return candidates[selected].astype(np.int64)
 
 
 def _apply_segmentation_review(
@@ -1773,11 +2026,59 @@ def _apply_segmentation_review(
             }
         )
 
+    coords, _ = _voxel_arrays(voxels)
+    semantic_requests = review.get("semantic_splits")
+    for raw in (
+        semantic_requests[:MAX_SEMANTIC_SPLITS]
+        if isinstance(semantic_requests, list)
+        else []
+    ):
+        if not isinstance(raw, dict) or len(alive) >= MAX_SEGMENTS_LIMIT:
+            continue
+        try:
+            sid = int(raw.get("segment_id"))
+        except (TypeError, ValueError):
+            continue
+        if sid not in alive:
+            continue
+
+        source_mask = segment_ids == sid
+        member_indices = _normalized_semantic_region_indices(
+            coords,
+            source_mask,
+            raw.get("view"),
+            raw.get("selection"),
+            raw.get("shape"),
+            raw.get("regions"),
+        )
+        if len(member_indices) == 0 or len(member_indices) >= int(source_mask.sum()):
+            continue
+
+        new_id = max(alive) + 1
+        segment_ids[member_indices] = new_id
+        alive.add(new_id)
+        adjustments.append(
+            {
+                "action": "semantic_split",
+                "segment_id": sid,
+                "new_segment_id": new_id,
+                "part": raw.get("part"),
+                "view": raw.get("view"),
+                "selection": raw.get("selection"),
+                "shape": raw.get("shape"),
+                "selected_voxels": int(len(member_indices)),
+                "reason": raw.get("reason"),
+            }
+        )
+
     if adjustments:
         unique, counts = np.unique(segment_ids, return_counts=True)
         order = unique[np.argsort(-counts, kind="stable")]
         remap = {int(old): index + 1 for index, old in enumerate(order.tolist())}
         segment_ids = np.vectorize(remap.__getitem__)(segment_ids).astype(np.int32)
+        for adjustment in adjustments:
+            if adjustment["action"] == "semantic_split":
+                adjustment["new_segment_id"] = remap[adjustment["new_segment_id"]]
     return segment_ids, adjustments
 
 
@@ -1797,6 +2098,19 @@ SegmentationReviewer = Callable[
 
 
 @dataclass
+class SegmentationColoring:
+    recolored_voxels: List[Dict[str, int]]
+    applied_rules: List[Dict[str, Any]]
+    subject: str
+    review_preview_image_url: str
+
+
+SegmentationColorizer = Callable[
+    [np.ndarray, Dict[str, Any], str], Awaitable[SegmentationColoring]
+]
+
+
+@dataclass
 class SegmentationReviewOutcome:
     segment_ids: np.ndarray
     scene_summary: Dict[str, Any]
@@ -1804,6 +2118,7 @@ class SegmentationReviewOutcome:
     adjustments: List[Dict[str, Any]] = field(default_factory=list)
     rounds: int = 0
     stop_reason: str = "max_rounds"
+    coloring: Optional[SegmentationColoring] = None
 
 
 async def _segmentation_review_loop(
@@ -1814,24 +2129,43 @@ async def _segmentation_review_loop(
     reviewer: SegmentationReviewer,
     max_rounds: int,
     on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+    colorizer: Optional[SegmentationColorizer] = None,
 ) -> SegmentationReviewOutcome:
     """Review -> adjust -> re-render -> review again, until the reviewer says
     "good", a round applies nothing ("no_change"), the partition repeats an
     earlier one ("cycle"), the reviewer fails ("error") or max_rounds is hit.
 
+    When a colorizer is supplied, every review sees a comparison of segment IDs
+    and current proposed colors. Adjusted segments are recolored before the next
+    review, so color correctness is part of the verification loop.
+
     Every adjustment is tagged with the round it was applied in. The check is
-    best-effort: a reviewer failure keeps whatever segmentation was reached so
-    far instead of failing the render."""
+    best-effort: a reviewer failure keeps whatever segmentation and coloring was
+    reached so far instead of failing the render.
+    """
     outcome = SegmentationReviewOutcome(segment_ids, scene_summary, preview_image_url)
     seen = {_partition_signature(segment_ids)}
     previous_rounds: List[Dict[str, Any]] = []
 
+    async def prepare_review() -> Tuple[Dict[str, Any], str]:
+        if colorizer is None:
+            return outcome.scene_summary, outcome.preview_image_url
+        if outcome.coloring is None:
+            outcome.coloring = await colorizer(
+                outcome.segment_ids, outcome.scene_summary, outcome.preview_image_url
+            )
+        review_summary = dict(outcome.scene_summary)
+        review_summary["current_coloring"] = outcome.coloring.applied_rules
+        return review_summary, outcome.coloring.review_preview_image_url
+
     for round_number in range(1, max_rounds + 1):
         if on_thinking:
-            await on_thinking(f"Checking segmentation (round {round_number}/{max_rounds})...\n")
+            activity = "Coloring and checking segmentation" if colorizer else "Checking segmentation"
+            await on_thinking(f"{activity} (round {round_number}/{max_rounds})...\n")
+        review_summary, review_preview = await prepare_review()
         try:
             review = await reviewer(
-                outcome.scene_summary, outcome.preview_image_url, round_number, previous_rounds
+                review_summary, review_preview, round_number, previous_rounds
             )
         except HTTPException as e:
             logger.warning(
@@ -1843,7 +2177,15 @@ async def _segmentation_review_loop(
             return outcome
 
         outcome.rounds = round_number
-        new_ids, applied = _apply_segmentation_review(voxels, outcome.segment_ids, review)
+        new_ids, segmentation_applied = _apply_segmentation_review(
+            voxels, outcome.segment_ids, review
+        )
+        color_applied: List[Dict[str, Any]] = []
+        if not segmentation_applied and outcome.coloring is not None:
+            outcome.coloring, color_applied = _apply_color_corrections(
+                voxels, outcome.segment_ids, outcome.coloring, review
+            )
+        applied = segmentation_applied + color_applied
         if not applied:
             outcome.stop_reason = "good" if review.get("verdict") == "good" else "no_change"
             return outcome
@@ -1851,22 +2193,39 @@ async def _segmentation_review_loop(
         for adjustment in applied:
             adjustment["round"] = round_number
         outcome.adjustments.extend(applied)
-        outcome.segment_ids = new_ids
-        outcome.scene_summary = _build_scene_summary(voxels, new_ids)
-        outcome.preview_image_url = _build_voxel_preview_data_url(voxels, new_ids)
+        if segmentation_applied:
+            outcome.segment_ids = new_ids
+            outcome.scene_summary = _build_scene_summary(voxels, new_ids)
+            semantic_hints = [
+                {
+                    "segment_id": adjustment["new_segment_id"],
+                    "part": adjustment.get("part"),
+                    "reason": adjustment.get("reason"),
+                }
+                for adjustment in segmentation_applied
+                if adjustment["action"] == "semantic_split"
+            ]
+            if semantic_hints:
+                outcome.scene_summary["semantic_hints"] = semantic_hints
+            outcome.preview_image_url = _build_voxel_preview_data_url(voxels, new_ids)
+            outcome.coloring = None
 
-        signature = _partition_signature(new_ids)
-        if signature in seen:
-            logger.info(
-                "llmRender segmentation check round %d reproduced an earlier segmentation, stopping",
-                round_number,
-            )
-            outcome.stop_reason = "cycle"
-            return outcome
-        seen.add(signature)
+            signature = _partition_signature(new_ids)
+            if signature in seen:
+                logger.info(
+                    "llmRender segmentation check round %d reproduced an earlier segmentation, stopping",
+                    round_number,
+                )
+                outcome.stop_reason = "cycle"
+                if colorizer:
+                    await prepare_review()
+                return outcome
+            seen.add(signature)
         previous_rounds.append({"round": round_number, "adjustments": applied})
 
     outcome.stop_reason = "max_rounds"
+    if colorizer and outcome.coloring is None:
+        await prepare_review()
     return outcome
 
 
@@ -1921,6 +2280,88 @@ def _apply_assignments(
         )
 
     return recolored, applied
+
+
+def _apply_color_corrections(
+    voxels: List[Dict[str, int]],
+    segment_ids: np.ndarray,
+    coloring: SegmentationColoring,
+    review: Dict[str, Any],
+) -> Tuple[SegmentationColoring, List[Dict[str, Any]]]:
+    """Apply reviewer RGB corrections without changing the current partition."""
+    corrections = review.get("color_corrections")
+    if not isinstance(corrections, list):
+        return coloring, []
+
+    alive = {int(segment_id) for segment_id in np.unique(segment_ids)}
+    rules = [dict(rule) for rule in coloring.applied_rules]
+    rule_by_id = {int(rule["segment_id"]): rule for rule in rules}
+    adjustments: List[Dict[str, Any]] = []
+    seen: set = set()
+
+    for raw in corrections[:MAX_SEGMENTS_LIMIT]:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            segment_id = int(raw.get("segment_id"))
+        except (TypeError, ValueError):
+            continue
+        color = _coerce_rgb(raw.get("color"))
+        if segment_id not in alive or segment_id in seen or color is None:
+            continue
+        seen.add(segment_id)
+
+        existing = rule_by_id.get(segment_id)
+        old_color = _coerce_rgb(existing.get("color")) if existing else None
+        if old_color == color:
+            continue
+        if existing is None:
+            existing = {"segment_id": segment_id}
+            rules.append(existing)
+            rule_by_id[segment_id] = existing
+        existing.update(
+            {
+                "name": raw.get("part") or existing.get("name", f"segment {segment_id}"),
+                "reason": raw.get("reason"),
+                "color": list(color),
+                "changed_voxels": int((segment_ids == segment_id).sum()),
+            }
+        )
+        adjustments.append(
+            {
+                "action": "recolor",
+                "segment_id": segment_id,
+                "from_color": list(old_color) if old_color is not None else None,
+                "color": list(color),
+                "part": existing["name"],
+                "reason": raw.get("reason"),
+            }
+        )
+
+    if not adjustments:
+        return coloring, []
+
+    assignments = [
+        {
+            "segment_id": rule["segment_id"],
+            "part": rule.get("name"),
+            "reason": rule.get("reason"),
+            "color": rule.get("color"),
+        }
+        for rule in rules
+    ]
+    recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+    return (
+        SegmentationColoring(
+            recolored_voxels=recolored,
+            applied_rules=applied,
+            subject=coloring.subject,
+            review_preview_image_url=_build_segmentation_review_preview_data_url(
+                voxels, segment_ids, applied
+            ),
+        ),
+        adjustments,
+    )
 
 
 def _serialize_xyzrgb(voxels: List[Dict[str, int]]) -> str:
@@ -1985,7 +2426,34 @@ async def llm_render(
         segmentation_adjustments: List[Dict[str, Any]] = []
         segmentation_rounds = 0
         segmentation_stop_reason: Optional[str] = None
+        coloring: Optional[SegmentationColoring] = None
         if request.check_segmentation:
+
+            async def colorize_segmentation(
+                current_ids: np.ndarray,
+                current_summary: Dict[str, Any],
+                current_preview_url: str,
+            ) -> SegmentationColoring:
+                assignments, subject = await _call_openai_for_assignments(
+                    scene_summary=current_summary,
+                    reference_image_urls=reference_image_urls,
+                    voxel_preview_image_url=current_preview_url,
+                    prompt=request.prompt,
+                    model=model,
+                    on_thinking=on_thinking,
+                )
+                recolored_voxels, applied_rules = _apply_assignments(
+                    voxels, current_ids, assignments
+                )
+                review_preview = _build_segmentation_review_preview_data_url(
+                    voxels, current_ids, applied_rules
+                )
+                return SegmentationColoring(
+                    recolored_voxels=recolored_voxels,
+                    applied_rules=applied_rules,
+                    subject=subject,
+                    review_preview_image_url=review_preview,
+                )
 
             async def review_segmentation(
                 current_summary: Dict[str, Any],
@@ -2011,6 +2479,7 @@ async def llm_render(
                 reviewer=review_segmentation,
                 max_rounds=request.max_segmentation_rounds or DEFAULT_SEGMENTATION_ROUNDS,
                 on_thinking=on_thinking,
+                colorizer=colorize_segmentation,
             )
             segment_ids = outcome.segment_ids
             scene_summary = outcome.scene_summary
@@ -2018,18 +2487,24 @@ async def llm_render(
             segmentation_adjustments = outcome.adjustments
             segmentation_rounds = outcome.rounds
             segmentation_stop_reason = outcome.stop_reason
+            coloring = outcome.coloring
 
-        if on_thinking:
-            await on_thinking("Comparing with reference images...\n\n")
-        assignments, subject = await _call_openai_for_assignments(
-            scene_summary=scene_summary,
-            reference_image_urls=reference_image_urls,
-            voxel_preview_image_url=voxel_preview_image_url,
-            prompt=request.prompt,
-            model=model,
-            on_thinking=on_thinking,
-        )
-        recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        if coloring is None:
+            if on_thinking:
+                await on_thinking("Comparing with reference images...\n\n")
+            assignments, subject = await _call_openai_for_assignments(
+                scene_summary=scene_summary,
+                reference_image_urls=reference_image_urls,
+                voxel_preview_image_url=voxel_preview_image_url,
+                prompt=request.prompt,
+                model=model,
+                on_thinking=on_thinking,
+            )
+            recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
+        else:
+            recolored = coloring.recolored_voxels
+            applied = coloring.applied_rules
+            subject = coloring.subject
 
         segment_count = int(segment_ids.max())
         if len(applied) < segment_count:

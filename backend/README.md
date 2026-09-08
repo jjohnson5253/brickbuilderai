@@ -89,30 +89,36 @@ Recolor an existing xyzrgb file to better match one or more reference images. Re
 `OPENAI_API_KEY` and, when the generation does not already have all directional
 references, `FAL_KEY`.
 
-The model is first split server-side into up to `max_segments` (default 16) contiguous
-segments. Splitting combines colour structure (clustered in CIELAB with lightness
-down-weighted, so shading does not split a part) with geometry (a distance-transform
-watershed that separates thick cores joined by thin necks, so same-coloured parts such as
-a head and torso still split). Small high-contrast features (eyes, mouth, buttons, logos,
-jewelry, shirt patterns) are protected from speckle removal, and same-coloured pieces of
-one feature (both eyes, all buttons) share a single segment; the scene summary flags these
-with `is_detail` and `island_count`. Unless `check_segmentation` is false, the LLM then
-reviews the labelled preview against the reference image(s) and may merge segments that
-are fragments of one part or ask for a segment spanning several parts to be re-split
-deterministically. This runs as a verification loop: after each round's adjustments the
-preview is re-rendered and reviewed again (with the earlier rounds' changes in the prompt)
-until the LLM returns `good`, a round changes nothing, the segmentation repeats an earlier
-one, or `max_segmentation_rounds` (default 3, max 5) is reached. Applied changes are
+The model is first split server-side into up to `max_segments` (default 16) candidate
+segments. Geometry is the primary signal: a distance-transform watershed separates thick
+cores joined by thin necks, so an all-white model can still split into forms such as a
+head, torso, ears, limbs, and tail. Existing colors are treated as weaker supporting
+evidence (clustered in CIELAB with lightness down-weighted) for details that happen to have
+useful source contrast. Small high-contrast features are protected from speckle removal.
+
+Unless `check_segmentation` is false, the LLM assigns proposed reference colors and then
+reviews a side-by-side preview of segment IDs and those current colors. It reasons from the
+reference subject's shape, topology, and expected part locations instead of trusting source
+colors. The reviewer may merge fragments, request a geometry-based split for separate 3D
+forms, or add normalized `semantic_split` masks for regions with no source boundary. A
+mask can select through the model to isolate a 3D silhouette such as an ear or tail, or
+select only the visible surface for eyes, cheeks, a mouth, logo, or marking. Multiple mask
+instances that share a color (both eyes, for example) can become one segment.
+If a boundary is already correct but its proposed color is not, the reviewer can apply a
+direct color correction without changing the segmentation.
+
+This runs as a verification loop: after each adjustment the new segmentation is recolored,
+re-rendered, and reviewed again (with earlier changes in the prompt) until the LLM returns
+`good`, a round changes nothing, the segmentation repeats an earlier one, or
+`max_segmentation_rounds` (default 3, max 5) is reached. Applied changes are
 reported in `segmentation_adjustments` (each tagged with its `round`; segment ids there
 refer to the segmentation the LLM reviewed in that round), alongside `segmentation_rounds`
 and `segmentation_stop_reason` (`good` | `no_change` | `cycle` | `max_rounds` | `error`).
 Before rendering, the endpoint also loads any saved front, back, side, and top reference
 images for the generation. Missing views are created with Nano Banana Lite Edit, copied to
 Supabase Storage, saved in `generations.reference_images`, and included alongside the
-request's reference image(s). A labelled multi-view preview of the final segments plus
-every reference image (request-supplied and generated) is sent to OpenAI, which returns
-one colour per segment. `applied_rules` in the response lists each segment's inferred part
-name, reason and colour. Reference images can be given as `reference_image_url`,
+request's reference image(s). `applied_rules` in the response lists each final segment's
+inferred part name, reason and colour. Reference images can be given as `reference_image_url`,
 `reference_image_urls` (max 4 combined), or both.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
