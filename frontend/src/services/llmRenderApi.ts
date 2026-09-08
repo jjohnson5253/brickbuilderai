@@ -19,9 +19,12 @@ const API_BASE_URL = getApiUrl();
 export interface LlmRenderRequest {
   generation_id: string;
   xyzrgb_url: string;
-  reference_image_url: string;
+  reference_image_url?: string;
+  reference_image_urls?: string[];
   prompt?: string;
   max_segments?: number;
+  check_segmentation?: boolean;
+  max_segmentation_rounds?: number;
 }
 
 export interface LlmRenderAppliedRule {
@@ -32,12 +35,33 @@ export interface LlmRenderAppliedRule {
   changed_voxels: number;
 }
 
+export interface LlmRenderSegmentationAdjustment {
+  action: 'merge' | 'split';
+  segment_ids?: number[];
+  into?: number;
+  segment_id?: number;
+  pieces?: number;
+  new_segment_ids?: number[];
+  reason?: string | null;
+  round?: number;
+}
+
+export type LlmRenderSegmentationStopReason =
+  | 'good'
+  | 'no_change'
+  | 'cycle'
+  | 'max_rounds'
+  | 'error';
+
 export interface LlmRenderResponse {
   xyzrgb_content: string;
   voxel_count: number;
   segment_count: number;
   model: string;
   applied_rules: LlmRenderAppliedRule[];
+  segmentation_adjustments?: LlmRenderSegmentationAdjustment[];
+  segmentation_rounds?: number;
+  segmentation_stop_reason?: LlmRenderSegmentationStopReason | null;
   preview_image?: string | null;
   reference_images: Record<'front' | 'back' | 'side' | 'top', string>;
   message: string;
@@ -47,7 +71,7 @@ export class LlmRenderApiService {
   static async llmRender(
     generationId: string,
     xyzrgbUrl: string,
-    referenceImageUrl: string,
+    referenceImageUrls: string | string[],
     prompt?: string,
     accessToken?: string
   ): Promise<LlmRenderResponse> {
@@ -64,7 +88,9 @@ export class LlmRenderApiService {
     const requestBody: LlmRenderRequest = {
       generation_id: generationId,
       xyzrgb_url: xyzrgbUrl,
-      reference_image_url: referenceImageUrl,
+      reference_image_urls: Array.isArray(referenceImageUrls)
+        ? referenceImageUrls
+        : [referenceImageUrls],
       prompt,
     };
 
@@ -90,7 +116,7 @@ export class LlmRenderApiService {
   static async llmRenderStream(
     generationId: string,
     xyzrgbUrl: string,
-    referenceImageUrl: string,
+    referenceImageUrls: string | string[],
     prompt?: string,
     accessToken?: string,
     onThinking?: (delta: string) => void,
@@ -106,7 +132,9 @@ export class LlmRenderApiService {
       body: JSON.stringify({
         generation_id: generationId,
         xyzrgb_url: xyzrgbUrl,
-        reference_image_url: referenceImageUrl,
+        reference_image_urls: Array.isArray(referenceImageUrls)
+          ? referenceImageUrls
+          : [referenceImageUrls],
         prompt,
       } satisfies LlmRenderRequest),
     });

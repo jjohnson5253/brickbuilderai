@@ -85,7 +85,7 @@ curl -X POST http://localhost:8002/promptEditModel \
   -o edited_model_response.json
 ```
 #### /llmRender
-Recolor an existing xyzrgb file to better match a reference image. Requires
+Recolor an existing xyzrgb file to better match one or more reference images. Requires
 `OPENAI_API_KEY` and, when the generation does not already have all directional
 references, `FAL_KEY`.
 
@@ -96,13 +96,24 @@ watershed that separates thick cores joined by thin necks, so same-coloured part
 a head and torso still split). Small high-contrast features (eyes, mouth, buttons, logos,
 jewelry, shirt patterns) are protected from speckle removal, and same-coloured pieces of
 one feature (both eyes, all buttons) share a single segment; the scene summary flags these
-with `is_detail` and `island_count`. A labelled multi-view preview of those
-segments plus the primary reference image is sent to OpenAI, which returns one colour per segment.
-Before rendering, the endpoint loads any saved front, back, side, and top reference
-images for the generation. Missing views are created with Nano Banana Lite Edit,
-copied to Supabase Storage, saved in `generations.reference_images`, and included in
-the OpenAI request.
-`applied_rules` in the response lists each segment's inferred part name, reason and colour.
+with `is_detail` and `island_count`. Unless `check_segmentation` is false, the LLM then
+reviews the labelled preview against the reference image(s) and may merge segments that
+are fragments of one part or ask for a segment spanning several parts to be re-split
+deterministically. This runs as a verification loop: after each round's adjustments the
+preview is re-rendered and reviewed again (with the earlier rounds' changes in the prompt)
+until the LLM returns `good`, a round changes nothing, the segmentation repeats an earlier
+one, or `max_segmentation_rounds` (default 3, max 5) is reached. Applied changes are
+reported in `segmentation_adjustments` (each tagged with its `round`; segment ids there
+refer to the segmentation the LLM reviewed in that round), alongside `segmentation_rounds`
+and `segmentation_stop_reason` (`good` | `no_change` | `cycle` | `max_rounds` | `error`).
+Before rendering, the endpoint also loads any saved front, back, side, and top reference
+images for the generation. Missing views are created with Nano Banana Lite Edit, copied to
+Supabase Storage, saved in `generations.reference_images`, and included alongside the
+request's reference image(s). A labelled multi-view preview of the final segments plus
+every reference image (request-supplied and generated) is sent to OpenAI, which returns
+one colour per segment. `applied_rules` in the response lists each segment's inferred part
+name, reason and colour. Reference images can be given as `reference_image_url`,
+`reference_image_urls` (max 4 combined), or both.
 
 Optional env vars: `OPENAI_LLM_RENDER_MODEL`, `OPENAI_LLM_RENDER_REASONING_EFFORT`
 (default `medium`), `OPENAI_LLM_RENDER_TIMEOUT_SECONDS` (default `240`).
@@ -113,9 +124,11 @@ curl -X POST http://localhost:8002/llmRender \
   -d '{
     "generation_id": "00000000-0000-0000-0000-000000000000",
     "xyzrgb_url": "https://example.com/model.xyzrgb",
-    "reference_image_url": "https://example.com/reference.png",
+    "reference_image_urls": ["https://example.com/reference.png", "https://example.com/reference-side.png"],
     "prompt": "match the character colors, preserving the model shape",
     "max_segments": 16,
+    "check_segmentation": true,
+    "max_segmentation_rounds": 3,
     "include_preview": false
   }' \
   -o llm_render_response.json

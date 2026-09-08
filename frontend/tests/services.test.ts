@@ -7,7 +7,7 @@ import { GetGenerationsByImageApiService } from '../src/services/getGenerationsB
 import { GetPriceApiService } from '../src/services/getPriceApi';
 import { GetUserGenerationsApiService } from '../src/services/getUserGenerationsApi';
 import { LdrToMpdApiService } from '../src/services/ldrToMpdApi';
-import { LlmRenderApiService } from '../src/services/llmRenderApi';
+import { LlmRenderApiService, type LlmRenderResponse } from '../src/services/llmRenderApi';
 import { PromptEditModelApiService } from '../src/services/promptEditModelApi';
 import { ResizeModelApiService } from '../src/services/resizeModelApi';
 import { SendWaitlistEmailApiService } from '../src/services/sendWaitlistEmailApi';
@@ -43,7 +43,7 @@ describe('JSON API service contracts', () => {
     ['model', () => UpdateModelApiService.updateModel('g1', '0 0 0', 'tok'), '/updateModel', { generation_id: 'g1', xyzrgb_content: '0 0 0' }, { generation_id: 'g1', success: true }],
     ['username', () => UpdateUsernameApiService.updateUsername('builder', 'tok'), '/updateUsername', { username: 'builder' }, { username: 'builder' }],
     ['ldr', () => LdrToMpdApiService.convertLdrToMpd('ldr', 'castle', 'tok'), '/ldrToMpd', { ldr_content: 'ldr', model_name: 'castle' }, { mpd_content: 'mpd', message: 'ok' }],
-    ['llm render', () => LlmRenderApiService.llmRender('generation', 'xyz', 'image', 'paint', 'tok'), '/llmRender', { generation_id: 'generation', xyzrgb_url: 'xyz', reference_image_url: 'image', prompt: 'paint' }, { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], reference_images: {}, message: 'ok' }],
+    ['llm render', () => LlmRenderApiService.llmRender('generation', 'xyz', ['image', 'image2'], 'paint', 'tok'), '/llmRender', { generation_id: 'generation', xyzrgb_url: 'xyz', reference_image_urls: ['image', 'image2'], prompt: 'paint' }, { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], reference_images: {}, message: 'ok' }],
   ];
 
   it.each(cases)('%s sends the documented request and returns JSON', async (_name, invoke, endpoint, body, result) => {
@@ -84,23 +84,39 @@ describe('JSON API service contracts', () => {
   });
 
   it('streams LLM brick-design thinking before returning the result', async () => {
-    const result = { xyzrgb_content: 'xyz', voxel_count: 1, segment_count: 1, model: 'm', applied_rules: [], message: 'ok' };
+    const result: LlmRenderResponse = {
+      xyzrgb_content: 'xyz',
+      voxel_count: 1,
+      segment_count: 1,
+      model: 'm',
+      applied_rules: [],
+      segmentation_adjustments: [{ action: 'merge', segment_ids: [1, 2], into: 1, round: 1 }],
+      segmentation_rounds: 2,
+      segmentation_stop_reason: 'good',
+      message: 'ok',
+    };
     const thinking = vi.fn();
+    const referenceImages = ['image', 'image-side'];
     const stream = sse([
+      'data: {"type":"thinking","delta":"Checking segmentation (round 1/3)...\\n"}\n\n',
       'data: {"type":"thinking","delta":"I see a red "}\n',
       '\ndata: {"type":"thinking","delta":"torso."}\n\n',
       `data: ${JSON.stringify({ type: 'result', data: result })}\n\n`,
     ]);
     vi.mocked(fetch).mockResolvedValueOnce({ ...ok({}), body: stream } as unknown as Response);
 
-    await expect(LlmRenderApiService.llmRenderStream('generation', 'xyz', 'image', 'paint', 'tok', thinking)).resolves.toEqual(result);
-    expect(thinking.mock.calls.flat()).toEqual(['I see a red ', 'torso.']);
-    expect(String(vi.mocked(fetch).mock.calls[0][0]).endsWith('/llmRender/stream')).toBe(true);
-    expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1] as RequestInit).body as string)).toEqual({
-      generation_id: 'generation',
-      xyzrgb_url: 'xyz',
-      reference_image_url: 'image',
-      prompt: 'paint',
+    await expect(LlmRenderApiService.llmRenderStream('generation', 'xyz', referenceImages, 'paint', 'tok', thinking)).resolves.toEqual(result);
+    expect(thinking.mock.calls.flat()).toEqual(['Checking segmentation (round 1/3)...\n', 'I see a red ', 'torso.']);
+    const [url, options] = vi.mocked(fetch).mock.calls[0];
+    expect(String(url).endsWith('/llmRender/stream')).toBe(true);
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({
+        generation_id: 'generation',
+        xyzrgb_url: 'xyz',
+        reference_image_urls: referenceImages,
+        prompt: 'paint',
+      }),
     });
 
     vi.mocked(fetch).mockResolvedValueOnce({
