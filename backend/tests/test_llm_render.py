@@ -992,6 +992,95 @@ def test_segmentation_review_prompt_carries_round_history(monkeypatch):
     assert not any("follow-up review" in rule for rule in user_text["rules"])
 
 
+def test_model_provider_routes_claude_to_anthropic():
+    module = importlib.import_module("src.requests.llmRender")
+
+    assert module._model_provider("claude-fable-5") == "anthropic"
+    assert module._model_provider("Claude-Opus-4.7") == "anthropic"
+    assert module._model_provider("gpt-5.6-sol") == "openai"
+    assert module._model_provider("") == "openai"
+
+
+def test_segmentation_review_uses_anthropic_for_claude_model(monkeypatch):
+    module = importlib.import_module("src.requests.llmRender")
+    captured = {}
+
+    async def fake_post_anthropic(payload):
+        captured["payload"] = payload
+        return {
+            "content": [
+                {"type": "tool_use", "name": "voxel_segmentation_review", "input": GOOD_REVIEW}
+            ]
+        }
+
+    async def fail_post_openai(payload, on_thinking=None, delta_extractor=None):
+        raise AssertionError("OpenAI path should not be used for a claude model")
+
+    monkeypatch.setattr(module, "_post_anthropic_messages", fake_post_anthropic)
+    monkeypatch.setattr(module, "_post_openai_responses", fail_post_openai)
+
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    scene_summary = _build_scene_summary(voxels, segment_ids)
+
+    review = asyncio.run(
+        module._call_openai_for_segmentation_review(
+            scene_summary=scene_summary,
+            reference_image_urls=["https://example.com/a.png"],
+            voxel_preview_image_url="data:image/png;base64,AAAA",
+            prompt=None,
+            model="claude-fable-5",
+        )
+    )
+
+    assert review == GOOD_REVIEW
+    assert captured["payload"]["model"] == "claude-fable-5"
+    assert captured["payload"]["tool_choice"] == {"type": "tool", "name": "voxel_segmentation_review"}
+    assert captured["payload"]["messages"][0]["content"][0]["type"] == "text"
+
+
+def test_call_for_assignments_uses_anthropic_for_claude_model(monkeypatch):
+    module = importlib.import_module("src.requests.llmRender")
+    captured = {}
+    fake_assignments = {
+        "subject": "a robot",
+        "assignments": [{"segment_id": 1, "part": "body", "reason": "r", "color": [1, 2, 3]}],
+    }
+
+    async def fake_post_anthropic(payload):
+        captured["payload"] = payload
+        return {
+            "content": [
+                {"type": "tool_use", "name": "voxel_segment_colors", "input": fake_assignments}
+            ]
+        }
+
+    async def fail_post_openai(payload, on_thinking=None, delta_extractor=None):
+        raise AssertionError("OpenAI path should not be used for a claude model")
+
+    monkeypatch.setattr(module, "_post_anthropic_messages", fake_post_anthropic)
+    monkeypatch.setattr(module, "_post_openai_responses", fail_post_openai)
+
+    voxels = _two_part_model()
+    segment_ids = _segment_voxels(voxels, max_segments=16)
+    scene_summary = _build_scene_summary(voxels, segment_ids)
+
+    assignments, subject = asyncio.run(
+        module._call_openai_for_assignments(
+            scene_summary=scene_summary,
+            reference_image_urls=["https://example.com/a.png"],
+            voxel_preview_image_url="data:image/png;base64,AAAA",
+            prompt=None,
+            model="claude-fable-5",
+        )
+    )
+
+    assert subject == "a robot"
+    assert assignments == fake_assignments["assignments"]
+    assert captured["payload"]["model"] == "claude-fable-5"
+    assert captured["payload"]["tool_choice"] == {"type": "tool", "name": "voxel_segment_colors"}
+
+
 def test_llm_render_reports_verification_loop_outcome(monkeypatch):
     module = importlib.import_module("src.requests.llmRender")
     generation_id = "d7f8fdb4-b010-4ef5-bd68-069aa20f96a4"

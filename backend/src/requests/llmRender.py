@@ -31,9 +31,18 @@ logger = logging.getLogger(__name__)
 MAX_XYZRGB_BYTES = 8 * 1024 * 1024
 MAX_VOXELS = 350_000
 MAX_GRID_CELLS = 60_000_000
+# The model used for /llmRender is swappable per-request (LlmRenderRequest.model)
+# or via env var, and can name either an OpenAI or an Anthropic model -
+# _model_provider() below decides which API a given model name is sent to.
 DEFAULT_MODEL = os.getenv("OPENAI_LLM_RENDER_MODEL", "gpt-5.6-sol")
 DEFAULT_REASONING_EFFORT = os.getenv("OPENAI_LLM_RENDER_REASONING_EFFORT", "medium")
 OPENAI_TIMEOUT_SECONDS = float(os.getenv("OPENAI_LLM_RENDER_TIMEOUT_SECONDS", "240"))
+
+ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_MAX_TOKENS = int(os.getenv("ANTHROPIC_LLM_RENDER_MAX_TOKENS", "8192"))
+ANTHROPIC_TIMEOUT_SECONDS = float(
+    os.getenv("ANTHROPIC_LLM_RENDER_TIMEOUT_SECONDS", str(OPENAI_TIMEOUT_SECONDS))
+)
 
 DEFAULT_MAX_SEGMENTS = 16
 MAX_SEGMENTS_LIMIT = 24
@@ -1191,11 +1200,125 @@ async def _post_openai_responses(
     return response_json
 
 
+def _model_provider(model: str) -> str:
+    """Which API a model name should be sent to. Anthropic models are named
+    "claude-..." (e.g. "claude-fable-5"); everything else is assumed to be an
+    OpenAI model. This is the single place that decides where a `model`
+    string (from the request or OPENAI_LLM_RENDER_MODEL) is routed, so
+    swapping models is just a matter of changing that string."""
+    return "anthropic" if (model or "").strip().lower().startswith("claude") else "openai"
+
+
 def _reference_image_content(reference_image_urls: List[str]) -> List[Dict[str, Any]]:
     return [
         {"type": "input_image", "image_url": url, "detail": "high"}
         for url in reference_image_urls
     ]
+
+
+def _reference_image_content_anthropic(reference_image_urls: List[str]) -> List[Dict[str, Any]]:
+    return [
+        {"type": "image", "source": {"type": "url", "url": url}}
+        for url in reference_image_urls
+    ]
+
+
+def _anthropic_tool_payload(
+    *,
+    model: str,
+    system_prompt: str,
+    user_text: str,
+    reference_image_urls: List[str],
+    voxel_preview_image_url: str,
+    schema: Dict[str, Any],
+    schema_name: str,
+) -> Dict[str, Any]:
+    """Build an Anthropic Messages API payload equivalent to the OpenAI
+    Responses payloads below: the schema is enforced by forcing a single tool
+    call, so the parsed result arrives as that tool call's `input` rather than
+    JSON embedded in free text."""
+    return {
+        "model": model,
+        "max_tokens": ANTHROPIC_MAX_TOKENS,
+        "system": system_prompt,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_text},
+                    *_reference_image_content_anthropic(reference_image_urls),
+                    {"type": "image", "source": {"type": "url", "url": voxel_preview_image_url}},
+                ],
+            }
+        ],
+        "tools": [
+            {
+                "name": schema_name,
+                "description": f"Return the {schema_name} result as structured JSON.",
+                "input_schema": schema,
+            }
+        ],
+        "tool_choice": {"type": "tool", "name": schema_name},
+    }
+
+
+def _extract_anthropic_tool_json(response_json: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
+    for block in response_json.get("content", []):
+        if block.get("type") == "tool_use" and block.get("name") == tool_name:
+            result = block.get("input")
+            if isinstance(result, dict):
+                return result
+    raise HTTPException(
+        status_code=502, detail="Anthropic response did not contain the expected tool call"
+    )
+
+
+async def _post_anthropic_messages(payload: Dict[str, Any]) -> Dict[str, Any]:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY not configured. Set ANTHROPIC_API_KEY and restart the backend server.",
+        )
+
+    timeout = httpx.Timeout(ANTHROPIC_TIMEOUT_SECONDS, connect=15.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": ANTHROPIC_API_VERSION,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("Anthropic llmRender request failed: %s", e.response.text)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Anthropic request failed: HTTP {e.response.status_code}",
+        )
+    except httpx.TimeoutException as e:
+        logger.error(
+            "Anthropic llmRender request timed out after %ss (%s)",
+            ANTHROPIC_TIMEOUT_SECONDS,
+            type(e).__name__,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"Anthropic request timed out after {ANTHROPIC_TIMEOUT_SECONDS:.0f}s "
+                f"(model={payload.get('model')}). Raise ANTHROPIC_LLM_RENDER_TIMEOUT_SECONDS."
+            ),
+        )
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Anthropic request failed: {type(e).__name__}: {e}".rstrip(": "),
+        )
 
 
 def _reference_images_description(reference_image_urls: List[str]) -> str:
@@ -1251,38 +1374,53 @@ async def _call_openai_for_assignments(
         "scene_summary": scene_summary,
     }
 
-    payload = {
-        "model": model,
-        "input": [
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": system_prompt}],
+    if _model_provider(model) == "anthropic":
+        if on_thinking:
+            await on_thinking("Waiting for the model to assign colors...\n")
+        payload = _anthropic_tool_payload(
+            model=model,
+            system_prompt=system_prompt,
+            user_text=json.dumps(user_prompt),
+            reference_image_urls=reference_image_urls,
+            voxel_preview_image_url=voxel_preview_image_url,
+            schema=_assignment_schema(segment_ids),
+            schema_name="voxel_segment_colors",
+        )
+        response_json = await _post_anthropic_messages(payload)
+        parsed = _extract_anthropic_tool_json(response_json, "voxel_segment_colors")
+    else:
+        payload = {
+            "model": model,
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": system_prompt}],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": json.dumps(user_prompt)},
+                        *_reference_image_content(reference_image_urls),
+                        {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
+                    ],
+                },
+            ],
+            "reasoning": {"effort": DEFAULT_REASONING_EFFORT, "summary": "auto"},
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "voxel_segment_colors",
+                    "schema": _assignment_schema(segment_ids),
+                }
             },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": json.dumps(user_prompt)},
-                    *_reference_image_content(reference_image_urls),
-                    {"type": "input_image", "image_url": voxel_preview_image_url, "detail": "high"},
-                ],
-            },
-        ],
-        "reasoning": {"effort": DEFAULT_REASONING_EFFORT, "summary": "auto"},
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "voxel_segment_colors",
-                "schema": _assignment_schema(segment_ids),
-            }
-        },
-        "stream": True,
-    }
+            "stream": True,
+        }
 
-    response_json = await _post_openai_responses(
-        payload, on_thinking=on_thinking, delta_extractor=_extract_visible_text_delta
-    )
+        response_json = await _post_openai_responses(
+            payload, on_thinking=on_thinking, delta_extractor=_extract_visible_text_delta
+        )
+        parsed = _extract_json_object(_extract_response_text(response_json))
 
-    parsed = _extract_json_object(_extract_response_text(response_json))
     assignments = parsed.get("assignments", [])
     if not isinstance(assignments, list):
         raise HTTPException(status_code=502, detail="OpenAI assignments must be an array")
@@ -1397,6 +1535,19 @@ async def _call_openai_for_segmentation_review(
         "optional_user_prompt": prompt,
         "scene_summary": scene_summary,
     }
+
+    if _model_provider(model) == "anthropic":
+        payload = _anthropic_tool_payload(
+            model=model,
+            system_prompt=system_prompt,
+            user_text=json.dumps(user_prompt),
+            reference_image_urls=reference_image_urls,
+            voxel_preview_image_url=voxel_preview_image_url,
+            schema=_segmentation_review_schema(segment_ids),
+            schema_name="voxel_segmentation_review",
+        )
+        response_json = await _post_anthropic_messages(payload)
+        return _extract_anthropic_tool_json(response_json, "voxel_segmentation_review")
 
     payload = {
         "model": model,
