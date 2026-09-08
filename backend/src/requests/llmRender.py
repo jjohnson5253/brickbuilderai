@@ -1281,16 +1281,23 @@ async def _post_anthropic_messages(payload: Dict[str, Any]) -> Dict[str, Any]:
             detail="ANTHROPIC_API_KEY not configured. Set ANTHROPIC_API_KEY and restart the backend server.",
         )
 
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": ANTHROPIC_API_VERSION,
+        "Content-Type": "application/json",
+    }
+    # Workspace-scoped API keys require this header to say which workspace to
+    # bill/run against.
+    workspace_id = os.getenv("ANTHROPIC_WORKSPACE_ID")
+    if workspace_id:
+        headers["anthropic-workspace-id"] = workspace_id
+
     timeout = httpx.Timeout(ANTHROPIC_TIMEOUT_SECONDS, connect=15.0)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": ANTHROPIC_API_VERSION,
-                    "Content-Type": "application/json",
-                },
+                headers=headers,
                 json=payload,
             )
             response.raise_for_status()
