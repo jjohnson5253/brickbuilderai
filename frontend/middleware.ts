@@ -173,7 +173,7 @@ export default async function middleware(request: Request): Promise<Response | u
     status: 303,
     headers: {
       'Cache-Control': 'no-store',
-      Location: '/',
+      Location: new URL('/', request.url).toString(),
       'Set-Cookie': `${AUTH_COOKIE}=${expectedToken}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_SECONDS}`,
     },
   });

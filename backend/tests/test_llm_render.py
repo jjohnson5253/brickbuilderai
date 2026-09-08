@@ -1,4 +1,7 @@
+import asyncio
 import base64
+import importlib
+import json
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -15,8 +18,13 @@ from src.requests.llmRender import (
     _assignment_schema,
     _build_scene_summary,
     _build_voxel_preview_data_url,
+    _extract_visible_text_delta,
     _geometric_regions,
     _load_font,
+    LlmRenderResponse,
+    LlmRenderRequest,
+    llm_render,
+    llm_render_stream,
     _perceptual_colors,
     _project_segments,
     _quantize_colors,
@@ -398,6 +406,96 @@ def test_assignment_schema_requires_every_segment():
     assert assignments["minItems"] == 3
     assert assignments["maxItems"] == 3
     assert assignments["items"]["properties"]["segment_id"]["enum"] == [1, 2, 3]
+
+
+def test_extract_visible_text_delta_returns_all_openai_text():
+    assert _extract_visible_text_delta(
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "delta": "The reference has a red torso.",
+        }
+    ) == "The reference has a red torso."
+    assert _extract_visible_text_delta(
+        {
+            "type": "response.output_text.delta",
+            "delta": '{"subject":"figure",',
+        }
+    ) == '{"subject":"figure",'
+    assert _extract_visible_text_delta(
+        {"type": "response.reasoning_summary_text.delta", "delta": 3}
+    ) is None
+    assert _extract_visible_text_delta(
+        {"type": "response.reasoning_summary_text.done", "text": "done"}
+    ) is None
+
+
+def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
+    async def fake_llm_render(_request, _auth_info, on_thinking):
+        await on_thinking("I see separate arms and a torso.")
+        return LlmRenderResponse(
+            xyzrgb_content="0 0 0 255 0 0\n",
+            voxel_count=1,
+            segment_count=1,
+            model="test-model",
+            applied_rules=[],
+        )
+
+    module = importlib.import_module("src.requests.llmRender")
+    monkeypatch.setattr(module, "llm_render", fake_llm_render)
+
+    async def collect_events():
+        return [event async for event in llm_render_stream(object(), {})]
+
+    events = [
+        json.loads(event.removeprefix("data: "))
+        for event in asyncio.run(collect_events())
+    ]
+    assert events[0] == {"type": "thinking", "delta": "I see separate arms and a torso."}
+    assert events[1]["type"] == "result"
+    assert events[1]["data"]["xyzrgb_content"] == "0 0 0 255 0 0\n"
+
+
+def test_llm_render_reports_progress_before_model_thinking(monkeypatch):
+    module = importlib.import_module("src.requests.llmRender")
+    voxel = {"x": 0, "y": 0, "z": 0, "r": 0, "g": 0, "b": 0}
+    monkeypatch.setattr(module, "_fetch_text_url", lambda *_args: asyncio.sleep(0, result="xyz"))
+    monkeypatch.setattr(module, "_parse_xyzrgb", lambda _content: [voxel])
+    monkeypatch.setattr(module, "_segment_voxels", lambda *_args: np.array([1]))
+    monkeypatch.setattr(
+        module,
+        "_build_scene_summary",
+        lambda *_args: {"segments": [{"id": 1}]},
+    )
+    monkeypatch.setattr(module, "_build_voxel_preview_data_url", lambda *_args: "data:image/png;base64,x")
+
+    async def fake_assignments(**kwargs):
+        await kwargs["on_thinking"]("The main body should use red bricks.")
+        return (
+            [{"segment_id": 1, "part": "body", "reason": "reference", "color": [255, 0, 0]}],
+            "model",
+        )
+
+    monkeypatch.setattr(module, "_call_openai_for_assignments", fake_assignments)
+    monkeypatch.setattr(module, "track_api_call", lambda **_kwargs: None)
+    updates = []
+
+    async def collect_progress(delta):
+        updates.append(delta)
+
+    request = LlmRenderRequest(
+        xyzrgb_url="https://example.com/model.xyzrgb",
+        reference_image_url="https://example.com/reference.png",
+    )
+    result = asyncio.run(llm_render(request, {}, collect_progress))
+
+    assert updates == [
+        "Loading model...\n",
+        "Analyzing voxel geometry...\n",
+        "Rendering model preview...\n",
+        "Comparing with reference image...\n\n",
+        "The main body should use red bricks.",
+    ]
+    assert result.xyzrgb_content == "0 0 0 255 0 0\n"
 
 
 def test_apply_assignments_recolors_segments_and_ignores_invalid_entries():

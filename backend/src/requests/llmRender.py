@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import heapq
 import json
@@ -6,7 +7,7 @@ import os
 import re
 from collections import defaultdict
 from io import BytesIO
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import httpx
 import numpy as np
@@ -968,6 +969,16 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     return parsed
 
 
+def _extract_visible_text_delta(event: Dict[str, Any]) -> Optional[str]:
+    if event.get("type") not in {
+        "response.reasoning_summary_text.delta",
+        "response.output_text.delta",
+    }:
+        return None
+    delta = event.get("delta")
+    return delta if isinstance(delta, str) and delta else None
+
+
 def _assignment_schema(segment_ids: List[int]) -> Dict[str, Any]:
     return {
         "type": "object",
@@ -1006,6 +1017,7 @@ async def _call_openai_for_assignments(
     voxel_preview_image_url: str,
     prompt: Optional[str],
     model: str,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> Tuple[List[Dict[str, Any]], str]:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -1063,7 +1075,7 @@ async def _call_openai_for_assignments(
                 ],
             },
         ],
-        "reasoning": {"effort": DEFAULT_REASONING_EFFORT},
+        "reasoning": {"effort": DEFAULT_REASONING_EFFORT, "summary": "auto"},
         "text": {
             "format": {
                 "type": "json_schema",
@@ -1071,20 +1083,41 @@ async def _call_openai_for_assignments(
                 "schema": _assignment_schema(segment_ids),
             }
         },
+        "stream": True,
     }
 
     timeout = httpx.Timeout(OPENAI_TIMEOUT_SECONDS, connect=15.0)
+    response_json: Optional[Dict[str, Any]] = None
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 "https://api.openai.com/v1/responses",
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
-            )
-            response.raise_for_status()
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data == "[DONE]":
+                        continue
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = _extract_visible_text_delta(event)
+                    if delta and on_thinking:
+                        await on_thinking(delta)
+                    if event.get("type") == "response.completed" and isinstance(event.get("response"), dict):
+                        response_json = event["response"]
+                    elif event.get("type") == "error":
+                        message = (event.get("error") or {}).get("message", "OpenAI stream failed")
+                        raise HTTPException(status_code=502, detail=message)
     except httpx.HTTPStatusError as e:
         logger.error("OpenAI llmRender request failed: %s", e.response.text)
         raise HTTPException(
@@ -1112,7 +1145,8 @@ async def _call_openai_for_assignments(
             detail=f"OpenAI request failed: {type(e).__name__}: {e}".rstrip(": "),
         )
 
-    response_json = response.json()
+    if response_json is None:
+        raise HTTPException(status_code=502, detail="OpenAI stream ended without a completed response")
     if response_json.get("status") == "incomplete":
         reason = (response_json.get("incomplete_details") or {}).get("reason", "unknown")
         raise HTTPException(status_code=502, detail=f"OpenAI response was incomplete: {reason}")
@@ -1184,24 +1218,40 @@ def _serialize_xyzrgb(voxels: List[Dict[str, int]]) -> str:
     ) + "\n"
 
 
-async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderResponse:
+async def llm_render(
+    request: LlmRenderRequest,
+    auth_info: dict,
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> LlmRenderResponse:
     endpoint = "/llmRender"
     user_id = auth_info.get("user_email") or auth_info.get("user_id") or "anonymous"
     model = request.model or DEFAULT_MODEL
     max_segments = request.max_segments or DEFAULT_MAX_SEGMENTS
 
     try:
+        if on_thinking:
+            await on_thinking("Loading model...\n")
         xyzrgb_content = await _fetch_text_url(request.xyzrgb_url, MAX_XYZRGB_BYTES)
+
+        if on_thinking:
+            await on_thinking("Analyzing voxel geometry...\n")
         voxels = _parse_xyzrgb(xyzrgb_content)
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
+
+        if on_thinking:
+            await on_thinking("Rendering model preview...\n")
         voxel_preview_image_url = _build_voxel_preview_data_url(voxels, segment_ids)
+
+        if on_thinking:
+            await on_thinking("Comparing with reference image...\n\n")
         assignments, subject = await _call_openai_for_assignments(
             scene_summary=scene_summary,
             reference_image_url=request.reference_image_url,
             voxel_preview_image_url=voxel_preview_image_url,
             prompt=request.prompt,
             model=model,
+            on_thinking=on_thinking,
         )
         recolored, applied = _apply_assignments(voxels, segment_ids, assignments)
 
@@ -1244,3 +1294,42 @@ async def llm_render(request: LlmRenderRequest, auth_info: dict) -> LlmRenderRes
             user_id=user_id,
         )
         raise HTTPException(status_code=500, detail=f"llmRender failed: {e}")
+
+
+async def llm_render_stream(
+    request: LlmRenderRequest,
+    auth_info: dict,
+) -> AsyncIterator[str]:
+    queue: asyncio.Queue[Optional[Dict[str, Any]]] = asyncio.Queue()
+
+    async def on_thinking(delta: str) -> None:
+        await queue.put({"type": "thinking", "delta": delta})
+
+    async def run() -> None:
+        try:
+            result = await llm_render(request, auth_info, on_thinking)
+            data = result.model_dump() if hasattr(result, "model_dump") else result.dict()
+            await queue.put({"type": "result", "data": data})
+        except HTTPException as exc:
+            await queue.put({"type": "error", "detail": exc.detail})
+        except Exception:
+            logger.exception("llmRender stream failed")
+            await queue.put({"type": "error", "detail": "LLM render failed"})
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(run())
+    try:
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+        await task
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass

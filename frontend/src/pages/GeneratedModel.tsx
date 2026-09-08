@@ -38,6 +38,7 @@ import { UpdateModelApiService, UpdateModelResponse } from "../services/updateMo
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
 import { trackGeneratedModelAiEditClick } from "../utils/generatedModelAnalytics";
 import { getGeneratedModelPath } from "../utils/generationRoutes";
+import { LlmDesignNotes } from "../components/LlmDesignNotes";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
@@ -249,6 +250,7 @@ export default function GeneratedModel() {
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
   const [isLlmEditing, setIsLlmEditing] = React.useState(false);
   const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
+  const [llmThinking, setLlmThinking] = React.useState("");
   
   // Voxel editor state
   const [showVoxelEditor, setShowVoxelEditor] = React.useState(false);
@@ -1579,6 +1581,7 @@ export default function GeneratedModel() {
 
     setIsLlmEditing(true);
     setLlmEditError(null);
+    setLlmThinking("");
 
     try {
       let referenceImageUrl = processedImageUrl;
@@ -1594,11 +1597,12 @@ export default function GeneratedModel() {
         throw new Error('No reference image found for this generation');
       }
 
-      const llmResponse = await LlmRenderApiService.llmRender(
+      const llmResponse = await LlmRenderApiService.llmRenderStream(
         xyzrgbUrl,
         referenceImageUrl,
         'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
-        accessToken || undefined
+        accessToken || undefined,
+        (delta) => setLlmThinking((current) => current + delta),
       );
 
       setXyzrgbContent(llmResponse.xyzrgb_content);
@@ -2300,6 +2304,7 @@ export default function GeneratedModel() {
                     </>
                   )}
               </button>
+              <LlmDesignNotes notes={llmThinking} />
 
               {/* Edit Model button — white with grey border, turns red on hover */}
               <button
