@@ -470,7 +470,7 @@ def test_llm_render_stream_relays_thinking_and_result(monkeypatch):
     assert events[1]["data"]["xyzrgb_content"] == "0 0 0 255 0 0\n"
 
 
-def test_llm_render_reports_progress_before_model_thinking(monkeypatch):
+def test_llm_render_streams_output_after_initial_processing(monkeypatch):
     module = importlib.import_module("src.requests.llmRender")
     generation_id = "d7f8fdb4-b010-4ef5-bd68-069aa20f96a4"
     voxel = {"x": 0, "y": 0, "z": 0, "r": 0, "g": 0, "b": 0}
@@ -523,8 +523,6 @@ def test_llm_render_reports_progress_before_model_thinking(monkeypatch):
     result = asyncio.run(llm_render(request, {}, collect_progress))
 
     assert updates == [
-        "Loading model...\n",
-        "Analyzing voxel geometry...\n",
         "Rendering model preview...\n",
         "Comparing with reference images...\n\n",
         "The main body should use red bricks.",
