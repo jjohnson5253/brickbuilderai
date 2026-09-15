@@ -12,6 +12,8 @@ describe('LlmDesignNotes', () => {
 
     expect(markup).toContain('AI output');
     expect(markup).toContain('Use red bricks for the torso.');
+    expect(markup).toContain('max-h-48');
+    expect(markup).toContain('overflow-y-auto');
   });
 
   it('renders nothing before design notes arrive', () => {

@@ -2278,6 +2278,7 @@ export default function GeneratedModel() {
           )}
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
             <div className="flex w-full flex-col gap-3 sm:w-auto">
+              <LlmDesignNotes notes={llmThinking} />
               <button
                   type="button"
                   aria-label="LLM edit model"
@@ -2300,7 +2301,6 @@ export default function GeneratedModel() {
                     </>
                   )}
               </button>
-              <LlmDesignNotes notes={llmThinking} />
 
               {/* Manual Edit button — white with grey border, turns red on hover */}
               <button
