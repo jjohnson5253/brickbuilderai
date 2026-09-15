@@ -36,8 +36,16 @@ import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
 import { UpdateModelApiService, UpdateModelResponse } from "../services/updateModelApi";
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
-import { trackGeneratedModelAiEditClick } from "../utils/generatedModelAnalytics";
+import {
+  trackGeneratedModelAiEditClick,
+  trackGeneratedModelAiReasoningSelected,
+} from "../utils/generatedModelAnalytics";
 import { getGeneratedModelPath } from "../utils/generationRoutes";
+import {
+  getLlmEditMaxSegmentationRounds,
+  LLM_EDIT_REASONING_OPTIONS,
+  type LlmEditReasoningLevel,
+} from "../utils/llmEditReasoning";
 import { LlmDesignNotes } from "../components/LlmDesignNotes";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
@@ -248,6 +256,7 @@ export default function GeneratedModel() {
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
   const [editPreviewImageUrl, setEditPreviewImageUrl] = React.useState<string | null>(null);
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
+  const [llmEditReasoningLevel, setLlmEditReasoningLevel] = React.useState<LlmEditReasoningLevel>("high");
   const [isLlmEditing, setIsLlmEditing] = React.useState(false);
   const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
   const [llmThinking, setLlmThinking] = React.useState("");
@@ -1579,6 +1588,7 @@ export default function GeneratedModel() {
     setLlmThinking("");
 
     try {
+      const maxSegmentationRounds = getLlmEditMaxSegmentationRounds(llmEditReasoningLevel);
       // Give the LLM every available reference image (processed + original) so
       // it can cross-check the segmentation and colors between them.
       const referenceImageUrls: string[] = processedImageUrl ? [processedImageUrl] : [];
@@ -1603,6 +1613,7 @@ export default function GeneratedModel() {
         'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
         accessToken || undefined,
         (delta) => setLlmThinking((current) => current + delta),
+        maxSegmentationRounds,
       );
 
       setXyzrgbContent(llmResponse.xyzrgb_content);
@@ -1625,6 +1636,7 @@ export default function GeneratedModel() {
   }, [
     accessToken,
     currentGenerationId,
+    llmEditReasoningLevel,
     handleUpdatedModelStarted,
     processedImageUrl,
     xyzrgbUrl,
@@ -2278,6 +2290,41 @@ export default function GeneratedModel() {
           )}
           <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
             <div className="flex w-full flex-col gap-3 sm:w-auto">
+              <div className="w-full rounded-2xl border border-slate-200 bg-white/90 p-2 shadow-sm sm:min-w-44">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                    AI reasoning
+                  </span>
+                  <div className="inline-flex rounded-full bg-slate-100 p-1">
+                    {LLM_EDIT_REASONING_OPTIONS.map((option) => {
+                      const isSelected = llmEditReasoningLevel === option.value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          aria-pressed={isSelected}
+                          disabled={isLlmEditing || isSavePolling || xyzrgbLoading}
+                          onClick={() => {
+                            setLlmEditReasoningLevel(option.value);
+                            trackGeneratedModelAiReasoningSelected(
+                              currentGenerationId,
+                              isDemoModel,
+                              option.value,
+                            );
+                          }}
+                          className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+                            isSelected
+                              ? 'bg-slate-900 text-white shadow-sm'
+                              : 'text-slate-600 hover:text-slate-900'
+                          } disabled:cursor-not-allowed disabled:opacity-50`}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
               <button
                   type="button"
                   aria-label="LLM edit model"
@@ -2300,7 +2347,7 @@ export default function GeneratedModel() {
                     </>
                   )}
               </button>
-              <LlmDesignNotes notes={llmThinking} />
+              <LlmDesignNotes notes={llmThinking} isThinking={isLlmEditing} />
 
               {/* Manual Edit button — white with grey border, turns red on hover */}
               <button

@@ -10,11 +10,18 @@ describe('LlmDesignNotes', () => {
       <LlmDesignNotes notes="Use red bricks for the torso." />,
     );
 
-    expect(markup).toContain('AI output');
     expect(markup).toContain('Use red bricks for the torso.');
+    expect(markup).not.toContain('Brickbuilder AI thinking');
   });
 
   it('renders nothing before design notes arrive', () => {
     expect(renderToStaticMarkup(<LlmDesignNotes notes="" />)).toBe('');
+  });
+
+  it('shows the Brickbuilder AI thinking state until streamed notes arrive', () => {
+    const markup = renderToStaticMarkup(<LlmDesignNotes notes="" isThinking />);
+
+    expect(markup).toContain('Brickbuilder AI thinking');
+    expect(markup).toContain('thinking-dot');
   });
 });
