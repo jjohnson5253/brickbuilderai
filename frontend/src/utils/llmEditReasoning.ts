@@ -1,5 +1,7 @@
 export type LlmEditReasoningLevel = 'low' | 'medium' | 'high';
 
+export const DEFAULT_LLM_EDIT_REASONING_LEVEL: LlmEditReasoningLevel = 'low';
+
 export const LLM_EDIT_REASONING_OPTIONS: Array<{
   label: string;
   value: LlmEditReasoningLevel;

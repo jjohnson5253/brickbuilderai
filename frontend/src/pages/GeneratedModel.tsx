@@ -42,6 +42,7 @@ import {
 } from "../utils/generatedModelAnalytics";
 import { getGeneratedModelPath } from "../utils/generationRoutes";
 import {
+  DEFAULT_LLM_EDIT_REASONING_LEVEL,
   getLlmEditMaxSegmentationRounds,
   type LlmEditReasoningLevel,
 } from "../utils/llmEditReasoning";
@@ -256,7 +257,9 @@ export default function GeneratedModel() {
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
   const [editPreviewImageUrl, setEditPreviewImageUrl] = React.useState<string | null>(null);
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
-  const [llmEditReasoningLevel, setLlmEditReasoningLevel] = React.useState<LlmEditReasoningLevel>("low");
+  const [llmEditReasoningLevel, setLlmEditReasoningLevel] = React.useState<LlmEditReasoningLevel>(
+    DEFAULT_LLM_EDIT_REASONING_LEVEL,
+  );
   const [isLlmEditing, setIsLlmEditing] = React.useState(false);
   const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
   const [llmThinking, setLlmThinking] = React.useState("");
