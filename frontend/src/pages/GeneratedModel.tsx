@@ -2310,41 +2310,6 @@ export default function GeneratedModel() {
                 );
               }}
             />
-            {/* Order My Kit button — white with grey border, turns red on hover */}
-            <button
-            type="button"
-            aria-label="Order my kit"
-            disabled={priceLoading || isSavePolling}
-            onClick={() => guardUnsavedChanges(() => navigate("/order", { 
-              state: { 
-                name: modelName,
-                parts_list: priceData?.parts_breakdown || [],
-                screenshots: screenshots,
-                generation_id: currentGenerationId,
-                priceData: priceData
-              }
-            }))}
-            className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 transition-all duration-150 ${
-              priceLoading || isSavePolling
-                ? 'cursor-not-allowed opacity-70' 
-                : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
-            }`}
-          >
-            {priceLoading || isSavePolling ? (
-              <>
-                <div className="w-4 h-4 border-2 border-gray-300 border-t-black rounded-full animate-spin"></div>
-                Order my Kit!
-              </>
-            ) : (
-              <>
-                <ShoppingCart size={16} />
-                Order
-              </>
-            )}
-          </button>
-          </div>
-
-          <div className="flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row sm:gap-6">
             {/* Instructions button — white with grey border, turns red on hover */}
             <button
               type="button"
@@ -2362,6 +2327,41 @@ export default function GeneratedModel() {
                 <>
                   <BookOpen size={16} />
                   Building Instructions
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row sm:gap-6">
+            {/* Order My Kit button — white with grey border, turns red on hover */}
+            <button
+              type="button"
+              aria-label="Order my kit"
+              disabled={priceLoading || isSavePolling}
+              onClick={() => guardUnsavedChanges(() => navigate("/order", {
+                state: {
+                  name: modelName,
+                  parts_list: priceData?.parts_breakdown || [],
+                  screenshots,
+                  generation_id: currentGenerationId,
+                  priceData,
+                },
+              }))}
+              className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 border-gray-300 bg-white px-7 font-semibold text-black transition-all duration-150 sm:w-auto sm:min-w-44 ${
+                priceLoading || isSavePolling
+                  ? 'cursor-not-allowed opacity-70'
+                  : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
+              }`}
+            >
+              {priceLoading || isSavePolling ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-black"></div>
+                  Order my Kit!
+                </>
+              ) : (
+                <>
+                  <ShoppingCart size={16} />
+                  Order
                 </>
               )}
             </button>
