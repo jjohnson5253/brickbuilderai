@@ -7,6 +7,7 @@ import {
 } from '../src/utils/anonGenerations';
 import { getColorName, getColorNameWithFallback, parseLDrawColors } from '../src/utils/colorParser';
 import { LDrawParser } from '../src/utils/ldrawParser';
+import { getLlmEditMaxSegmentationRounds, LLM_EDIT_REASONING_OPTIONS } from '../src/utils/llmEditReasoning';
 import { LDrawPacker } from '../src/utils/ldrawPacker';
 
 const part = (color: number, x: number, y: number, z: number, name = '3001.dat') =>
@@ -75,5 +76,18 @@ describe('LDraw parser and packer', () => {
     expect(packed.packedContent).toContain('0 !COLOUR Black');
     expect(packed.packedContent).toContain('3001.dat\n0 STEP');
     await expect(LDrawPacker.convertLdrToMpd(part(4, 0, 0, 0), 'demo')).resolves.toContain('3001.dat');
+  });
+});
+
+describe('LLM edit reasoning', () => {
+  it('maps low, medium, and high reasoning to segmentation rounds', () => {
+    expect(LLM_EDIT_REASONING_OPTIONS).toEqual([
+      { label: 'Low', value: 'low', maxSegmentationRounds: 1 },
+      { label: 'Medium', value: 'medium', maxSegmentationRounds: 2 },
+      { label: 'High', value: 'high', maxSegmentationRounds: 3 },
+    ]);
+    expect(getLlmEditMaxSegmentationRounds('low')).toBe(1);
+    expect(getLlmEditMaxSegmentationRounds('medium')).toBe(2);
+    expect(getLlmEditMaxSegmentationRounds('high')).toBe(3);
   });
 });

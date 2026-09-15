@@ -1950,9 +1950,6 @@ async def llm_render(
     max_segments = request.max_segments or DEFAULT_MAX_SEGMENTS
 
     try:
-        if on_thinking:
-            await on_thinking("Loading model...\n")
-
         if generation_storage is None:
             raise HTTPException(status_code=503, detail="Generation storage is not configured")
         generation = await generation_storage.get_generation(request.generation_id)
@@ -1978,8 +1975,6 @@ async def llm_render(
 
         xyzrgb_content = await _fetch_text_url(request.xyzrgb_url, MAX_XYZRGB_BYTES)
 
-        if on_thinking:
-            await on_thinking("Analyzing voxel geometry...\n")
         voxels = _parse_xyzrgb(xyzrgb_content)
         segment_ids = _segment_voxels(voxels, max_segments)
         scene_summary = _build_scene_summary(voxels, segment_ids)
