@@ -43,10 +43,10 @@ import {
 import { getGeneratedModelPath } from "../utils/generationRoutes";
 import {
   getLlmEditMaxSegmentationRounds,
-  LLM_EDIT_REASONING_OPTIONS,
   type LlmEditReasoningLevel,
 } from "../utils/llmEditReasoning";
 import { LlmDesignNotes } from "../components/LlmDesignNotes";
+import { ModelEditControls } from "../components/ModelEditControls";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
@@ -256,7 +256,7 @@ export default function GeneratedModel() {
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
   const [editPreviewImageUrl, setEditPreviewImageUrl] = React.useState<string | null>(null);
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
-  const [llmEditReasoningLevel, setLlmEditReasoningLevel] = React.useState<LlmEditReasoningLevel>("high");
+  const [llmEditReasoningLevel, setLlmEditReasoningLevel] = React.useState<LlmEditReasoningLevel>("low");
   const [isLlmEditing, setIsLlmEditing] = React.useState(false);
   const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
   const [llmThinking, setLlmThinking] = React.useState("");
@@ -2280,7 +2280,7 @@ export default function GeneratedModel() {
           </section>
         )}
 
-        {/* Centered dual buttons: Edit Model + Order My Kit */}
+        {/* Centered model actions */}
         <section className={`mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden' : 'flex'}`}>
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
@@ -2288,116 +2288,28 @@ export default function GeneratedModel() {
               Not what you were expecting? Press "Manual Edit" to color and shape your model!
             </p>
           )}
-          <div className="flex flex-col sm:flex-row justify-center gap-3 sm:gap-6 w-full sm:w-auto">
-            <div className="flex w-full flex-col gap-3 sm:w-auto">
-              <LlmDesignNotes notes={llmThinking} isThinking={isLlmEditing} />
-              <div className="w-full rounded-2xl border border-slate-200 bg-white/90 p-2 shadow-sm sm:min-w-44">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                    AI reasoning
-                  </span>
-                  <div className="inline-flex rounded-full bg-slate-100 p-1">
-                    {LLM_EDIT_REASONING_OPTIONS.map((option) => {
-                      const isSelected = llmEditReasoningLevel === option.value;
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          aria-pressed={isSelected}
-                          disabled={isLlmEditing || isSavePolling || xyzrgbLoading}
-                          onClick={() => {
-                            setLlmEditReasoningLevel(option.value);
-                            trackGeneratedModelAiReasoningSelected(
-                              currentGenerationId,
-                              isDemoModel,
-                              option.value,
-                            );
-                          }}
-                          className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
-                            isSelected
-                              ? 'bg-slate-900 text-white shadow-sm'
-                              : 'text-slate-600 hover:text-slate-900'
-                          } disabled:cursor-not-allowed disabled:opacity-50`}
-                        >
-                          {option.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-              <button
-                  type="button"
-                  aria-label="LLM edit model"
-                  onClick={() => {
-                    trackGeneratedModelAiEditClick(currentGenerationId, isDemoModel);
-                    guardUnsavedChanges(() => { void handleLlmEditModel(); });
-                  }}
-                  disabled={isLlmEditing || isSavePolling || xyzrgbLoading || !xyzrgbUrl || !currentGenerationId}
-                  className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-[#f44336] text-white font-semibold border-2 border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 transition-all duration-150 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50 attention-pulse"
-              >
-                  {isLlmEditing ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      AI editing...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={16} />
-                      AI edit
-                    </>
-                  )}
-              </button>
-
-              {/* Manual Edit button — white with grey border, turns red on hover */}
-              <button
-                type="button"
-                aria-label="Manual edit model"
-                onClick={handleEditModelClick}
-                disabled={xyzrgbLoading}
-                className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold border-2 transition-all duration-150 ${
-                  showVoxelEditor
-                    ? 'border-[#f44336] bg-[#f44336] text-white shadow-lg shadow-[#f44336]/25 hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2'
-                    : xyzrgbLoading
-                      ? 'bg-white text-black border-gray-300 cursor-not-allowed opacity-70'
-                      : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
-                }`}
-            >
-                {xyzrgbLoading ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Loading...
-                  </>
-                ) : (
-                  <>
-                    <Pencil size={16} />
-                    {showVoxelEditor ? 'Exit Block Editor' : 'Manual Edit'}
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Instructions button — white with grey border, turns red on hover */}
-            <button
-                type="button"
-                aria-label="View instructions"
-                onClick={() => guardUnsavedChanges(() => navigate(`/instructions?id=${currentGenerationId}`))}
-                disabled={!currentGenerationId || isSavePolling}
-                className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
-            >
-                {isSavePolling ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <BookOpen size={16} />
-                    View Instructions
-                  </>
-                )}
-            </button>
-
+          <LlmDesignNotes notes={llmThinking} isThinking={isLlmEditing} />
+          <div className="flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row sm:gap-6">
+            <ModelEditControls
+              aiDisabled={isLlmEditing || isSavePolling || xyzrgbLoading || !xyzrgbUrl || !currentGenerationId}
+              isAiEditing={isLlmEditing}
+              isManualEditorOpen={showVoxelEditor}
+              manualLoading={xyzrgbLoading}
+              reasoningLevel={llmEditReasoningLevel}
+              onAiEdit={() => {
+                trackGeneratedModelAiEditClick(currentGenerationId, isDemoModel);
+                guardUnsavedChanges(() => { void handleLlmEditModel(); });
+              }}
+              onManualEdit={() => { void handleEditModelClick(); }}
+              onReasoningChange={(level) => {
+                setLlmEditReasoningLevel(level);
+                trackGeneratedModelAiReasoningSelected(
+                  currentGenerationId,
+                  isDemoModel,
+                  level,
+                );
+              }}
+            />
             {/* Order My Kit button — white with grey border, turns red on hover */}
             <button
             type="button"
@@ -2426,47 +2338,70 @@ export default function GeneratedModel() {
             ) : (
               <>
                 <ShoppingCart size={16} />
-                Order These Bricks!
+                Order
               </>
             )}
           </button>
+          </div>
 
-          {/* Post / Remove from Community button — owners can toggle; logged-out
-              visitors see it too and are prompted to log in on click */}
-          {canShowCommunityButton && (
-          <button
-            type="button"
-            aria-label={isCommunity ? 'Remove from community' : 'Post to community'}
-            disabled={!currentGenerationId || communityToggleLoading || isSavePolling}
-            onClick={() => {
-              if (!currentUser) {
-                setPendingCommunityPost(true);
-                setShowLoginModal(true);
-                return;
-              }
-              guardUnsavedChanges(() => { void handleToggleCommunity(); });
-            }}
-            className={`inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 w-full sm:w-auto sm:min-w-44 font-semibold transition-all duration-150 border-2 ${
-              !currentGenerationId || communityToggleLoading || isSavePolling
-                ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
-                : (!isCommunity && hasExitedVoxelEditor && !showVoxelEditor)
-                  ? 'bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
-                  : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
-            }`}
-          >
-            {communityToggleLoading ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                {isCommunity ? 'Removing...' : 'Posting...'}
-              </>
-            ) : (
-              <>
-                <Users size={16} />
-                {isCommunity ? 'Remove from Community' : 'Post to Community'}
-              </>
+          <div className="flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row sm:gap-6">
+            {/* Instructions button — white with grey border, turns red on hover */}
+            <button
+              type="button"
+              aria-label="View instructions"
+              onClick={() => guardUnsavedChanges(() => navigate(`/instructions?id=${currentGenerationId}`))}
+              disabled={!currentGenerationId || isSavePolling}
+              className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 border-gray-300 bg-white px-7 font-semibold text-black transition-all duration-150 hover:scale-[1.03] hover:border-[#f44336] hover:text-[#f44336] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:min-w-44"
+            >
+              {isSavePolling ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <BookOpen size={16} />
+                  Building Instructions
+                </>
+              )}
+            </button>
+
+            {/* Post / Remove from Community button — owners can toggle; logged-out
+                visitors see it too and are prompted to log in on click */}
+            {canShowCommunityButton && (
+              <button
+                type="button"
+                aria-label={isCommunity ? 'Remove from community' : 'Post to community'}
+                disabled={!currentGenerationId || communityToggleLoading || isSavePolling}
+                onClick={() => {
+                  if (!currentUser) {
+                    setPendingCommunityPost(true);
+                    setShowLoginModal(true);
+                    return;
+                  }
+                  guardUnsavedChanges(() => { void handleToggleCommunity(); });
+                }}
+                className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 px-7 font-semibold transition-all duration-150 sm:w-auto sm:min-w-44 ${
+                  !currentGenerationId || communityToggleLoading || isSavePolling
+                    ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
+                    : (!isCommunity && hasExitedVoxelEditor && !showVoxelEditor)
+                      ? 'bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
+                      : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
+                }`}
+              >
+                {communityToggleLoading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    {isCommunity ? 'Removing...' : 'Posting...'}
+                  </>
+                ) : (
+                  <>
+                    <Users size={16} />
+                    {isCommunity ? 'Remove from Community' : 'Post to Community'}
+                  </>
+                )}
+              </button>
             )}
-          </button>
-          )}
           </div>
           
           {/* Error message for voxel editor */}
