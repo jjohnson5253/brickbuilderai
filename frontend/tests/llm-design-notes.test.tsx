@@ -12,10 +12,10 @@ describe('LlmDesignNotes', () => {
       <LlmDesignNotes notes="Use red bricks for the torso." />,
     );
 
-    expect(markup).toContain('AI output');
     expect(markup).toContain('Use red bricks for the torso.');
     expect(markup).toContain('max-h-48');
     expect(markup).toContain('overflow-y-auto');
+    expect(markup).not.toContain('Brickbuilder AI thinking');
   });
 
   it('renders nothing before design notes arrive', () => {
@@ -43,5 +43,21 @@ describe('LlmDesignNotes', () => {
       });
       container.remove();
     }
+  });
+
+  it('shows the Brickbuilder AI thinking state until streamed notes arrive', () => {
+    const markup = renderToStaticMarkup(<LlmDesignNotes notes="" isThinking />);
+
+    expect(markup).toContain('Brickbuilder AI thinking');
+    expect(markup).toContain('thinking-dot');
+  });
+
+  it('hides the thinking state when streamed notes arrive', () => {
+    const markup = renderToStaticMarkup(
+      <LlmDesignNotes notes="The torso should use red bricks." isThinking />,
+    );
+
+    expect(markup).toContain('The torso should use red bricks.');
+    expect(markup).not.toContain('Brickbuilder AI thinking');
   });
 });
