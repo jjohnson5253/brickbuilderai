@@ -299,9 +299,9 @@ export default function OrderKit() {
           Back to Model
         </button>
 
-        <h1 className="text-3xl sm:text-4xl font-semibold mb-6 landing-fade-in landing-delay-2">
-          Order Your Model
-        </h1>
+        {/* <h1 className="text-3xl sm:text-4xl font-semibold mb-6 landing-fade-in landing-delay-2">
+          Order Today!
+        </h1> */}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 landing-fade-in landing-delay-3">
           {/* LEFT: model hero + BOM list */}

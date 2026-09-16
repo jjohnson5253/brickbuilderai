@@ -48,6 +48,7 @@ import {
 } from "../utils/llmEditReasoning";
 import { LlmDesignNotes } from "../components/LlmDesignNotes";
 import { ModelEditControls } from "../components/ModelEditControls";
+import { StatCard } from "../components/StatCard";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
 import { UpdateImagePreviewApiService } from "../services/updateImagePreviewApi";
 import { supabase } from "../lib/supabase";
@@ -202,34 +203,6 @@ function Header({ onGuardedNavigate }: HeaderProps) {
     </header>
   );
 }
-
-type StatCardProps = {
-  icon: React.ReactNode;
-  title: React.ReactNode;
-  sub: string;
-};
-
-function StatCard({ icon, title, sub }: StatCardProps) {
-  return (
-    <div
-        className="relative rounded-xl bg-white p-4 shadow-sm flex items-center gap-4 border border-slate-200"
-        >
-            {/* Red circle behind black icon */}
-      <div
-        className="h-12 w-12 rounded-full flex items-center justify-center shrink-0"
-        style={{ backgroundColor: "#f44336" }}
-      >
-        <div className="text-black">{icon}</div>
-      </div>
-
-      <div className="flex-1">
-        <div className="text-sm font-semibold text-slate-800">{title}</div>
-        <div className="text-xs text-slate-500">{sub}</div>
-      </div>
-    </div>
-  );
-}
-
 
 export default function GeneratedModel() {
   const navigate = useNavigate();
@@ -1656,6 +1629,22 @@ export default function GeneratedModel() {
     action();
   };
 
+  const navigateToInstructions = () => {
+    guardUnsavedChanges(() => navigate(`/instructions?id=${currentGenerationId}`));
+  };
+
+  const navigateToOrder = () => {
+    guardUnsavedChanges(() => navigate("/order", {
+      state: {
+        name: modelName,
+        parts_list: priceData?.parts_breakdown || [],
+        screenshots,
+        generation_id: currentGenerationId,
+        priceData,
+      },
+    }));
+  };
+
   const exitVoxelEditor = React.useCallback(() => {
     setShowVoxelEditor(false);
     setShowResizeScaler(false);
@@ -1949,9 +1938,9 @@ export default function GeneratedModel() {
         {/* Centered Title - hide when in edit mode */}
         {!showVoxelEditor && (
           <section className="relative mt-2 mb-2 md:mb-3 landing-fade-in landing-delay-2">
-            <h2 className="text-lg sm:text-xl lg:text-2xl font-semibold text-center break-words px-4">
+            {/* <h2 className="text-lg sm:text-xl lg:text-2xl font-semibold text-center break-words px-4">
               Successfully Generated Model 🎉
-            </h2>
+            </h2> */}
             {currentGenerationId && (
               <p className="text-xs text-slate-400 text-center mt-1">
                 {/* id: {currentGenerationId} */}
@@ -2317,7 +2306,7 @@ export default function GeneratedModel() {
             <button
               type="button"
               aria-label="View instructions"
-              onClick={() => guardUnsavedChanges(() => navigate(`/instructions?id=${currentGenerationId}`))}
+              onClick={navigateToInstructions}
               disabled={!currentGenerationId || isSavePolling}
               className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 border-gray-300 bg-white px-7 font-semibold text-black transition-all duration-150 hover:scale-[1.03] hover:border-[#f44336] hover:text-[#f44336] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:min-w-44"
             >
@@ -2341,15 +2330,7 @@ export default function GeneratedModel() {
               type="button"
               aria-label="Order my kit"
               disabled={priceLoading || isSavePolling}
-              onClick={() => guardUnsavedChanges(() => navigate("/order", {
-                state: {
-                  name: modelName,
-                  parts_list: priceData?.parts_breakdown || [],
-                  screenshots,
-                  generation_id: currentGenerationId,
-                  priceData,
-                },
-              }))}
+              onClick={navigateToOrder}
               className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 border-gray-300 bg-white px-7 font-semibold text-black transition-all duration-150 sm:w-auto sm:min-w-44 ${
                 priceLoading || isSavePolling
                   ? 'cursor-not-allowed opacity-70'
@@ -2424,10 +2405,10 @@ export default function GeneratedModel() {
 
         {/* Congrats line */}
         <section className="mt-12">
-          <p className="text-base text-center md:text-left">
+          {/* <p className="text-base text-center md:text-left">
             <span className="font-semibold">Congratulations:</span>{" "}
             <span className="text-slate-700">your model is generated.</span>
-          </p>
+          </p> */}
         </section>
 
         {/* Resize panel — shown above the stats badges when "Try resizing!" is pressed */}
@@ -2475,6 +2456,16 @@ export default function GeneratedModel() {
                       ? "Total cost + shipping"
                       : ""
               }
+              actionLabel="Order this model"
+              disabled={priceLoading || isSavePolling || !priceData}
+              onClick={() => {
+                posthog.capture('generated_model_stat_action_clicked', {
+                  action: 'order',
+                  generation_id: currentGenerationId,
+                  is_demo_model: isDemoModel,
+                });
+                navigateToOrder();
+              }}
             />
             {/* Too expensive? Try resizing! */}
             {priceData && !priceLoading && !isSavePolling && !isDemoModel && (
@@ -2512,6 +2503,17 @@ export default function GeneratedModel() {
                   ? ""
                   : ""
             }
+            actionLabel="View building instructions"
+            disabled={!currentGenerationId || isSavePolling || !priceData}
+            onClick={() => {
+              posthog.capture('generated_model_stat_action_clicked', {
+                action: 'view_instructions',
+                generation_id: currentGenerationId,
+                is_demo_model: isDemoModel,
+                source: 'pieces',
+              });
+              navigateToInstructions();
+            }}
           />
           <StatCard
             icon={(priceLoading || isSavePolling) ? (
@@ -2533,6 +2535,17 @@ export default function GeneratedModel() {
                   ? "Total weight"
                   : ""
             }
+            actionLabel="View building instructions"
+            disabled={!currentGenerationId || isSavePolling || !priceData}
+            onClick={() => {
+              posthog.capture('generated_model_stat_action_clicked', {
+                action: 'view_instructions',
+                generation_id: currentGenerationId,
+                is_demo_model: isDemoModel,
+                source: 'weight',
+              });
+              navigateToInstructions();
+            }}
           />
         </section>
 
