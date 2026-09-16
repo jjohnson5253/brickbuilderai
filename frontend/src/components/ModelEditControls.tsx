@@ -76,13 +76,13 @@ export function ModelEditControls({
 
   return (
     <div className="relative flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row">
-      <div className="attention-pulse relative flex h-12 w-full min-w-0 rounded-full shadow-lg shadow-[#f44336]/25 sm:w-72">
+      <div className="attention-pulse relative inline-flex h-12 max-w-full rounded-full shadow-lg shadow-[#f44336]/25">
         <button
           type="button"
           aria-label="AI edit model"
           onClick={onAiEdit}
           disabled={aiDisabled}
-          className="inline-flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-full border-2 border-[#f44336] bg-[#f44336] pl-4 pr-24 font-semibold text-white transition-colors hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-12 flex-none items-center justify-center gap-2 whitespace-nowrap rounded-full border-2 border-[#f44336] bg-[#f44336] pl-5 pr-[6.5rem] font-semibold text-white transition-colors hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isAiEditing ? (
             <>
