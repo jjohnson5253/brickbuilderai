@@ -113,4 +113,36 @@ describe('ModelEditControls', () => {
       container.remove();
     }
   });
+
+  it('shifts the medium label away from the dropdown arrow', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      act(() => {
+        root.render(
+          <ModelEditControls
+            aiDisabled={false}
+            isAiEditing={false}
+            isManualEditorOpen={false}
+            manualLoading={false}
+            reasoningLevel="medium"
+            onAiEdit={vi.fn()}
+            onManualEdit={vi.fn()}
+            onReasoningChange={vi.fn()}
+          />,
+        );
+      });
+
+      expect(
+        container.querySelector('[aria-label="Thinking level"] span')?.className,
+      ).toContain('-translate-x-1');
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
 });

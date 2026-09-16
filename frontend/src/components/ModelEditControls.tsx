@@ -154,7 +154,9 @@ export function ModelEditControls({
             onClick={() => setReasoningMenuOpen((open) => !open)}
             className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-full border border-white/70 bg-white/95 px-6 text-center text-xs font-semibold lowercase text-[#c62828] shadow-sm outline-none transition-all duration-150 hover:bg-white focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-[#f44336] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {reasoningLevel}
+            <span className={reasoningLevel === 'medium' ? '-translate-x-1' : ''}>
+              {reasoningLevel}
+            </span>
           </button>
           <ChevronDown
             aria-hidden="true"
