@@ -82,25 +82,23 @@ export function ModelEditControls({
           aria-label="AI edit model"
           onClick={onAiEdit}
           disabled={aiDisabled}
-          className="relative h-12 min-w-0 flex-1 rounded-full border-2 border-[#f44336] bg-[#f44336] font-semibold text-white transition-colors hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-full border-2 border-[#f44336] bg-[#f44336] pl-4 pr-24 font-semibold text-white transition-colors hover:border-[#ff6b6b] hover:bg-[#ff6b6b] focus:outline-none focus:ring-2 focus:ring-[#f44336] focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <span className="absolute left-1/2 top-1/2 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 whitespace-nowrap">
-            {isAiEditing ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                AI editing...
-              </>
-            ) : (
-              <>
-                <Sparkles size={16} />
-                AI Edit
-              </>
-            )}
-          </span>
+          {isAiEditing ? (
+            <>
+              <Loader2 size={16} className="animate-spin" />
+              AI editing...
+            </>
+          ) : (
+            <>
+              <Sparkles size={16} />
+              AI Edit
+            </>
+          )}
         </button>
         <div
           ref={reasoningMenuRef}
-          className="absolute right-2 top-1/2 z-20 w-24 -translate-y-1/2"
+          className="absolute right-2 top-1/2 z-20 w-[5.5rem] -translate-y-1/2"
         >
           {reasoningMenuOpen && (
             <div

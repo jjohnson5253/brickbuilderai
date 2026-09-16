@@ -2288,7 +2288,7 @@ export default function GeneratedModel() {
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
-              Not what you were expecting? Press "Manual Edit" to color and shape your model!
+              Not what you were expecting? Try the AI Edit or Manual Edit options!
             </p>
           )}
           <LlmDesignNotes notes={llmThinking} isThinking={isLlmEditing} />

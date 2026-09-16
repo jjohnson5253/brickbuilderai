@@ -33,7 +33,7 @@ describe('ModelEditControls', () => {
       expect(container.querySelector('[aria-label="Choose thinking level"]')).toBeNull();
       expect(
         container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
-      ).toContain('w-24');
+      ).toContain('w-[5.5rem]');
       expect(
         container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
       ).toContain('absolute');
@@ -50,11 +50,11 @@ describe('ModelEditControls', () => {
         container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
       ).toContain('attention-pulse');
       expect(
+        container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
+      ).toContain('sm:w-72');
+      expect(
         container.querySelector('[aria-label="AI edit model"]')?.className,
       ).toContain('rounded-full');
-      expect(
-        container.querySelector('[aria-label="AI edit model"] span')?.className,
-      ).toContain('left-1/2');
       expect(container.firstElementChild?.className).toContain('sm:flex-row');
     } finally {
       act(() => {
