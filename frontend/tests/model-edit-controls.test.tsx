@@ -51,7 +51,10 @@ describe('ModelEditControls', () => {
       ).toContain('attention-pulse');
       expect(
         container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
-      ).toContain('inline-flex');
+      ).toContain('w-full');
+      expect(
+        container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
+      ).toContain('sm:w-auto');
       expect(
         container.querySelector('[aria-label="AI edit model"]')?.className,
       ).toContain('rounded-full');
