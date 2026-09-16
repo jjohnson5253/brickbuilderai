@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import posthog from 'posthog-js';
-import { trackGeneratedModelAiEditClick } from '../src/utils/generatedModelAnalytics';
+import {
+  trackGeneratedModelAiEditClick,
+  trackGeneratedModelAiReasoningSelected,
+} from '../src/utils/generatedModelAnalytics';
 
 vi.mock('posthog-js', () => ({
   default: {
@@ -22,6 +25,19 @@ describe('generated model analytics', () => {
       {
         generation_id: 'generation-123',
         is_demo_model: false,
+      },
+    );
+  });
+
+  it('captures an event when the AI reasoning level is changed', () => {
+    trackGeneratedModelAiReasoningSelected('generation-123', true, 'medium');
+
+    expect(posthog.capture).toHaveBeenCalledWith(
+      'generated_model_ai_reasoning_selected',
+      {
+        generation_id: 'generation-123',
+        is_demo_model: true,
+        reasoning_level: 'medium',
       },
     );
   });

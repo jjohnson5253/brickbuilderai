@@ -1,0 +1,151 @@
+import React from 'react';
+import { act } from 'react-dom/test-utils';
+import { createRoot } from 'react-dom/client';
+import { describe, expect, it, vi } from 'vitest';
+
+import { ModelEditControls } from '../src/components/ModelEditControls';
+
+describe('ModelEditControls', () => {
+  it('renders AI Edit with an embedded thinking-level pill and manual edit', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      act(() => {
+        root.render(
+          <ModelEditControls
+            aiDisabled={false}
+            isAiEditing={false}
+            isManualEditorOpen={false}
+            manualLoading={false}
+            reasoningLevel="low"
+            onAiEdit={vi.fn()}
+            onManualEdit={vi.fn()}
+            onReasoningChange={vi.fn()}
+          />,
+        );
+      });
+
+      expect(container.textContent).toContain('AI Edit');
+      expect(container.textContent).toContain('Manual Edit');
+      expect(container.querySelector('[aria-label="Thinking level"]')?.textContent).toBe('low');
+      expect(container.querySelector('[aria-label="Choose thinking level"]')).toBeNull();
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
+      ).toContain('w-[5.5rem]');
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
+      ).toContain('absolute');
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.className,
+      ).toContain('rounded-full');
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.className,
+      ).toContain('h-8');
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.className,
+      ).toContain('text-center');
+      expect(
+        container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
+      ).toContain('attention-pulse');
+      expect(
+        container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
+      ).toContain('w-full');
+      expect(
+        container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
+      ).toContain('sm:w-auto');
+      expect(
+        container.querySelector('[aria-label="AI edit model"]')?.className,
+      ).toContain('rounded-full');
+      expect(container.firstElementChild?.className).toContain('sm:flex-row');
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('reports thinking level changes', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onReasoningChange = vi.fn();
+
+    try {
+      act(() => {
+        root.render(
+          <ModelEditControls
+            aiDisabled={false}
+            isAiEditing={false}
+            isManualEditorOpen={false}
+            manualLoading={false}
+            reasoningLevel="low"
+            onAiEdit={vi.fn()}
+            onManualEdit={vi.fn()}
+            onReasoningChange={onReasoningChange}
+          />,
+        );
+      });
+
+      const selector = container.querySelector('[aria-label="Thinking level"]') as HTMLButtonElement;
+      act(() => {
+        selector.click();
+      });
+
+      const menu = container.querySelector('[aria-label="Choose thinking level"]');
+      expect(menu).not.toBeNull();
+      expect(menu?.className).toContain('rounded-2xl');
+      expect(menu?.className).toContain('shadow-2xl');
+
+      const highOption = Array.from(menu?.querySelectorAll('button') ?? []).find(
+        (button) => button.textContent === 'high',
+      );
+      act(() => {
+        highOption?.click();
+      });
+
+      expect(onReasoningChange).toHaveBeenCalledOnce();
+      expect(onReasoningChange).toHaveBeenCalledWith('high');
+      expect(container.querySelector('[aria-label="Choose thinking level"]')).toBeNull();
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('shifts the medium label away from the dropdown arrow', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      act(() => {
+        root.render(
+          <ModelEditControls
+            aiDisabled={false}
+            isAiEditing={false}
+            isManualEditorOpen={false}
+            manualLoading={false}
+            reasoningLevel="medium"
+            onAiEdit={vi.fn()}
+            onManualEdit={vi.fn()}
+            onReasoningChange={vi.fn()}
+          />,
+        );
+      });
+
+      expect(
+        container.querySelector('[aria-label="Thinking level"] span')?.className,
+      ).toContain('-translate-x-1');
+    } finally {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+});

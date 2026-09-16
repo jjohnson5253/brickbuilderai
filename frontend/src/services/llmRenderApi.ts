@@ -81,7 +81,8 @@ export class LlmRenderApiService {
     xyzrgbUrl: string,
     referenceImageUrls: string | string[],
     prompt?: string,
-    accessToken?: string
+    accessToken?: string,
+    maxSegmentationRounds?: number,
   ): Promise<LlmRenderResponse> {
     const url = `${API_BASE_URL}/llmRender`;
 
@@ -101,6 +102,9 @@ export class LlmRenderApiService {
         : [referenceImageUrls],
       prompt,
       model: LLM_RENDER_MODEL,
+      ...(typeof maxSegmentationRounds === 'number'
+        ? { max_segmentation_rounds: maxSegmentationRounds }
+        : {}),
     };
 
     const response = await fetch(url, {
@@ -129,6 +133,7 @@ export class LlmRenderApiService {
     prompt?: string,
     accessToken?: string,
     onThinking?: (delta: string) => void,
+    maxSegmentationRounds?: number,
   ): Promise<LlmRenderResponse> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (accessToken) {
@@ -146,6 +151,9 @@ export class LlmRenderApiService {
           : [referenceImageUrls],
         prompt,
         model: LLM_RENDER_MODEL,
+        ...(typeof maxSegmentationRounds === 'number'
+          ? { max_segmentation_rounds: maxSegmentationRounds }
+          : {}),
       } satisfies LlmRenderRequest),
     });
 

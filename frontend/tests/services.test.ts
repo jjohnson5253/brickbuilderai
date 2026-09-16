@@ -105,7 +105,7 @@ describe('JSON API service contracts', () => {
     ]);
     vi.mocked(fetch).mockResolvedValueOnce({ ...ok({}), body: stream } as unknown as Response);
 
-    await expect(LlmRenderApiService.llmRenderStream('generation', 'xyz', referenceImages, 'paint', 'tok', thinking)).resolves.toEqual(result);
+    await expect(LlmRenderApiService.llmRenderStream('generation', 'xyz', referenceImages, 'paint', 'tok', thinking, 2)).resolves.toEqual(result);
     expect(thinking.mock.calls.flat()).toEqual(['Checking segmentation (round 1/3)...\n', 'I see a red ', 'torso.']);
     const [url, options] = vi.mocked(fetch).mock.calls[0];
     expect(String(url).endsWith('/llmRender/stream')).toBe(true);
@@ -117,6 +117,7 @@ describe('JSON API service contracts', () => {
         reference_image_urls: referenceImages,
         prompt: 'paint',
         model: 'claude-fable-5',
+        max_segmentation_rounds: 2,
       }),
     });
 
