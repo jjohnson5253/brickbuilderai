@@ -10,6 +10,7 @@ import { SEO } from "../components/SEO";
 import { SiteFooter } from "../components/SiteFooter";
 import { supabase } from "../lib/supabase";
 import posthog from "posthog-js";
+import { getOrderReturnModelPath } from "../utils/generationRoutes";
 
 type LocationState = {
   name?: string;
@@ -70,6 +71,8 @@ export default function OrderKit() {
   };
   
   const state = getState();
+  const lastGenerationId = localStorage.getItem('lastGenerationId');
+  const generationId = state.generation_id || lastGenerationId || undefined;
 
   const name = state?.name ?? "Cosmic Speedster X-7";
   const size = "Regular"; // Default size since it's not passed in navigation state
@@ -164,7 +167,6 @@ export default function OrderKit() {
   // Fetch model content for 3D preview
   React.useEffect(() => {
     const fetchModelContent = async () => {
-      const generationId = state?.generation_id || localStorage.getItem('lastGenerationId');
       if (!generationId) {
         // Try to get from localStorage as fallback
         const storedMpd = localStorage.getItem('MPD_CONTENT') || localStorage.getItem('lastMpdContent');
@@ -224,7 +226,7 @@ export default function OrderKit() {
     };
 
     fetchModelContent();
-  }, [state?.generation_id, name]);
+  }, [generationId, name]);
 
   const handleCheckout = async () => {
   try {
@@ -232,7 +234,6 @@ export default function OrderKit() {
     setError(null);
 
     // Get generation_id and cart_id from state or localStorage
-    const generationId = state?.generation_id || localStorage.getItem('lastGenerationId') || undefined;
     const brickowlCartId = state?.cart_id || localStorage.getItem('current_cart_id') || undefined;
 
     posthog.capture('order_checkout_clicked', {
@@ -290,7 +291,8 @@ export default function OrderKit() {
       <main className="mx-auto w-full max-w-6xl px-4 sm:px-6 md:px-8 lg:px-10 pb-16 pt-6">
         {/* Back to model link under logo */}
         <button
-          onClick={() => navigate("/generated-model")}
+          type="button"
+          onClick={() => navigate(getOrderReturnModelPath(state.generation_id, lastGenerationId))}
           className="mt-2 mb-4 inline-flex items-center gap-2 text-sm text-slate-700 hover:underline landing-fade-in landing-delay-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
