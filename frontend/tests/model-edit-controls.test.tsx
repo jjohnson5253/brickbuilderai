@@ -52,6 +52,9 @@ describe('ModelEditControls', () => {
       expect(
         container.querySelector('[aria-label="AI edit model"]')?.className,
       ).toContain('rounded-full');
+      expect(
+        container.querySelector('[aria-label="AI edit model"] span')?.className,
+      ).toContain('left-1/2');
       expect(container.firstElementChild?.className).toContain('sm:flex-row');
     } finally {
       act(() => {

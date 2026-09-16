@@ -2284,7 +2284,7 @@ export default function GeneratedModel() {
         )}
 
         {/* Centered model actions */}
-        <section className={`mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden' : 'flex'}`}>
+        <section className={`relative z-40 mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden' : 'flex'}`}>
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
