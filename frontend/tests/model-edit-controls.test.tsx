@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ModelEditControls } from '../src/components/ModelEditControls';
 
 describe('ModelEditControls', () => {
-  it('renders AI Edit with a compact low thinking selector and manual edit', () => {
+  it('renders AI Edit with an embedded thinking-level pill and manual edit', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -38,10 +38,25 @@ describe('ModelEditControls', () => {
       ).toEqual(['low', 'medium', 'high']);
       expect(
         container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
-      ).toContain('w-[4.75rem]');
+      ).toContain('w-24');
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
+      ).toContain('absolute');
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.className,
+      ).toContain('rounded-full');
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.className,
+      ).toContain('h-8');
+      expect(
+        container.querySelector('[aria-label="Thinking level"]')?.className,
+      ).toContain('text-center');
       expect(
         container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
       ).toContain('attention-pulse');
+      expect(
+        container.querySelector('[aria-label="AI edit model"]')?.className,
+      ).toContain('rounded-full');
       expect(container.firstElementChild?.className).toContain('sm:flex-row');
     } finally {
       act(() => {
