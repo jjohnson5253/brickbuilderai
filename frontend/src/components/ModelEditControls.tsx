@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronDown, Loader2, Pencil, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, Loader2, Pencil, Sparkles, X } from 'lucide-react';
 
 import {
   LLM_EDIT_REASONING_OPTIONS,
@@ -27,6 +27,36 @@ export function ModelEditControls({
   onManualEdit,
   onReasoningChange,
 }: ModelEditControlsProps) {
+  const [reasoningMenuOpen, setReasoningMenuOpen] = React.useState(false);
+  const reasoningMenuRef = React.useRef<HTMLDivElement | null>(null);
+  const reasoningDisabled = aiDisabled || manualLoading;
+
+  React.useEffect(() => {
+    if (!reasoningMenuOpen) return;
+
+    const handleDismiss = (event: MouseEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
+      if (
+        event instanceof MouseEvent
+        && reasoningMenuRef.current?.contains(event.target as Node)
+      ) {
+        return;
+      }
+      setReasoningMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleDismiss);
+    document.addEventListener('keydown', handleDismiss);
+    return () => {
+      document.removeEventListener('mousedown', handleDismiss);
+      document.removeEventListener('keydown', handleDismiss);
+    };
+  }, [reasoningMenuOpen]);
+
+  React.useEffect(() => {
+    if (reasoningDisabled || isManualEditorOpen) setReasoningMenuOpen(false);
+  }, [isManualEditorOpen, reasoningDisabled]);
+
   if (isManualEditorOpen) {
     return (
       <div className="flex w-full justify-center sm:w-auto">
@@ -66,39 +96,72 @@ export function ModelEditControls({
             </>
           )}
         </button>
-        <div className="absolute right-2 top-1/2 w-24 -translate-y-1/2">
-          <label htmlFor="llm-thinking-level" className="sr-only">
-            Thinking level
-          </label>
-          <select
-            id="llm-thinking-level"
+        <div
+          ref={reasoningMenuRef}
+          className="absolute right-2 top-1/2 z-20 w-24 -translate-y-1/2"
+        >
+          {reasoningMenuOpen && (
+            <div
+              id="llm-thinking-level-menu"
+              role="dialog"
+              aria-label="Choose thinking level"
+              className="absolute bottom-full right-0 mb-2 w-44 overflow-hidden rounded-2xl border border-slate-200 bg-white/95 text-left shadow-2xl shadow-black/25 backdrop-blur-md"
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 px-3.5 py-2.5">
+                <h3 className="text-sm font-semibold text-slate-900">Thinking level</h3>
+                <button
+                  type="button"
+                  onClick={() => setReasoningMenuOpen(false)}
+                  aria-label="Close thinking level"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              <div className="space-y-1.5 p-2.5">
+                {LLM_EDIT_REASONING_OPTIONS.map((option) => {
+                  const isSelected = option.value === reasoningLevel;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => {
+                        setReasoningMenuOpen(false);
+                        if (!isSelected) onReasoningChange(option.value);
+                      }}
+                      className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-xs font-semibold capitalize transition-colors ${
+                        isSelected
+                          ? 'border-[#f44336]/60 bg-red-50 text-[#c62828]'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-[#f44336]/40 hover:bg-red-50'
+                      }`}
+                    >
+                      {option.value}
+                      {isSelected && <Check aria-hidden="true" size={14} />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <button
+            type="button"
             aria-label="Thinking level"
-            value={reasoningLevel}
-            disabled={aiDisabled || manualLoading}
-            onChange={(event) => {
-              const selectedOption = LLM_EDIT_REASONING_OPTIONS.find(
-                (option) => option.value === event.currentTarget.value,
-              );
-              if (!selectedOption) {
-                console.error('Invalid AI thinking level selected:', event.currentTarget.value);
-                return;
-              }
-              onReasoningChange(selectedOption.value);
-            }}
-            className="h-8 w-full cursor-pointer appearance-none rounded-full border border-white/70 bg-white/95 px-6 py-0 text-center text-xs font-semibold lowercase text-[#c62828] shadow-sm outline-none transition-all duration-150 hover:bg-white focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-[#f44336] disabled:cursor-not-allowed disabled:opacity-50"
+            aria-controls="llm-thinking-level-menu"
+            aria-expanded={reasoningMenuOpen}
+            aria-haspopup="dialog"
+            disabled={reasoningDisabled}
+            onClick={() => setReasoningMenuOpen((open) => !open)}
+            className="inline-flex h-8 w-full cursor-pointer items-center justify-center rounded-full border border-white/70 bg-white/95 px-6 text-center text-xs font-semibold lowercase text-[#c62828] shadow-sm outline-none transition-all duration-150 hover:bg-white focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-[#f44336] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <optgroup label="Thinking level">
-              {LLM_EDIT_REASONING_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.value}
-                </option>
-              ))}
-            </optgroup>
-          </select>
+            {reasoningLevel}
+          </button>
           <ChevronDown
             aria-hidden="true"
             size={13}
-            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#c62828]"
+            className={`pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[#c62828] transition-transform duration-200 ${
+              reasoningMenuOpen ? 'rotate-180' : ''
+            }`}
           />
         </div>
       </div>

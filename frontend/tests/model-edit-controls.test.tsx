@@ -29,13 +29,8 @@ describe('ModelEditControls', () => {
 
       expect(container.textContent).toContain('AI Edit');
       expect(container.textContent).toContain('Manual Edit');
-      expect(
-        (container.querySelector('[aria-label="Thinking level"]') as HTMLSelectElement).value,
-      ).toBe('low');
-      expect(container.querySelector('optgroup')?.label).toBe('Thinking level');
-      expect(
-        Array.from(container.querySelectorAll('option')).map((option) => option.textContent),
-      ).toEqual(['low', 'medium', 'high']);
+      expect(container.querySelector('[aria-label="Thinking level"]')?.textContent).toBe('low');
+      expect(container.querySelector('[aria-label="Choose thinking level"]')).toBeNull();
       expect(
         container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
       ).toContain('w-24');
@@ -88,16 +83,26 @@ describe('ModelEditControls', () => {
         );
       });
 
-      const selector = container.querySelector(
-        '[aria-label="Thinking level"]',
-      ) as HTMLSelectElement;
+      const selector = container.querySelector('[aria-label="Thinking level"]') as HTMLButtonElement;
       act(() => {
-        selector.value = 'high';
-        selector.dispatchEvent(new Event('change', { bubbles: true }));
+        selector.click();
+      });
+
+      const menu = container.querySelector('[aria-label="Choose thinking level"]');
+      expect(menu).not.toBeNull();
+      expect(menu?.className).toContain('rounded-2xl');
+      expect(menu?.className).toContain('shadow-2xl');
+
+      const highOption = Array.from(menu?.querySelectorAll('button') ?? []).find(
+        (button) => button.textContent === 'high',
+      );
+      act(() => {
+        highOption?.click();
       });
 
       expect(onReasoningChange).toHaveBeenCalledOnce();
       expect(onReasoningChange).toHaveBeenCalledWith('high');
+      expect(container.querySelector('[aria-label="Choose thinking level"]')).toBeNull();
     } finally {
       act(() => {
         root.unmount();
