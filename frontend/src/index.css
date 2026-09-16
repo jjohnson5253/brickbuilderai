@@ -112,6 +112,39 @@
   animation-delay: 0.3s;
 }
 
+.thinking-sequential-dot {
+  width: 0.25rem;
+  height: 0.25rem;
+  border-radius: 9999px;
+  background-color: currentColor;
+  opacity: 0.2;
+  transform: translateY(0.0625rem) scale(0.75);
+  animation: thinkingSequentialDot 1.4s ease-in-out infinite;
+}
+
+.thinking-sequential-dot-2 {
+  animation-delay: 0.16s;
+}
+
+.thinking-sequential-dot-3 {
+  animation-delay: 0.32s;
+}
+
+@keyframes thinkingSequentialDot {
+  0%, 18% {
+    opacity: 0.2;
+    transform: translateY(0.0625rem) scale(0.75);
+  }
+  38%, 78% {
+    opacity: 0.9;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0.2;
+    transform: translateY(0.0625rem) scale(0.75);
+  }
+}
+
 /* Component Styles */
 .input {
   @apply w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent;
