@@ -263,14 +263,13 @@ async def handle_checkout_session_completed(session):
                                 <div style="display: inline-flex; align-items: center; gap: 0px;">
                                   <span style="font-size: 32px; font-weight: 800; color: #ef4444; letter-spacing: -0.5px;">BRICK</span>
                                   <span style="font-size: 32px; font-weight: 800; color: #1e293b; letter-spacing: -0.5px;">BUILDER</span>
-                                  <span style="font-size: 32px; font-weight: 800; color: #ef4444; letter-spacing: -0.5px;">.AI</span>
                                 </div>
                               </div>
                               
                               <h2 style="color: #1e293b; margin-bottom: 16px;">Order Confirmed!</h2>
                               
                               <p style="color: #475569; line-height: 1.6; margin-bottom: 12px;">
-                                We've received your order. Please wait 12-18 business days for your bricks to arrive.
+                                We've received your order. Please wait 8-12 business days for your bricks to arrive.
                               </p>
                               
                               <p style="color: #1e293b; font-weight: 600; margin-bottom: 24px;">
@@ -301,6 +300,11 @@ async def handle_checkout_session_completed(session):
                               </p>
                               
                               <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
+                              
+                              <p style="color: #64748b; font-size: 14px; text-align: center;">
+                                Have any questions? Email us at
+                                <a href="mailto:support@brickbuilder.ai" style="color: #ef4444; text-decoration: none;">support@brickbuilder.ai</a>
+                              </p>
                             </div>
                         """
                         
