@@ -301,6 +301,11 @@ async def handle_checkout_session_completed(session):
                               </p>
                               
                               <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 32px 0;">
+                              
+                              <p style="color: #64748b; font-size: 14px; text-align: center;">
+                                Have any questions? Email us at
+                                <a href="mailto:support@brickbuilder.ai" style="color: #ef4444; text-decoration: none;">support@brickbuilder.ai</a>
+                              </p>
                             </div>
                         """
                         

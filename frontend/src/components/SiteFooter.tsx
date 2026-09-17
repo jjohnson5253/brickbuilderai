@@ -22,7 +22,7 @@ export function SiteFooter() {
       <div className="flex flex-col items-center gap-3">
         <div className="flex items-center gap-4">
           <a
-            href="https://www.instagram.com/brickbuilder.ai/"
+            href="https://www.instagram.com/trybrickbuilder/"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Instagram"
@@ -31,7 +31,7 @@ export function SiteFooter() {
             <Instagram className="h-5 w-5" />
           </a>
           <a
-            href="https://www.youtube.com/@brickbuilderai"
+            href="https://www.youtube.com/@trybrickbuilder"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="YouTube"
@@ -40,7 +40,7 @@ export function SiteFooter() {
             <Youtube className="h-5 w-5" />
           </a>
           <a
-            href="https://www.tiktok.com/@brickbuilderai/"
+            href="https://www.tiktok.com/@trybrickbuilder/"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="TikTok"
@@ -58,7 +58,7 @@ export function SiteFooter() {
             <Github className="h-5 w-5" />
           </a>
         </div>
-        {/* <div>
+        <div>
           Need help?{" "}
           <a
             href="mailto:support@brickbuilder.ai"
@@ -66,7 +66,7 @@ export function SiteFooter() {
           >
             support@brickbuilder.ai
           </a>
-        </div> */}
+        </div>
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs">
           <Link to="/blog" className="hover:text-[#f44336] transition-colors">
             Blog
