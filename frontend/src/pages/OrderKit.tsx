@@ -345,7 +345,7 @@ export default function OrderKit() {
                 </div>
                 <div>
                   <div className="font-semibold text-slate-900">Estimated Shipping</div>
-                  <div className="text-sm text-slate-600">8 business days</div>
+                  <div className="text-sm text-slate-600">12-18 business days</div>
                 </div>
               </div>
             </div>
