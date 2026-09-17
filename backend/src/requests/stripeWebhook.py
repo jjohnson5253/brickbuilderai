@@ -263,7 +263,6 @@ async def handle_checkout_session_completed(session):
                                 <div style="display: inline-flex; align-items: center; gap: 0px;">
                                   <span style="font-size: 32px; font-weight: 800; color: #ef4444; letter-spacing: -0.5px;">BRICK</span>
                                   <span style="font-size: 32px; font-weight: 800; color: #1e293b; letter-spacing: -0.5px;">BUILDER</span>
-                                  <span style="font-size: 32px; font-weight: 800; color: #ef4444; letter-spacing: -0.5px;">.AI</span>
                                 </div>
                               </div>
                               
