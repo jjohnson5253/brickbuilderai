@@ -269,7 +269,7 @@ async def handle_checkout_session_completed(session):
                               <h2 style="color: #1e293b; margin-bottom: 16px;">Order Confirmed!</h2>
                               
                               <p style="color: #475569; line-height: 1.6; margin-bottom: 12px;">
-                                We've received your order. Please wait 12-18 business days for your bricks to arrive.
+                                We've received your order. Please wait 8-12 business days for your bricks to arrive.
                               </p>
                               
                               <p style="color: #1e293b; font-weight: 600; margin-bottom: 24px;">
