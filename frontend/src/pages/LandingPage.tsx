@@ -1248,7 +1248,7 @@ function HowItWorks() {
     {
       icon: Package,
       title: "Preview, edit, and order",
-      description: "Make your edits, grab the instructions, and we'll ship the parts to your door in 12-18 days.",
+      description: "Make your edits, grab the instructions, and we'll ship the parts to your door in 8 days.",
     },
   ];
 
@@ -1267,7 +1267,7 @@ function HowItWorks() {
             How It Works
           </h2>
           <p className="mt-3 text-base text-slate-600 max-w-2xl mx-auto">
-            Turn images and text into custom 3D brick models. Edit freely, get instant instructions, and have the parts on your doorstep in 12-18 days.
+            Turn images and text into custom 3D brick models. Edit freely, get instant instructions, and have the parts on your doorstep in 8 days.
           </p>
         </div>
 
