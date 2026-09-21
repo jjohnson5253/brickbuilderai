@@ -1,6 +1,8 @@
 import React from "react";
 import { MessageSquare, Wand2, Package } from "lucide-react";
 
+export const BRICKBUILDER_GITHUB_URL = "https://github.com/jjohnson5253/brickbuilderai";
+
 export function HowItWorksSection() {
   const steps = [
     {
@@ -40,7 +42,7 @@ export function HowItWorksSection() {
           <p className="mt-3 text-sm text-slate-600 max-w-2xl mx-auto">
             Want to learn the magic? See how BrickBuilder works and try running it yourself by exploring the code on{" "}
             <a
-              href="https://github.com/jjohnson5253/brickbuilderai"
+              href={BRICKBUILDER_GITHUB_URL}
               target="_blank"
               rel="noopener noreferrer"
               aria-label="GitHub (opens in a new tab)"
