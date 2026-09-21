@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
-import { HowItWorks } from '../src/pages/LandingPage';
+import { HowItWorksSection } from '../src/components/HowItWorksSection';
 
 describe('landing page how it works copy', () => {
   it('includes a child-friendly GitHub learn-more message', () => {
@@ -12,7 +12,7 @@ describe('landing page how it works copy', () => {
 
     try {
       act(() => {
-        root.render(<HowItWorks />);
+        root.render(<HowItWorksSection />);
       });
 
       expect(container.textContent).toContain('Want to learn the magic?');
