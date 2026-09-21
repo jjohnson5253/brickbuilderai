@@ -21,6 +21,7 @@ permissions:
 jobs:
   notify-deployment:
     if: >-
+      vars.CHANGE_REQUEST_FLOW_ENABLED == 'true' &&
       github.event.deployment_status.state == 'success' &&
       github.event.deployment_status.creator.login == 'vercel[bot]' &&
       github.event.deployment.environment == 'Preview' &&
@@ -62,12 +63,13 @@ jobs:
 
   notify-ready:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      vars.CHANGE_REQUEST_FLOW_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'dynamic' &&
        github.event.workflow_run.path == 'dynamic/copilot-swe-agent/copilot' &&
-       github.event.workflow_run.pull_requests[0].base.ref == 'staging')
+       github.event.workflow_run.pull_requests[0].base.ref == 'staging'))
     runs-on: ubuntu-latest
     timeout-minutes: 2
     env:

@@ -54,7 +54,9 @@ request branch.
    - `EMAIL_FROM`, for example `BrickBuilder <noreply@brickbuilder.ai>`.
 
 4. Add the same `CHANGE_REQUEST_GITHUB_EVENT_SECRET` value as a GitHub Actions
-   repository secret. Keep the Vercel GitHub integration enabled.
+   repository secret. Keep the Vercel GitHub integration enabled. Leave the
+   repository variable `CHANGE_REQUEST_FLOW_ENABLED` unset until all setup is
+   complete; this keeps deployment events from failing during installation.
 5. Grant an existing Supabase Auth user access with privileged SQL:
 
    ```sql
@@ -64,11 +66,13 @@ request branch.
    ```
 
    Repeat for each authorized account. Remove access by deleting its row.
+6. Set the GitHub Actions repository variable
+   `CHANGE_REQUEST_FLOW_ENABLED=true` to activate both event handlers.
 
 ## Required deployment order
 
 Merge the feature into `staging`, promote `staging` through a PR to `main`,
 apply the migration, deploy the Edge Function, set both copies of the shared
-event secret, and then grant users access. A workflow on a non-default branch
-does not receive repository-level deployment events, so the GitHub workflow
-must reach `main` before end-to-end testing.
+event secret, grant users access, and enable the repository variable last. A
+workflow on a non-default branch does not reliably receive every repository
+event, so the GitHub workflow must reach `main` before end-to-end testing.
