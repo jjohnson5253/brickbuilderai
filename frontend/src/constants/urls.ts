@@ -9,7 +9,7 @@ function getCanonicalGithubRepoUrl(url: URL): string {
 function parseAllowedGithubRepoUrl(url: string): URL | null {
   try {
     const parsed = new URL(url);
-    const isHttpProtocol = parsed.protocol === "http:" || parsed.protocol === "https:";
+    const isHttpProtocol = parsed.protocol === "https:";
     const normalizedHostname = parsed.hostname.toLowerCase();
     const isExpectedHost = normalizedHostname === EXPECTED_GITHUB_HOST;
     const path = parsed.pathname.replace(/\/+$/, "");

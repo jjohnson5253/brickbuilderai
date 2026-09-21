@@ -18,6 +18,14 @@ describe('resolveBrickbuilderGithubRepoUrl', () => {
     expect(repoUrl).toBe('https://github.com/jjohnson5253/brickbuilderai');
   });
 
+  it('falls back to default when configured URL is not HTTPS', () => {
+    const repoUrl = resolveBrickbuilderGithubRepoUrl(
+      'http://github.com/jjohnson5253/brickbuilderai',
+    );
+
+    expect(repoUrl).toBe('https://github.com/jjohnson5253/brickbuilderai');
+  });
+
   it('accepts mixed-case GitHub hostnames and trims surrounding whitespace', () => {
     const repoUrl = resolveBrickbuilderGithubRepoUrl(
       '  https://GitHub.com/jjohnson5253/brickbuilderai/  ',
