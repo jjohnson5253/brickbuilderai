@@ -25,7 +25,8 @@ describe('landing page how it works copy', () => {
       );
       expect(githubLink).not.toBeNull();
       expect(githubLink?.textContent).toContain('GitHub');
-      expect(githubLink?.textContent).toContain('opens in a new tab');
+      const screenReaderHint = githubLink?.querySelector('.sr-only');
+      expect(screenReaderHint?.textContent).toContain('opens in a new tab');
       expect(githubLink?.getAttribute('href')).toBe(BRICKBUILDER_GITHUB_REPO_URL);
       expect(githubLink?.getAttribute('target')).toBe('_blank');
       expect(githubLink?.getAttribute('aria-label')).toBeNull();
