@@ -4,6 +4,7 @@ import {
   previewAuthLink, taskPullNumber, validateChange,
 } from '../../supabase/functions/_shared/change-request-spec.js';
 import { storedScreenshotPaths } from '../../supabase/functions/_shared/change-request-storage.js';
+import emailAllowlistMigration from '../../supabase/migrations/20260921000001_add_feedback_email_allowlist.sql?raw';
 
 describe('change request Edge contract', () => {
   it('validates product text, image limits, and work branches', () => {
@@ -40,5 +41,15 @@ describe('change request Edge contract', () => {
   it('only purges screenshot paths owned by that request', () => {
     expect(storedScreenshotPaths({ id: 'req', screenshots: ['req/a.png', 'other/b.png', 'req/../x'] }))
       .toEqual(['req/a.png']);
+  });
+
+  it('keeps the normalized email allowlist private', () => {
+    expect(emailAllowlistMigration).toContain(
+      'alter table public.change_request_email_access enable row level security',
+    );
+    expect(emailAllowlistMigration).toContain(
+      'revoke all on public.change_request_email_access from anon, authenticated',
+    );
+    expect(emailAllowlistMigration).toContain('email = lower(trim(email))');
   });
 });

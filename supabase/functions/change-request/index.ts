@@ -93,7 +93,13 @@ async function account(request: Request) {
   const { data: grant, error: grantError } = await db.from('change_request_access')
     .select('user_id').eq('user_id', user.id).maybeSingle();
   if (grantError) throw grantError;
-  if (!grant) throw new Error('Your account does not have change-request access.');
+  const { data: emailGrant, error: emailGrantError } = await db
+    .from('change_request_email_access')
+    .select('email').eq('email', user.email.trim().toLowerCase()).maybeSingle();
+  if (emailGrantError) throw emailGrantError;
+  if (!grant && !emailGrant) {
+    throw new Error('Your account does not have change-request access.');
+  }
   return { id: user.id, email: user.email };
 }
 

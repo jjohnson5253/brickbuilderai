@@ -36,7 +36,8 @@ request branch.
 ## Setup
 
 1. Link the Supabase CLI to project `smzdytfghwslpbqnwdov`, then apply
-   `20260921000000_add_feedback_agent_flow.sql`.
+   `20260921000000_add_feedback_agent_flow.sql` and
+   `20260921000001_add_feedback_email_allowlist.sql`.
 2. Deploy only the new function:
 
    ```bash
@@ -65,7 +66,10 @@ request branch.
    on conflict (user_id) do nothing;
    ```
 
-   Repeat for each authorized account. Remove access by deleting its row.
+   Repeat for each authorized account. To pre-authorize someone before their
+   Auth account exists, insert their normalized address into
+   `change_request_email_access`. Remove access by deleting both applicable
+   user-ID and email rows.
 6. Set the GitHub Actions repository variable
    `CHANGE_REQUEST_FLOW_ENABLED=true` to activate both event handlers.
 
