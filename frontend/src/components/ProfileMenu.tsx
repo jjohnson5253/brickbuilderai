@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { User, ChevronDown, Sparkles, Settings, LogOut } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { ChangeRequestMenuItem } from "./ChangeRequestLauncher";
 
 interface ProfileMenuProps {
   /**
@@ -94,6 +95,8 @@ export function ProfileMenu({ onNavigate }: ProfileMenuProps) {
               <Settings className="h-4 w-4" />
               Settings
             </button>
+
+            <ChangeRequestMenuItem onSelect={() => setDropdownOpen(false)} />
 
             {/* Logout - only show when Supabase is configured */}
             {isSupabaseConfigured && (

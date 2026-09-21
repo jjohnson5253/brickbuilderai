@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ImagePlus, Loader2, WandSparkles, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -8,7 +8,17 @@ import {
 
 const requestIdFromUrl = () => new URLSearchParams(window.location.search).get('change_request') || undefined;
 
-export function ChangeRequestLauncher() {
+type ChangeRequestContextValue = {
+  enabled: boolean;
+  openForm: () => void;
+};
+
+const ChangeRequestContext = createContext<ChangeRequestContextValue>({
+  enabled: false,
+  openForm: () => {},
+});
+
+export function ChangeRequestProvider({ children }: { children: ReactNode }) {
   const { session, loading } = useAuth();
   const [enabled, setEnabled] = useState(false);
   const [open, setOpen] = useState(false);
@@ -35,9 +45,8 @@ export function ChangeRequestLauncher() {
     return () => { active = false; };
   }, [loading, requestId, token]);
 
-  if (!enabled || !token) return null;
-
   const submit = async () => {
+    if (!token) { setMessage('Sign in to request a change.'); return; }
     if (!description.trim()) { setMessage('Describe what you want to change.'); return; }
     setBusy(true); setMessage('');
     try {
@@ -54,6 +63,7 @@ export function ChangeRequestLauncher() {
   };
 
   const approve = async () => {
+    if (!token) { setMessage('Sign in to approve this change.'); return; }
     if (!request?.id) return;
     setBusy(true); setMessage('');
     try {
@@ -65,16 +75,12 @@ export function ChangeRequestLauncher() {
     } finally { setBusy(false); }
   };
 
-  return <>
-    <button
-      type="button"
-      onClick={() => setOpen(true)}
-      className="fixed bottom-5 right-5 z-[70] flex items-center gap-2 rounded-full bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-xl hover:bg-slate-800"
-    >
-      <WandSparkles className="h-4 w-4" /> Request an app change
-    </button>
-
-    {open && <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/55 p-3 sm:items-center">
+  return <ChangeRequestContext.Provider value={{
+    enabled: enabled && Boolean(token),
+    openForm: () => setOpen(true),
+  }}>
+    {children}
+    {enabled && token && open && <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/55 p-3 sm:items-center">
       <section className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-7" role="dialog" aria-modal="true" aria-labelledby="change-request-title">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
@@ -112,5 +118,24 @@ export function ChangeRequestLauncher() {
         </button>
       </section>
     </div>}
-  </>;
+  </ChangeRequestContext.Provider>;
+}
+
+export function ChangeRequestMenuItem({ onSelect }: { onSelect?: () => void }) {
+  const { enabled, openForm } = useContext(ChangeRequestContext);
+  if (!enabled) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        onSelect?.();
+        openForm();
+      }}
+      className="flex w-full cursor-pointer items-center gap-2 border-none bg-transparent px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+    >
+      <WandSparkles className="h-4 w-4" />
+      Request an app change
+    </button>
+  );
 }
