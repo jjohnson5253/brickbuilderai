@@ -44,10 +44,10 @@ export function HowItWorksSection() {
               href={BRICKBUILDER_GITHUB_REPO_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="GitHub (opens in a new tab)"
               className="font-semibold text-[#f44336] hover:text-[#d9372d] underline decoration-[#f44336]/30 underline-offset-2"
             >
               GitHub
+              <span className="sr-only"> (opens in a new tab)</span>
             </a>
             .
           </p>
