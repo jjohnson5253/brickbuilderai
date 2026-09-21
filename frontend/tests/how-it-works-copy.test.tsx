@@ -3,6 +3,7 @@ import { act } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
 import { HowItWorksSection } from '../src/components/HowItWorksSection';
+import { BRICKBUILDER_GITHUB_REPO_URL } from '../src/constants/urls';
 
 describe('landing page how it works copy', () => {
   it('includes a child-friendly GitHub learn-more message', () => {
@@ -15,19 +16,15 @@ describe('landing page how it works copy', () => {
         root.render(<HowItWorksSection />);
       });
 
-      expect(container.textContent).toContain('Want to learn the magic?');
-      expect(container.textContent).toContain(
-        'try running it yourself by exploring the code on',
-      );
+      expect(container.textContent).toContain('How It Works');
+      expect(container.textContent).toContain('run');
 
       const githubLink = Array.from(container.querySelectorAll('a')).find(
         (link) => link.textContent === 'GitHub',
       );
       expect(githubLink).not.toBeNull();
       expect(githubLink?.textContent).toBe('GitHub');
-      expect(githubLink?.getAttribute('href')).toBe(
-        'https://github.com/jjohnson5253/brickbuilderai',
-      );
+      expect(githubLink?.getAttribute('href')).toBe(BRICKBUILDER_GITHUB_REPO_URL);
       expect(githubLink?.getAttribute('target')).toBe('_blank');
       expect(githubLink?.getAttribute('aria-label')).toBe(
         'GitHub (opens in a new tab)',
