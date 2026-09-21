@@ -46,7 +46,11 @@ function timingSafeEqual(left: string, right: string): boolean {
   return difference === 0;
 }
 
-function loginPage(error?: string): Response {
+function safeReturnTo(value: string | null): string {
+  return value?.startsWith('/') && !value.startsWith('//') ? value : '/';
+}
+
+function loginPage(error?: string, returnTo = '/'): Response {
   const errorMessage = error
     ? `<p class="error" role="alert">${error}</p>`
     : '<p class="hint">Enter the preview password to continue.</p>';
@@ -116,7 +120,7 @@ function loginPage(error?: string): Response {
     <main>
       <h1>Preview Access</h1>
       ${errorMessage}
-      <form action="${AUTH_PATH}" method="post">
+      <form action="${AUTH_PATH}?returnTo=${encodeURIComponent(safeReturnTo(returnTo))}" method="post">
         <label for="password">Password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
         <button type="submit">View preview</button>
@@ -157,7 +161,7 @@ export default async function middleware(request: Request): Promise<Response | u
 
   const url = new URL(request.url);
   if (url.pathname !== AUTH_PATH || request.method !== 'POST') {
-    return loginPage();
+    return loginPage(undefined, `${url.pathname}${url.search}`);
   }
 
   const form = await request.formData();
@@ -166,14 +170,14 @@ export default async function middleware(request: Request): Promise<Response | u
     typeof submittedPassword === 'string' ? await digest(submittedPassword) : '';
 
   if (!timingSafeEqual(submittedToken, expectedToken)) {
-    return loginPage('Incorrect password. Please try again.');
+    return loginPage('Incorrect password. Please try again.', url.searchParams.get('returnTo') || '/');
   }
 
   return new Response(null, {
     status: 303,
     headers: {
       'Cache-Control': 'no-store',
-      Location: new URL('/', request.url).toString(),
+      Location: new URL(safeReturnTo(url.searchParams.get('returnTo')), request.url).toString(),
       'Set-Cookie': `${AUTH_COOKIE}=${expectedToken}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE_SECONDS}`,
     },
   });

@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_BACKEND_API_KEY?: string
   readonly VITE_RAILWAY_API_URL?: string
   readonly VITE_RAILWAY_API_URL_STAGING?: string
+  readonly VITE_CHANGE_REQUEST_BRANCH?: string
+  readonly VITE_CHANGE_REQUEST_SHA?: string
 }
 
 interface ImportMeta {
