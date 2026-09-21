@@ -6,7 +6,8 @@ function isAllowedGithubRepoUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     const isHttpProtocol = parsed.protocol === "http:" || parsed.protocol === "https:";
-    const isExpectedHost = parsed.hostname === EXPECTED_GITHUB_HOST;
+    const normalizedHostname = parsed.hostname.toLowerCase();
+    const isExpectedHost = normalizedHostname === EXPECTED_GITHUB_HOST;
     const path = parsed.pathname.replace(/\/+$/, "");
     const isExpectedRepository = path === EXPECTED_REPOSITORY_PATH;
     return isHttpProtocol && isExpectedHost && isExpectedRepository;

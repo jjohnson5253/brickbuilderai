@@ -17,4 +17,12 @@ describe('resolveBrickbuilderGithubRepoUrl', () => {
 
     expect(repoUrl).toBe('https://github.com/jjohnson5253/brickbuilderai');
   });
+
+  it('accepts mixed-case GitHub hostnames and trims surrounding whitespace', () => {
+    const repoUrl = resolveBrickbuilderGithubRepoUrl(
+      '  https://GitHub.com/jjohnson5253/brickbuilderai/  ',
+    );
+
+    expect(repoUrl).toBe('https://GitHub.com/jjohnson5253/brickbuilderai/');
+  });
 });
