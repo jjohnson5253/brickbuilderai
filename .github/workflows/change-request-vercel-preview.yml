@@ -1,0 +1,147 @@
+name: Deliver Vercel change preview
+
+on:
+  deployment_status:
+  workflow_run:
+    workflows: [Copilot cloud agent]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to replay
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  deployments: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  notify-deployment:
+    if: >-
+      vars.CHANGE_REQUEST_FLOW_ENABLED == 'true' &&
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment_status.creator.login == 'vercel[bot]' &&
+      github.event.deployment.environment == 'Preview' &&
+      github.event.deployment_status.environment_url != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send preview to the change request function
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANGE_REQUEST_EVENT_SECRET: ${{ secrets.CHANGE_REQUEST_EVENT_SECRET }}
+          DEPLOYMENT_SHA: ${{ github.event.deployment.sha }}
+          PREVIEW_URL: ${{ github.event.deployment_status.environment_url }}
+          REPOSITORY: ${{ github.repository }}
+          ENDPOINT: https://smzdytfghwslpbqnwdov.supabase.co/functions/v1/change-request
+        run: |
+          test -n "$CHANGE_REQUEST_EVENT_SECRET"
+          pulls="$(gh api "repos/$REPOSITORY/commits/$DEPLOYMENT_SHA/pulls")"
+          pr_number="$(jq -r '
+            map(select(.state == "open" and .base.ref == "staging"))
+            | first.number // empty' <<<"$pulls")"
+          if [[ -n "$pr_number" ]]; then
+            comments="$(gh api "repos/$REPOSITORY/issues/$pr_number/comments")"
+            branch_url="$(jq -r '
+              map(select(.user.login == "vercel[bot]")) | last.body // ""
+              | try capture("\\[Preview\\]\\((?<url>https://[^)]+\\.vercel\\.app)\\)").url catch ""' \
+              <<<"$comments")"
+            if [[ -n "$branch_url" ]]; then PREVIEW_URL="$branch_url"; fi
+          fi
+          jq -n \
+            --arg sha "$DEPLOYMENT_SHA" \
+            --arg url "$PREVIEW_URL" \
+            '{action: "vercel_preview", sha: $sha, url: $url}' > payload.json
+          curl --fail-with-body --show-error --silent --retry 2 --retry-all-errors \
+            --request POST "$ENDPOINT" \
+            --header "x-change-request-event-secret: $CHANGE_REQUEST_EVENT_SECRET" \
+            --header 'content-type: application/json' \
+            --data-binary @payload.json
+
+  notify-ready:
+    if: >-
+      vars.CHANGE_REQUEST_FLOW_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'dynamic' &&
+       github.event.workflow_run.path == 'dynamic/copilot-swe-agent/copilot' &&
+       github.event.workflow_run.pull_requests[0].base.ref == 'staging'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CHANGE_REQUEST_EVENT_SECRET: ${{ secrets.CHANGE_REQUEST_EVENT_SECRET }}
+      PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number || inputs.pr_number }}
+      COMPLETION_SHA: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+      WORKFLOW_STARTED_AT: ${{ github.event.workflow_run.run_started_at }}
+      REPOSITORY: ${{ github.repository }}
+      ENDPOINT: https://smzdytfghwslpbqnwdov.supabase.co/functions/v1/change-request
+    steps:
+      - name: Record Copilot completion
+        run: |
+          test -n "$CHANGE_REQUEST_EVENT_SECRET"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
+            sleep 3
+            events="$(gh api --paginate "repos/$REPOSITORY/issues/$PR_NUMBER/events")"
+            latest_work_event="$(jq -s -r --arg started "$WORKFLOW_STARTED_AT" '
+              add
+              | map(select((.event == "copilot_work_started" or .event == "copilot_work_finished")
+                  and .created_at >= $started))
+              | last.event // empty' <<<"$events")"
+            test "$latest_work_event" = copilot_work_finished
+          fi
+          pull="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER")"
+          test "$(jq -r '.base.ref' <<<"$pull")" = staging
+          test "$(jq -r '.head.ref' <<<"$pull")" != "$(jq -r '.head.ref | sub("^copilot/"; "")' <<<"$pull")"
+          test "$(jq -r '.user.login' <<<"$pull")" = Copilot
+          test "$(jq -r '.user.type' <<<"$pull")" = Bot
+          PR_SHA="$(jq -r '.head.sha' <<<"$pull")"
+          if [[ -n "$COMPLETION_SHA" ]]; then test "$PR_SHA" = "$COMPLETION_SHA"; fi
+          jq -n \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg sha "$PR_SHA" \
+            '{action: "agent_complete", pr_number: $pr_number, sha: $sha}' > payload.json
+          curl --fail-with-body --show-error --silent --retry 2 --retry-all-errors \
+            --request POST "$ENDPOINT" \
+            --header "x-change-request-event-secret: $CHANGE_REQUEST_EVENT_SECRET" \
+            --header 'content-type: application/json' \
+            --data-binary @payload.json
+
+          # A preview can finish before GitHub has published the completed
+          # task-to-PR artifact. In that case the event cannot be joined yet.
+          # Once Copilot is finished, do one lookup for a successful Vercel
+          # deployment of this exact revision and replay that event. This is a
+          # completion-triggered lookup, not polling.
+          preview_url=""
+          deployment_ids="$(gh api \
+            "repos/$REPOSITORY/deployments?sha=$PR_SHA&environment=Preview&per_page=100" \
+            --jq '.[] | select(.creator.login == "vercel[bot]") | .id')"
+          while IFS= read -r deployment_id; do
+            [[ -n "$deployment_id" ]] || continue
+            preview_url="$(gh api "repos/$REPOSITORY/deployments/$deployment_id/statuses?per_page=100" \
+              --jq '[.[] | select(.state == "success" and .creator.login == "vercel[bot]"
+                and (.environment_url // "") != "")][0].environment_url // ""')"
+            [[ -z "$preview_url" ]] || break
+          done <<<"$deployment_ids"
+
+          if [[ -n "$preview_url" ]]; then
+            comments="$(gh api "repos/$REPOSITORY/issues/$PR_NUMBER/comments")"
+            branch_url="$(jq -r '
+              map(select(.user.login == "vercel[bot]")) | last.body // ""
+              | try capture("\\[Preview\\]\\((?<url>https://[^)]+\\.vercel\\.app)\\)").url catch ""' \
+              <<<"$comments")"
+            if [[ -n "$branch_url" ]]; then preview_url="$branch_url"; fi
+            jq -n \
+              --arg sha "$PR_SHA" \
+              --arg url "$preview_url" \
+              '{action: "vercel_preview", sha: $sha, url: $url}' > preview-payload.json
+            curl --fail-with-body --show-error --silent --retry 2 --retry-all-errors \
+              --request POST "$ENDPOINT" \
+              --header "x-change-request-event-secret: $CHANGE_REQUEST_EVENT_SECRET" \
+              --header 'content-type: application/json' \
+              --data-binary @preview-payload.json
+          fi

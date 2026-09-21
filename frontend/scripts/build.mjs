@@ -46,7 +46,14 @@ function log(message) {
 }
 
 function runViteBuild(env) {
-  const result = spawnSync('npx', ['vite', 'build'], { stdio: 'inherit', env });
+  const result = spawnSync('npx', ['vite', 'build'], {
+    stdio: 'inherit',
+    env: {
+      ...env,
+      VITE_CHANGE_REQUEST_BRANCH: process.env.VERCEL_GIT_COMMIT_REF || 'main',
+      VITE_CHANGE_REQUEST_SHA: process.env.VERCEL_GIT_COMMIT_SHA || '',
+    },
+  });
   process.exit(result.status ?? 1);
 }
 
