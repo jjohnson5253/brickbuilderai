@@ -3,6 +3,7 @@ import { MessageSquare, Wand2, Package } from "lucide-react";
 import { BRICKBUILDER_GITHUB_REPO_URL } from "../constants/urls";
 
 export function HowItWorksSection() {
+  const stepDelayClasses = ["landing-delay-2", "landing-delay-3", "landing-delay-4"];
   const steps = [
     {
       icon: MessageSquare,
@@ -65,7 +66,7 @@ export function HowItWorksSection() {
             return (
               <div
                 key={step.title}
-                className={`relative flex flex-col items-center text-center rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-6 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all duration-300 landing-fade-in landing-delay-${i + 2}`}
+                className={`relative flex flex-col items-center text-center rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-6 shadow-sm hover:shadow-md hover:-translate-y-1 transition-all duration-300 landing-fade-in ${stepDelayClasses[i] ?? "landing-delay-4"}`}
               >
                 <div className="relative">
                   <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#f44336] to-[#ff6b6b] text-white shadow-md">
