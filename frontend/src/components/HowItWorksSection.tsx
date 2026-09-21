@@ -1,7 +1,7 @@
 import React from "react";
 import { MessageSquare, Wand2, Package } from "lucide-react";
 
-export const BRICKBUILDER_GITHUB_URL = "https://github.com/jjohnson5253/brickbuilderai";
+const BRICKBUILDER_GITHUB_URL = "https://github.com/jjohnson5253/brickbuilderai";
 
 export function HowItWorksSection() {
   const steps = [

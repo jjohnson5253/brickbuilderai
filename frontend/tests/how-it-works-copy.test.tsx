@@ -2,10 +2,7 @@ import React from 'react';
 import { act } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it } from 'vitest';
-import {
-  BRICKBUILDER_GITHUB_URL,
-  HowItWorksSection,
-} from '../src/components/HowItWorksSection';
+import { HowItWorksSection } from '../src/components/HowItWorksSection';
 
 describe('landing page how it works copy', () => {
   it('includes a child-friendly GitHub learn-more message', () => {
@@ -28,7 +25,9 @@ describe('landing page how it works copy', () => {
       );
       expect(githubLink).not.toBeNull();
       expect(githubLink?.textContent).toBe('GitHub');
-      expect(githubLink?.getAttribute('href')).toBe(BRICKBUILDER_GITHUB_URL);
+      expect(githubLink?.getAttribute('href')).toBe(
+        'https://github.com/jjohnson5253/brickbuilderai',
+      );
       expect(githubLink?.getAttribute('target')).toBe('_blank');
       expect(githubLink?.getAttribute('aria-label')).toBe(
         'GitHub (opens in a new tab)',
