@@ -1,3 +1,6 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
+
+# Supabase CLI project-link metadata
+supabase/.temp/

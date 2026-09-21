@@ -4,8 +4,8 @@ import middleware from '../middleware';
 
 const originalEnvironment = { ...process.env };
 
-function loginRequest(password: string): Request {
-  return new Request('https://example.com/__preview-auth', {
+function loginRequest(password: string, returnTo = ''): Request {
+  return new Request(`https://example.com/__preview-auth${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `password=${encodeURIComponent(password)}`,
@@ -44,13 +44,14 @@ describe('preview password middleware', () => {
   });
 
   it('shows a password-only form for an unauthenticated preview request', async () => {
-    const response = await middleware(new Request('https://example.com/dashboard'));
+    const response = await middleware(new Request('https://example.com/dashboard?change_request=req-1&token_hash=secret'));
     const body = await response?.text();
 
     expect(response?.status).toBe(200);
     expect(body).toContain('name="password"');
     expect(body).not.toContain('name="username"');
     expect(body).not.toContain('test-password');
+    expect(body).toContain(encodeURIComponent('/dashboard?change_request=req-1&token_hash=secret'));
   });
 
   it('rejects an incorrect password', async () => {
@@ -61,14 +62,19 @@ describe('preview password middleware', () => {
   });
 
   it('sets a secure cookie after accepting the password', async () => {
-    const response = await middleware(loginRequest('test-password'));
+    const response = await middleware(loginRequest('test-password', '/?change_request=req-1&token_hash=secret'));
 
     expect(response?.status).toBe(303);
-    expect(response?.headers.get('location')).toBe('https://example.com/');
+    expect(response?.headers.get('location')).toBe('https://example.com/?change_request=req-1&token_hash=secret');
     expect(response?.headers.get('set-cookie')).toMatch(
       /^brickbuilder_preview_auth=[a-f0-9]{64}; Path=\/; HttpOnly; Secure; SameSite=Strict;/,
     );
     expect(response?.headers.get('set-cookie')).not.toContain('test-password');
+  });
+
+  it('rejects an external return location', async () => {
+    const response = await middleware(loginRequest('test-password', '//evil.example/path'));
+    expect(response?.headers.get('location')).toBe('https://example.com/');
   });
 
   it('allows requests with the cookie issued after authentication', async () => {

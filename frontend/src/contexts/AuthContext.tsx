@@ -4,6 +4,7 @@ import { supabase, isSupabaseConfigured } from '../lib/supabase'
 import { UpdateUsernameApiService, UsernameTakenError } from '../services/updateUsernameApi'
 import { ClaimGenerationApiService } from '../services/claimGenerationApi'
 import { getAnonymousGenerationIds, removeAnonymousGenerationId } from '../utils/anonGenerations'
+import { previewLoginFromSearch, redeemPreviewLogin, stripPreviewLogin } from '../utils/previewAuth'
 
 interface UserProfile {
   id: string
@@ -158,8 +159,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    let active = true
+    const initialize = async () => {
+      const previewLogin = previewLoginFromSearch(window.location.search)
+      if (previewLogin) {
+        const error = await redeemPreviewLogin(supabase.auth, previewLogin)
+        if (error) console.warn('Preview sign-in could not be completed:', error)
+        window.history.replaceState(null, '', `${window.location.pathname}${stripPreviewLogin(window.location.search)}`)
+      }
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!active) return
       setSession(session)
       setUser(session?.user ?? null)
       if (session?.user?.email) {
@@ -169,7 +178,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         void claimPendingAnonymousGenerations(session.access_token)
       }
       setLoading(false)
-    })
+    }
+    void initialize()
 
     // Listen for auth changes
     const {
@@ -188,7 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false)
     })
 
-    return () => subscription.unsubscribe()
+    return () => { active = false; subscription.unsubscribe() }
   }, [])
 
   const signIn = async (email: string, password: string) => {
