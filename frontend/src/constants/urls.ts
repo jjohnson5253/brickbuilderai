@@ -2,7 +2,11 @@ const DEFAULT_GITHUB_REPO_URL = "https://github.com/jjohnson5253/brickbuilderai"
 const EXPECTED_GITHUB_HOST = "github.com";
 const EXPECTED_REPOSITORY_PATH = "/jjohnson5253/brickbuilderai";
 
-function isAllowedGithubRepoUrl(url: string): boolean {
+function getCanonicalGithubRepoUrl(url: URL): string {
+  return `${url.protocol}//${url.hostname.toLowerCase()}${EXPECTED_REPOSITORY_PATH}`;
+}
+
+function parseAllowedGithubRepoUrl(url: string): URL | null {
   try {
     const parsed = new URL(url);
     const isHttpProtocol = parsed.protocol === "http:" || parsed.protocol === "https:";
@@ -10,9 +14,9 @@ function isAllowedGithubRepoUrl(url: string): boolean {
     const isExpectedHost = normalizedHostname === EXPECTED_GITHUB_HOST;
     const path = parsed.pathname.replace(/\/+$/, "");
     const isExpectedRepository = path === EXPECTED_REPOSITORY_PATH;
-    return isHttpProtocol && isExpectedHost && isExpectedRepository;
+    return isHttpProtocol && isExpectedHost && isExpectedRepository ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -20,8 +24,12 @@ export function resolveBrickbuilderGithubRepoUrl(
   configuredUrl: string | undefined | null,
 ): string {
   const trimmedConfiguredUrl = configuredUrl?.trim();
-  return trimmedConfiguredUrl && isAllowedGithubRepoUrl(trimmedConfiguredUrl)
-    ? trimmedConfiguredUrl
+  const parsedConfiguredUrl = trimmedConfiguredUrl
+    ? parseAllowedGithubRepoUrl(trimmedConfiguredUrl)
+    : null;
+
+  return parsedConfiguredUrl
+    ? getCanonicalGithubRepoUrl(parsedConfiguredUrl)
     : DEFAULT_GITHUB_REPO_URL;
 }
 

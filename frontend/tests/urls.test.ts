@@ -7,7 +7,7 @@ describe('resolveBrickbuilderGithubRepoUrl', () => {
       'https://github.com/jjohnson5253/brickbuilderai/',
     );
 
-    expect(repoUrl).toBe('https://github.com/jjohnson5253/brickbuilderai/');
+    expect(repoUrl).toBe('https://github.com/jjohnson5253/brickbuilderai');
   });
 
   it('falls back to default when configured URL is not the expected GitHub repository', () => {
@@ -23,6 +23,6 @@ describe('resolveBrickbuilderGithubRepoUrl', () => {
       '  https://GitHub.com/jjohnson5253/brickbuilderai/  ',
     );
 
-    expect(repoUrl).toBe('https://GitHub.com/jjohnson5253/brickbuilderai/');
+    expect(repoUrl).toBe('https://github.com/jjohnson5253/brickbuilderai');
   });
 });
