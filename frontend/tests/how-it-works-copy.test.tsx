@@ -17,7 +17,8 @@ describe('landing page how it works copy', () => {
       });
 
       expect(container.textContent).toContain('How It Works');
-      expect(container.textContent).toContain('run');
+      expect(container.textContent).toContain('Want to learn the magic?');
+      expect(container.textContent).toContain('exploring the code on');
 
       const githubLink = Array.from(container.querySelectorAll('a')).find(
         (link) => link.textContent === 'GitHub',
