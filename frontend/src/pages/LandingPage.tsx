@@ -1269,6 +1269,18 @@ function HowItWorks() {
           <p className="mt-3 text-base text-slate-600 max-w-2xl mx-auto">
             Turn images and text into custom 3D brick models. Edit freely, get instant instructions, and have the parts on your doorstep in 8 days.
           </p>
+          <p className="mt-3 text-sm text-slate-600 max-w-2xl mx-auto">
+            Want to learn the magic? See how BrickBuilder works and try running it yourself by exploring the code on{" "}
+            <a
+              href="https://github.com/jjohnson5253/brickbuilderai"
+              target="_blank"
+              rel="noreferrer"
+              className="font-semibold text-[#f44336] hover:text-[#d9372d] underline decoration-[#f44336]/30 underline-offset-2"
+            >
+              GitHub
+            </a>
+            .
+          </p>
         </div>
 
         <div className="mt-12 grid grid-cols-1 gap-6 md:grid-cols-3 md:gap-8 relative">
