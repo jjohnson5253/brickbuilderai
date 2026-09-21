@@ -14,7 +14,7 @@ import GlbToLegoPage from "./pages/GlbToLegoPage";
 import BlogIndexPage from "./pages/BlogIndexPage";
 import UsingAiToDesignLego2026Page from "./pages/UsingAiToDesignLego2026Page";
 import { AnnouncementBanner } from "./components/AnnouncementBanner";
-import { ChangeRequestLauncher } from "./components/ChangeRequestLauncher";
+import { ChangeRequestProvider } from "./components/ChangeRequestLauncher";
 // import { ProtectedRoute } from "./components/ProtectedRoute";
 
 function ExternalRedirect({ to }: { to: string }) {
@@ -27,8 +27,8 @@ function ExternalRedirect({ to }: { to: string }) {
 export default function App() {
   return (
     <BrowserRouter>
-      <ChangeRequestLauncher />
-      {/* <ProtectedRoute> */}
+      <ChangeRequestProvider>
+        {/* <ProtectedRoute> */}
         {/* <AnnouncementBanner /> */}
         <Routes>
           {/* Public */}
@@ -60,7 +60,8 @@ export default function App() {
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      {/* </ProtectedRoute> */}
+        {/* </ProtectedRoute> */}
+      </ChangeRequestProvider>
     </BrowserRouter>
   );
 }
