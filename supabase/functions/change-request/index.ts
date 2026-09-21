@@ -2,7 +2,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import {
   isChangeBranch, parseGitHubAgentCompletion,
   matchesChangePreview, parseGitHubVercelPreview, previewAuthLink,
-  pullReadyRequest, taskPullNumber, validateChange,
+  previewEmailMessage, pullReadyRequest, taskPullNumber, validateChange,
 } from '../_shared/change-request-spec.js';
 import { purgeChangeRequestScreenshots } from '../_shared/change-request-storage.js';
 
@@ -304,11 +304,8 @@ async function deliverPreview(row: Record<string, any>, pr: Record<string, any>,
   });
   if (linkError) throw new Error(linkError.message);
   const signedPreviewUrl = previewAuthLink(previewUrl, row.id, linkData?.properties);
-  await sendMail(row.email, 'Your BrickBuilder change is ready to preview', [
-    `Preview: ${signedPreviewUrl}`,
-    `Branch: ${pr.head.ref}`,
-    'This link signs you back into the app on the preview when the token is still valid.',
-  ]);
+  const email = previewEmailMessage(signedPreviewUrl, pr);
+  await sendMail(row.email, email.subject, email.lines);
   const sent = await db.from('change_requests').update({
     status: 'preview_ready', branch: pr.head.ref, pr_number: pr.number,
     preview_url: previewUrl, notified_sha: sha, preview_email_sent_at: now, updated_at: now,

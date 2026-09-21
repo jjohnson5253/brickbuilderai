@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isChangeBranch, parseGitHubAgentCompletion, parseGitHubVercelPreview,
-  previewAuthLink, taskPullNumber, validateChange,
+  previewAuthLink, previewEmailMessage, taskPullNumber, validateChange,
 } from '../../supabase/functions/_shared/change-request-spec.js';
 import { storedScreenshotPaths } from '../../supabase/functions/_shared/change-request-storage.js';
 import emailAllowlistMigration from '../../supabase/migrations/20260921000001_add_feedback_email_allowlist.sql?raw';
@@ -27,6 +27,20 @@ describe('change request Edge contract', () => {
       hashed_token: 'hash', verification_type: 'magiclink',
     })).toContain('preview_login=1');
     expect(() => previewAuthLink('https://branch.vercel.app', 'req-1')).toThrow('usable');
+  });
+
+  it('includes the pull request title and GitHub link in preview emails', () => {
+    const message = previewEmailMessage('https://branch.vercel.app?token_hash=hash', {
+      title: 'Improve the model editor',
+      html_url: 'https://github.com/example/app/pull/42',
+      head: { ref: 'copilot/improve-editor' },
+    });
+    expect(message.subject).toContain('Improve the model editor');
+    expect(message.lines).toContain('Pull request: Improve the model editor');
+    expect(message.lines).toContain('GitHub: https://github.com/example/app/pull/42');
+    expect(() => previewEmailMessage('https://branch.vercel.app', {
+      title: 'Unsafe link', html_url: 'https://example.com/pull/42', head: { ref: 'copilot/change' },
+    })).toThrow('usable pull request link');
   });
 
   it('uses GitHub-owned task artifacts and validates Copilot completion', () => {

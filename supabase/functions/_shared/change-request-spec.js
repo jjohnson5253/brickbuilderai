@@ -54,6 +54,32 @@ export function previewAuthLink(previewUrl, requestId, props = {}) {
   return url.toString();
 }
 
+export function previewEmailMessage(signedPreviewUrl, pr) {
+  const title = typeof pr?.title === 'string' ? pr.title.trim() : '';
+  const branch = typeof pr?.head?.ref === 'string' ? pr.head.ref : '';
+  const rawPullUrl = typeof pr?.html_url === 'string' ? pr.html_url : '';
+  let pullUrl;
+  try {
+    const parsed = new URL(rawPullUrl);
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') throw new Error();
+    pullUrl = parsed.toString();
+  } catch {
+    throw new Error('GitHub did not return a usable pull request link.');
+  }
+  if (!title || !branch) throw new Error('GitHub did not return complete pull request details.');
+
+  return {
+    subject: `BrickBuilder preview ready: ${title}`,
+    lines: [
+      `Preview: ${signedPreviewUrl}`,
+      `Pull request: ${title}`,
+      `GitHub: ${pullUrl}`,
+      `Branch: ${branch}`,
+      'The preview link signs you back into the app while its one-time token is valid.',
+    ],
+  };
+}
+
 export function matchesChangePreview(row, branch, deploymentSha, origin) {
   if (!row || !origin) return false;
   if (deploymentSha !== undefined && deploymentSha !== null && deploymentSha !== '') {
