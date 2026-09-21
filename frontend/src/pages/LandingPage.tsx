@@ -1233,7 +1233,7 @@ export default function LandingPage() {
   );
 }
 
-function HowItWorks() {
+export function HowItWorks() {
   const steps = [
     {
       icon: MessageSquare,
@@ -1274,7 +1274,7 @@ function HowItWorks() {
             <a
               href="https://github.com/jjohnson5253/brickbuilderai"
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="font-semibold text-[#f44336] hover:text-[#d9372d] underline decoration-[#f44336]/30 underline-offset-2"
             >
               GitHub
