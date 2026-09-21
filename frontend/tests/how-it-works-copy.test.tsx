@@ -23,6 +23,9 @@ describe('landing page how it works copy', () => {
       const githubLink = container.querySelector('a[href="https://github.com/jjohnson5253/brickbuilderai"]');
       expect(githubLink).not.toBeNull();
       expect(githubLink?.textContent).toBe('GitHub');
+      expect(githubLink?.getAttribute('aria-label')).toBe(
+        'GitHub (opens in a new tab)',
+      );
       expect(githubLink?.getAttribute('rel')).toContain('noopener');
       expect(githubLink?.getAttribute('rel')).toContain('noreferrer');
     } finally {

@@ -1275,6 +1275,7 @@ export function HowItWorks() {
               href="https://github.com/jjohnson5253/brickbuilderai"
               target="_blank"
               rel="noopener noreferrer"
+              aria-label="GitHub (opens in a new tab)"
               className="font-semibold text-[#f44336] hover:text-[#d9372d] underline decoration-[#f44336]/30 underline-offset-2"
             >
               GitHub
