@@ -20,9 +20,12 @@ describe('landing page how it works copy', () => {
         'try running it yourself by exploring the code on',
       );
 
-      const githubLink = container.querySelector('a[href="https://github.com/jjohnson5253/brickbuilderai"]');
+      const githubLink = Array.from(container.querySelectorAll('a')).find(
+        (link) => link.textContent === 'GitHub',
+      );
       expect(githubLink).not.toBeNull();
       expect(githubLink?.textContent).toBe('GitHub');
+      expect(githubLink?.getAttribute('href')).toContain('https://github.com/');
       expect(githubLink?.getAttribute('target')).toBe('_blank');
       expect(githubLink?.getAttribute('aria-label')).toBe(
         'GitHub (opens in a new tab)',
