@@ -125,6 +125,15 @@ Anthropic's Messages API instead, and requires `ANTHROPIC_API_KEY` (see also
 scoped to a workspace, also set `ANTHROPIC_WORKSPACE_ID` (from the Anthropic
 Console under Settings > Workspaces), or requests fail with
 "API key is not scoped to a workspace".
+
+`POST /claudeToBricks` accepts a text prompt, a base64 image, or both and asks
+Claude to create a complete LDraw model directly. The asynchronous generation
+then follows the normal artifact flow: LDR validation, MPD packing, parts-list
+creation, Supabase upload, and `/generation/{id}` polling. It uses
+`claude-opus-5` by default. Configure it with `ANTHROPIC_LDR_MODEL`,
+`ANTHROPIC_LDR_MAX_TOKENS` (default `65536`), and
+`ANTHROPIC_LDR_TIMEOUT_SECONDS` (default `600`). It shares `ANTHROPIC_API_KEY`
+and optional `ANTHROPIC_WORKSPACE_ID` with `/llmRender`.
 ```bash
 curl -X POST http://localhost:8002/llmRender \
   -H "Content-Type: application/json" \
