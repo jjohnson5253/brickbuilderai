@@ -2,7 +2,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import {
   isChangeBranch, parseGitHubAgentCompletion,
   matchesChangePreview, parseGitHubVercelPreview, previewAuthLink,
-  previewEmailMessage, pullReadyRequest, taskPullNumber, validateChange,
+  previewEmailMessage, pullReadyRequest, taskBranchName, taskPullNumber, validateChange,
 } from '../_shared/change-request-spec.js';
 import { purgeChangeRequestScreenshots } from '../_shared/change-request-storage.js';
 
@@ -260,7 +260,10 @@ async function requestForPull(pr: Record<string, any>) {
   for (const candidate of candidates.data || []) {
     if (!candidate.task_id) continue;
     const task = await github(`/agents${repoPath}/tasks/${candidate.task_id}`);
-    if (taskPullNumber(task) === pr.number) return candidate;
+    const pullId = taskPullNumber(task);
+    if (pullId === pr.number || pullId === pr.id || taskBranchName(task) === pr.head.ref) {
+      return candidate;
+    }
   }
 
   return null;
