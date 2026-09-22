@@ -856,7 +856,7 @@ export default function LandingPage() {
         <main className="flex flex-1 flex-col items-center text-center w-full">
           <div className="mt-4 flex w-full max-w-3xl flex-col items-center gap-6 sm:mt-8">
             <h1 className="text-4xl font-extrabold leading-tight sm:text-5xl text-slate-900 landing-fade-in landing-delay-2">
-              Create and Build
+              Imagine. Create. Build.
             </h1>
 
             <p className="text-lg text-slate-600 landing-fade-in landing-delay-2">Turn images or text into buildable 3D brick models in seconds</p>
