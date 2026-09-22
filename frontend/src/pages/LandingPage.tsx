@@ -1435,6 +1435,23 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
 }
 
 /** TranslateX marquee (no user scroll). Cards remain 1:1 squares. */
+export const FEATURED_STRIP_DRAG_THRESHOLD_PX = 6;
+
+export function getFeaturedStripGestureDirection(
+  deltaX: number,
+  deltaY: number,
+  threshold = FEATURED_STRIP_DRAG_THRESHOLD_PX,
+): 'undecided' | 'horizontal' | 'vertical' {
+  const absX = Math.abs(deltaX);
+  const absY = Math.abs(deltaY);
+
+  if (absX < threshold && absY < threshold) {
+    return 'undecided';
+  }
+
+  return absX > absY ? 'horizontal' : 'vertical';
+}
+
 const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedItem[] }) {
   const navigate = useNavigate();
   const trackRef = useRef<HTMLDivElement>(null);
@@ -1446,8 +1463,11 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
   
   const isDraggingRef = useRef(false);
   const dragStartXRef = useRef(0);
+  const dragStartYRef = useRef(0);
   const dragStartPosRef = useRef(0);
   const hasDraggedRef = useRef(false);
+  const activePointerIdRef = useRef<number | null>(null);
+  const dragDirectionRef = useRef<'undecided' | 'horizontal' | 'vertical'>('undecided');
 
   useLayoutEffect(() => {
     const measure = () => {
@@ -1494,37 +1514,62 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
     if (!track) return;
 
     const handlePointerDown = (e: PointerEvent) => {
-      isDraggingRef.current = true;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      activePointerIdRef.current = e.pointerId;
+      dragDirectionRef.current = 'undecided';
       hasDraggedRef.current = false;
       dragStartXRef.current = e.clientX;
+      dragStartYRef.current = e.clientY;
       dragStartPosRef.current = xRef.current;
-      track.style.cursor = 'grabbing';
     };
 
     const handlePointerMove = (e: PointerEvent) => {
-      if (!isDraggingRef.current) return;
-      const delta = e.clientX - dragStartXRef.current;
-      
-      // Mark as dragged if moved more than 5 pixels
-      if (Math.abs(delta) > 5) {
+      if (activePointerIdRef.current !== e.pointerId) return;
+
+      const deltaX = e.clientX - dragStartXRef.current;
+      const deltaY = e.clientY - dragStartYRef.current;
+
+      if (dragDirectionRef.current === 'undecided') {
+        dragDirectionRef.current = getFeaturedStripGestureDirection(deltaX, deltaY);
+        if (dragDirectionRef.current === 'vertical') return;
+        if (dragDirectionRef.current !== 'horizontal') return;
+
+        isDraggingRef.current = true;
+        track.style.cursor = 'grabbing';
+        if (track.hasPointerCapture?.(e.pointerId) === false) {
+          track.setPointerCapture?.(e.pointerId);
+        }
+      }
+
+      if (!isDraggingRef.current || dragDirectionRef.current !== 'horizontal') return;
+      if (e.cancelable) e.preventDefault();
+
+      if (Math.abs(deltaX) > FEATURED_STRIP_DRAG_THRESHOLD_PX) {
         hasDraggedRef.current = true;
       }
-      
-      xRef.current = dragStartPosRef.current + delta;
-      
+
+      xRef.current = dragStartPosRef.current + deltaX;
+
       // Normalize position to stay within bounds
       while (-xRef.current >= runWidth) xRef.current += runWidth;
       while (xRef.current > 0) xRef.current -= runWidth;
-      
+
       track.style.transform = `translate3d(${Math.round(xRef.current)}px,0,0)`;
     };
 
-    const handlePointerUp = () => {
+    const handlePointerUp = (e: PointerEvent) => {
+      if (activePointerIdRef.current !== e.pointerId) return;
+      activePointerIdRef.current = null;
+      dragDirectionRef.current = 'undecided';
+
       if (isDraggingRef.current) {
         isDraggingRef.current = false;
         lastRef.current = 0; // Reset for smooth resumption
         track.style.cursor = 'grab';
-        
+        if (track.hasPointerCapture?.(e.pointerId)) {
+          track.releasePointerCapture?.(e.pointerId);
+        }
+
         // Reset hasDragged after a brief delay to allow click prevention
         setTimeout(() => {
           hasDraggedRef.current = false;
@@ -1601,7 +1646,7 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
       <div
         ref={trackRef}
         className="flex w-max gap-6"
-        style={{ transform: "translate3d(0,0,0)", willChange: "transform", backfaceVisibility: "hidden", cursor: "grab", touchAction: "none" }}
+        style={{ transform: "translate3d(0,0,0)", willChange: "transform", backfaceVisibility: "hidden", cursor: "grab", touchAction: "pan-y" }}
       >
         <Row />
         <Row />
