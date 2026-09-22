@@ -1454,7 +1454,7 @@ export function getFeaturedStripGestureDirection(
 
 export function scheduleFeaturedStripClickReset(
   hasDraggedRef: { current: boolean },
-  scheduleTimeout: (callback: () => void, delay: number) => ReturnType<typeof setTimeout> = window.setTimeout,
+  scheduleTimeout: (callback: () => void, delay: number) => ReturnType<typeof setTimeout> = setTimeout,
 ) {
   scheduleTimeout(() => {
     hasDraggedRef.current = false;
