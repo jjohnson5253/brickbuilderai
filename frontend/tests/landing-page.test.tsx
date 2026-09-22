@@ -54,7 +54,7 @@ describe('LandingPage', () => {
   it('uses the updated hero headline', () => {
     const markup = renderToStaticMarkup(<LandingPage />);
 
-    expect(markup).toContain('Create and Build');
-    expect(markup).not.toContain('Imagine. Create. Build.');
+    expect(markup).toContain('Imagine. Create. Build.');
+    expect(markup).not.toContain('Create and Build');
   });
 });
