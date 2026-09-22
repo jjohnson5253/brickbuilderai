@@ -51,10 +51,10 @@ vi.mock('../src/components/ProfileMenu', () => ({
 import LandingPage from '../src/pages/LandingPage';
 
 describe('LandingPage', () => {
-  it('uses Create in the hero headline', () => {
+  it('uses the updated hero headline', () => {
     const markup = renderToStaticMarkup(<LandingPage />);
 
-    expect(markup).toContain('Imagine. Create. Build.');
-    expect(markup).not.toContain('Imagine. Customize. Build.');
+    expect(markup).toContain('Create and Build');
+    expect(markup).not.toContain('Imagine. Create. Build.');
   });
 });
