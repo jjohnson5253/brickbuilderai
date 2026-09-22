@@ -1467,6 +1467,7 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
   const dragStartPosRef = useRef(0);
   const hasDraggedRef = useRef(false);
   const activePointerIdRef = useRef<number | null>(null);
+  const draggingPointerIdRef = useRef<number | null>(null);
   const dragDirectionRef = useRef<'undecided' | 'horizontal' | 'vertical'>('undecided');
 
   useLayoutEffect(() => {
@@ -1519,6 +1520,7 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
 
       if (!isDraggingRef.current) return;
 
+      draggingPointerIdRef.current = null;
       isDraggingRef.current = false;
       lastRef.current = 0; // Reset for smooth resumption
       track.style.cursor = 'grab';
@@ -1559,6 +1561,7 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
         if (dragDirectionRef.current !== 'horizontal') return;
 
         isDraggingRef.current = true;
+        draggingPointerIdRef.current = e.pointerId;
         track.style.cursor = 'grabbing';
         try {
           track.setPointerCapture?.(e.pointerId);
@@ -1584,17 +1587,17 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
     };
 
     const handlePointerUp = (e: PointerEvent) => {
-      if (activePointerIdRef.current !== e.pointerId) return;
+      if (activePointerIdRef.current !== e.pointerId && draggingPointerIdRef.current !== e.pointerId) return;
       resetPointerInteraction(e.pointerId);
     };
 
     const handlePointerCancel = (e: PointerEvent) => {
-      if (activePointerIdRef.current !== e.pointerId) return;
+      if (activePointerIdRef.current !== e.pointerId && draggingPointerIdRef.current !== e.pointerId) return;
       resetPointerInteraction(e.pointerId);
     };
 
     const handleLostPointerCapture = (e: PointerEvent) => {
-      if (activePointerIdRef.current !== e.pointerId) return;
+      if (activePointerIdRef.current !== e.pointerId && draggingPointerIdRef.current !== e.pointerId) return;
       resetPointerInteraction(null);
     };
 
