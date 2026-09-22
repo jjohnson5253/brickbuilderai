@@ -1452,6 +1452,15 @@ export function getFeaturedStripGestureDirection(
   return absX > absY ? 'horizontal' : 'vertical';
 }
 
+export function scheduleFeaturedStripClickReset(
+  hasDraggedRef: { current: boolean },
+  scheduleTimeout: (callback: () => void, delay: number) => ReturnType<typeof setTimeout> = window.setTimeout,
+) {
+  scheduleTimeout(() => {
+    hasDraggedRef.current = false;
+  }, 100);
+}
+
 const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedItem[] }) {
   const navigate = useNavigate();
   const trackRef = useRef<HTMLDivElement>(null);
@@ -1517,10 +1526,10 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
     const resetPointerInteraction = (pointerId: number | null) => {
       activePointerIdRef.current = null;
       dragDirectionRef.current = 'undecided';
+      draggingPointerIdRef.current = null;
 
       if (!isDraggingRef.current) return;
 
-      draggingPointerIdRef.current = null;
       isDraggingRef.current = false;
       lastRef.current = 0; // Reset for smooth resumption
       track.style.cursor = 'grab';
@@ -1534,9 +1543,7 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
       }
 
       // Reset hasDragged after a brief delay to allow click prevention
-      setTimeout(() => {
-        hasDraggedRef.current = false;
-      }, 100);
+      scheduleFeaturedStripClickReset(hasDraggedRef);
     };
 
     const handlePointerDown = (e: PointerEvent) => {

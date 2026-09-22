@@ -1,6 +1,6 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -51,7 +51,12 @@ vi.mock('../src/components/ProfileMenu', () => ({
 import LandingPage, {
   FEATURED_STRIP_DRAG_THRESHOLD_PX,
   getFeaturedStripGestureDirection,
+  scheduleFeaturedStripClickReset,
 } from '../src/pages/LandingPage';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('LandingPage', () => {
   it('uses the updated hero headline', () => {
@@ -80,5 +85,19 @@ describe('LandingPage', () => {
     expect(getFeaturedStripGestureDirection(24, 8)).toBe('horizontal');
     expect(getFeaturedStripGestureDirection(8, 24)).toBe('vertical');
     expect(getFeaturedStripGestureDirection(12, 12)).toBe('vertical');
+  });
+
+  it('keeps drag click suppression in place until the timeout clears it', () => {
+    vi.useFakeTimers();
+    const hasDraggedRef = { current: true };
+
+    scheduleFeaturedStripClickReset(hasDraggedRef);
+    expect(hasDraggedRef.current).toBe(true);
+
+    vi.advanceTimersByTime(99);
+    expect(hasDraggedRef.current).toBe(true);
+
+    vi.advanceTimersByTime(1);
+    expect(hasDraggedRef.current).toBe(false);
   });
 });
