@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isChangeBranch, parseGitHubAgentCompletion, parseGitHubVercelPreview,
-  previewAuthLink, previewEmailMessage, taskPullNumber, validateChange,
+  previewAuthLink, previewEmailMessage, taskBranchName, taskPullNumber, validateChange,
 } from '../../supabase/functions/_shared/change-request-spec.js';
 import { storedScreenshotPaths } from '../../supabase/functions/_shared/change-request-storage.js';
 import emailAllowlistMigration from '../../supabase/migrations/20260921000001_add_feedback_email_allowlist.sql?raw';
@@ -45,6 +45,12 @@ describe('change request Edge contract', () => {
 
   it('uses GitHub-owned task artifacts and validates Copilot completion', () => {
     expect(taskPullNumber({ artifacts: [{ provider: 'github', type: 'pull', data: { id: 42 } }] })).toBe(42);
+    expect(taskBranchName({ artifacts: [{
+      provider: 'github', type: 'branch', data: { base_ref: 'staging', head_ref: 'copilot/change' },
+    }] })).toBe('copilot/change');
+    expect(taskBranchName({ artifacts: [{
+      provider: 'github', type: 'branch', data: { base_ref: 'staging', head_ref: 'main' },
+    }] })).toBeNull();
     const event = { action: 'review_requested', pull_request: {
       number: 42, base: { ref: 'staging' }, head: { ref: 'copilot/change', sha: 'a'.repeat(40) },
       user: { login: 'Copilot', type: 'Bot' },

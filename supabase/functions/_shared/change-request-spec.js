@@ -99,6 +99,12 @@ export function taskPullNumber(task) {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
+export function taskBranchName(task) {
+  const branch = task?.artifacts?.find((a) =>
+    a.provider === 'github' && a.type === 'branch')?.data?.head_ref;
+  return isChangeBranch(branch) ? branch : null;
+}
+
 export function pullReadyRequest(pr) {
   if (!pr?.draft) return null;
   if (typeof pr.node_id !== 'string' || !pr.node_id || pr.node_id.length > 200) {
