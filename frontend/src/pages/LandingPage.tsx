@@ -1513,6 +1513,30 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
     const track = trackRef.current;
     if (!track) return;
 
+    const resetPointerInteraction = (pointerId: number | null) => {
+      activePointerIdRef.current = null;
+      dragDirectionRef.current = 'undecided';
+
+      if (!isDraggingRef.current) return;
+
+      isDraggingRef.current = false;
+      lastRef.current = 0; // Reset for smooth resumption
+      track.style.cursor = 'grab';
+
+      if (pointerId !== null) {
+        try {
+          track.releasePointerCapture?.(pointerId);
+        } catch {
+          // Ignore interrupted pointer sequences; cleanup still succeeded.
+        }
+      }
+
+      // Reset hasDragged after a brief delay to allow click prevention
+      setTimeout(() => {
+        hasDraggedRef.current = false;
+      }, 100);
+    };
+
     const handlePointerDown = (e: PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       activePointerIdRef.current = e.pointerId;
@@ -1536,8 +1560,10 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
 
         isDraggingRef.current = true;
         track.style.cursor = 'grabbing';
-        if (track.hasPointerCapture?.(e.pointerId) === false) {
+        try {
           track.setPointerCapture?.(e.pointerId);
+        } catch {
+          // Ignore failed capture attempts; the drag can continue via window listeners.
         }
       }
 
@@ -1559,22 +1585,17 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
 
     const handlePointerUp = (e: PointerEvent) => {
       if (activePointerIdRef.current !== e.pointerId) return;
-      activePointerIdRef.current = null;
-      dragDirectionRef.current = 'undecided';
+      resetPointerInteraction(e.pointerId);
+    };
 
-      if (isDraggingRef.current) {
-        isDraggingRef.current = false;
-        lastRef.current = 0; // Reset for smooth resumption
-        track.style.cursor = 'grab';
-        if (track.hasPointerCapture?.(e.pointerId)) {
-          track.releasePointerCapture?.(e.pointerId);
-        }
+    const handlePointerCancel = (e: PointerEvent) => {
+      if (activePointerIdRef.current !== e.pointerId) return;
+      resetPointerInteraction(e.pointerId);
+    };
 
-        // Reset hasDragged after a brief delay to allow click prevention
-        setTimeout(() => {
-          hasDraggedRef.current = false;
-        }, 100);
-      }
+    const handleLostPointerCapture = (e: PointerEvent) => {
+      if (activePointerIdRef.current !== e.pointerId) return;
+      resetPointerInteraction(null);
     };
 
     const handleClick = (e: MouseEvent) => {
@@ -1586,16 +1607,20 @@ const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedIt
 
     track.addEventListener('pointerdown', handlePointerDown);
     track.addEventListener('click', handleClick, true);
+    track.addEventListener('pointercancel', handlePointerCancel);
+    track.addEventListener('lostpointercapture', handleLostPointerCapture);
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
-    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerCancel);
 
     return () => {
       track.removeEventListener('pointerdown', handlePointerDown);
       track.removeEventListener('click', handleClick, true);
+      track.removeEventListener('pointercancel', handlePointerCancel);
+      track.removeEventListener('lostpointercapture', handleLostPointerCapture);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerCancel);
     };
   }, [runWidth]);
 
