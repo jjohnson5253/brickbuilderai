@@ -28,7 +28,6 @@ import { GetPriceApiService, GetPriceResponse } from "../services/getPriceApi";
 import { ResizeScaler } from "../components/ResizeScaler";
 import { ResizeModelApiService } from "../services/resizeModelApi";
 import { PromptEditModelApiService } from "../services/promptEditModelApi";
-import { LlmRenderApiService } from "../services/llmRenderApi";
 import { GetGenerationApiService, GetGenerationResponse } from "../services/getGenerationApi";
 import { GetGenerationsByImageApiService, GenerationIteration } from "../services/getGenerationsByImageApi";
 import { LdrToMpdApiService } from "../services/ldrToMpdApi";
@@ -36,17 +35,7 @@ import { ToggleIsCommunityApiService } from "../services/toggleIsCommunityApi";
 import { ClaimGenerationApiService } from "../services/claimGenerationApi";
 import { UpdateModelApiService, UpdateModelResponse } from "../services/updateModelApi";
 import { recordAnonymousGeneration } from "../utils/anonGenerations";
-import {
-  trackGeneratedModelAiEditClick,
-  trackGeneratedModelAiReasoningSelected,
-} from "../utils/generatedModelAnalytics";
 import { getGeneratedModelPath } from "../utils/generationRoutes";
-import {
-  DEFAULT_LLM_EDIT_REASONING_LEVEL,
-  getLlmEditMaxSegmentationRounds,
-  type LlmEditReasoningLevel,
-} from "../utils/llmEditReasoning";
-import { LlmDesignNotes } from "../components/LlmDesignNotes";
 import { ModelEditControls } from "../components/ModelEditControls";
 import { StatCard } from "../components/StatCard";
 import { UpdateGenerationNameApiService } from "../services/updateGenerationNameApi";
@@ -63,7 +52,6 @@ import {
   Star,
   Loader2,
   Pencil,
-  Sparkles,
   Users,
   Github,
   ArrowLeft,
@@ -223,19 +211,11 @@ export default function GeneratedModel() {
   const [isResizing, setIsResizing] = React.useState(false);
   const [showResizeScaler, setShowResizeScaler] = React.useState(false);
   const [showPriceResize, setShowPriceResize] = React.useState(false);
-  // Resize prompt shown over the 3D viewer when entering the Block Editor.
-  const [showResizePrompt, setShowResizePrompt] = React.useState(false);
   const [isPromptEditing, setIsPromptEditing] = React.useState(false);
   const [editPrompt, setEditPrompt] = React.useState("");
   const [editModelQuality, setEditModelQuality] = React.useState<"regular" | "premium">("premium");
   const [editPreviewImageUrl, setEditPreviewImageUrl] = React.useState<string | null>(null);
   const [editPromptError, setEditPromptError] = React.useState<string | null>(null);
-  const [llmEditReasoningLevel, setLlmEditReasoningLevel] = React.useState<LlmEditReasoningLevel>(
-    DEFAULT_LLM_EDIT_REASONING_LEVEL,
-  );
-  const [isLlmEditing, setIsLlmEditing] = React.useState(false);
-  const [llmEditError, setLlmEditError] = React.useState<string | null>(null);
-  const [llmThinking, setLlmThinking] = React.useState("");
   
   // Voxel editor state
   const [showVoxelEditor, setShowVoxelEditor] = React.useState(false);
@@ -256,7 +236,6 @@ export default function GeneratedModel() {
   const [xyzrgbError, setXyzrgbError] = React.useState<string | null>(null);
   const [accessToken, setAccessToken] = React.useState<string | null>(null);
   const [processedImageUrl, setProcessedImageUrl] = React.useState<string | null>(null);
-  const [detailLevel, setDetailLevel] = React.useState<number | null>(null);
   const [currentScaler, setCurrentScaler] = React.useState<number | undefined>(undefined);
   
   // State for reactive model content
@@ -300,7 +279,6 @@ export default function GeneratedModel() {
   // in the sections below the 3D preview only after the scene is ready.
   const [sceneReady, setSceneReady] = React.useState<boolean>(false);
 
-  const [hasExitedVoxelEditor, setHasExitedVoxelEditor] = React.useState<boolean>(false);
   const [previewPngDataUrl, setPreviewPngDataUrl] = React.useState<string | null>(null);
   const previewUploadWaitersRef = React.useRef<Map<string, Array<{ resolve: () => void; reject: (error: unknown) => void }>>>(new Map());
   const activeSavePreviewUploadRef = React.useRef<Promise<void> | null>(null);
@@ -458,7 +436,6 @@ export default function GeneratedModel() {
             
             // Set detail level for resize scaler
             if (statusResponse.detail_level) {
-              setDetailLevel(statusResponse.detail_level);
               setCurrentScaler(statusResponse.detail_level);
             }
             
@@ -537,7 +514,6 @@ export default function GeneratedModel() {
             
             // Update detail level for resize scaler
             if (statusResponse.detail_level) {
-              setDetailLevel(statusResponse.detail_level);
               setCurrentScaler(statusResponse.detail_level);
             }
             
@@ -1411,9 +1387,7 @@ export default function GeneratedModel() {
         setScreenshots(null);
         setPriceRefreshCounter(c => c + 1);
 
-        // The model is now this size — update the baseline so the Resize
-        // button is disabled until the slider is moved again.
-        setDetailLevel(detailLevel);
+        // Keep the resize slider in sync with the newly generated model.
         setCurrentScaler(detailLevel);
         
         console.log(`Resize completed. New generation ID: ${response.generation_id}`);
@@ -1548,76 +1522,6 @@ export default function GeneratedModel() {
     }
   }, [editPrompt, editModelQuality, accessToken, modelName, currentGenerationId]);
 
-  const handleLlmEditModel = React.useCallback(async () => {
-    if (!currentGenerationId) {
-      setLlmEditError('No generation ID found for LLM edit');
-      return;
-    }
-
-    if (!xyzrgbUrl) {
-      setLlmEditError('No xyzrgb file found for this generation');
-      return;
-    }
-
-    setIsLlmEditing(true);
-    setLlmEditError(null);
-    setLlmThinking("");
-
-    try {
-      const maxSegmentationRounds = getLlmEditMaxSegmentationRounds(llmEditReasoningLevel);
-      // Give the LLM every available reference image (processed + original) so
-      // it can cross-check the segmentation and colors between them.
-      const referenceImageUrls: string[] = processedImageUrl ? [processedImageUrl] : [];
-      const generation = await GetGenerationApiService.getGeneration(currentGenerationId);
-      for (const url of [generation.processed_image_url, generation.external_image_url]) {
-        if (url && !referenceImageUrls.includes(url)) {
-          referenceImageUrls.push(url);
-        }
-      }
-      if (!processedImageUrl && generation.processed_image_url) {
-        setProcessedImageUrl(generation.processed_image_url);
-      }
-
-      if (referenceImageUrls.length === 0) {
-        throw new Error('No reference image found for this generation');
-      }
-
-      const llmResponse = await LlmRenderApiService.llmRenderStream(
-        currentGenerationId,
-        xyzrgbUrl,
-        referenceImageUrls,
-        'Recolor the voxel model to semantically match the reference image while preserving the model shape.',
-        accessToken || undefined,
-        (delta) => setLlmThinking((current) => current + delta),
-        maxSegmentationRounds,
-      );
-
-      setXyzrgbContent(llmResponse.xyzrgb_content);
-
-      const updateResponse = await UpdateModelApiService.updateModel(
-        currentGenerationId,
-        llmResponse.xyzrgb_content,
-        accessToken || undefined
-      );
-
-      await handleUpdatedModelStarted(updateResponse, {
-        preserveEditorContent: false,
-      });
-    } catch (error) {
-      console.error('GeneratedModel - LLM edit failed:', error);
-      setLlmEditError(error instanceof Error ? error.message : 'Failed to apply LLM edit');
-    } finally {
-      setIsLlmEditing(false);
-    }
-  }, [
-    accessToken,
-    currentGenerationId,
-    llmEditReasoningLevel,
-    handleUpdatedModelStarted,
-    processedImageUrl,
-    xyzrgbUrl,
-  ]);
-
   // Guard an action (e.g. in-app navigation) behind the unsaved-changes modal.
   // If the voxel editor has unsaved changes, prompt the user; otherwise run immediately.
   const guardUnsavedChanges = (action: PendingExitAction) => {
@@ -1649,11 +1553,9 @@ export default function GeneratedModel() {
     setShowVoxelEditor(false);
     setShowResizeScaler(false);
     setXyzrgbError(null);
-    setHasExitedVoxelEditor(true);
   }, []);
 
-  // Fetch the voxel data and switch into the Block Editor. Extracted so it can
-  // be invoked either directly or after the user dismisses the resize prompt.
+  // Fetch the voxel data and switch into the Block Editor.
   const enterVoxelEditor = async () => {
     // Enter edit mode - fetch xyzrgb content
     if (!xyzrgbUrl) {
@@ -1719,13 +1621,6 @@ export default function GeneratedModel() {
         return;
       }
       exitVoxelEditor();
-      return;
-    }
-
-    // Before entering the editor, offer the user a chance to resize first.
-    // Skip the prompt for demo models (which can't be resized).
-    if (!isDemoModel && xyzrgbUrl) {
-      setShowResizePrompt(true);
       return;
     }
 
@@ -1800,59 +1695,6 @@ export default function GeneratedModel() {
   // Summer sale: 50% off everything (parts + shipping). The price returned by
   // the API already includes shipping, so we simply halve the total.
   const saleDiscountedPrice = priceData ? priceData.total_price * 0.5 : 0;
-
-  // Shared resize-prompt card. Rendered both as a desktop overlay inside the
-  // 3D viewer and as a mobile block below the preview.
-  const resizePromptCard = (
-    <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label="Close resize prompt"
-        onClick={() => setShowResizePrompt(false)}
-        disabled={isResizing || isSavePolling}
-        className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <X size={16} />
-      </button>
-      <p className="mb-3 px-6 text-center text-sm text-slate-700">
-        Before editing, want to resize your model?
-        {priceData && (
-          <>
-            {' '}Currently it uses{' '}
-            <span className="font-semibold text-slate-900">{priceData.total_parts} pieces</span>
-            {' '}and will cost{' '}
-            <span className="font-semibold text-slate-900">
-              <span className="text-slate-400 line-through font-normal">${priceData.total_price.toFixed(2)}</span>
-              {' '}${saleDiscountedPrice.toFixed(2)} {priceData.currency}
-            </span>.
-          </>
-        )}
-      </p>
-      <ResizeScaler
-        onResize={handleResizeModel}
-        disabled={!mpdContent}
-        isResizing={isResizing}
-        scaler={currentScaler}
-        onScalerChange={setCurrentScaler}
-        baselineScaler={detailLevel ?? undefined}
-        hideHeader
-        rightAction={(
-          <button
-            type="button"
-            onClick={() => {
-              setShowResizePrompt(false);
-              void enterVoxelEditor();
-            }}
-            disabled={isResizing || isSavePolling}
-            className="inline-flex items-center justify-center gap-2 h-12 rounded-full px-7 bg-white text-black font-semibold border-2 border-gray-300 cursor-pointer transition-all duration-150 hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Go to Editor
-          </button>
-        )}
-      />
-    </div>
-  );
-
 
   return (
     <div className="min-h-screen text-slate-900" style={{ backgroundColor: "#ffffff" }}>
@@ -2246,14 +2088,6 @@ export default function GeneratedModel() {
   </section>
 )}
 
-        {/* Resize prompt — appears below the preview and replaces the
-            action buttons / tip text while it is open. */}
-        {showResizePrompt && !showVoxelEditor && (
-          <div className="mt-4 flex justify-center">
-            {resizePromptCard}
-          </div>
-        )}
-
         {/* Sections below the 3D preview fade in once the scene is ready */}
         <div
           className={sceneReady ? "below-preview-sequence" : ""}
@@ -2273,34 +2107,18 @@ export default function GeneratedModel() {
         )}
 
         {/* Centered model actions */}
-        <section className={`relative z-40 mt-4 mb-4 flex-col items-center gap-3 px-4 ${showResizePrompt ? 'hidden' : 'flex'}`}>
+        <section className="relative z-40 mt-4 mb-4 flex flex-col items-center gap-3 px-4">
           {/* Tip nudging users toward the Block Editor (hidden in edit mode) */}
           {!showVoxelEditor && (
             <p className="text-sm text-slate-500 text-center mb-2 max-w-2xl">
-              Not what you were expecting? Try the AI Edit or Manual Edit options!
+              Not what you were expecting? Try editing your model!
             </p>
           )}
-          <LlmDesignNotes notes={llmThinking} isThinking={isLlmEditing} />
           <div className="flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row sm:gap-6">
             <ModelEditControls
-              aiDisabled={isLlmEditing || isSavePolling || xyzrgbLoading || !xyzrgbUrl || !currentGenerationId}
-              isAiEditing={isLlmEditing}
               isManualEditorOpen={showVoxelEditor}
               manualLoading={xyzrgbLoading}
-              reasoningLevel={llmEditReasoningLevel}
-              onAiEdit={() => {
-                trackGeneratedModelAiEditClick(currentGenerationId, isDemoModel);
-                guardUnsavedChanges(() => { void handleLlmEditModel(); });
-              }}
               onManualEdit={() => { void handleEditModelClick(); }}
-              onReasoningChange={(level) => {
-                setLlmEditReasoningLevel(level);
-                trackGeneratedModelAiReasoningSelected(
-                  currentGenerationId,
-                  isDemoModel,
-                  level,
-                );
-              }}
             />
             {/* Instructions button — white with grey border, turns red on hover */}
             <button
@@ -2325,31 +2143,6 @@ export default function GeneratedModel() {
           </div>
 
           <div className="flex w-full flex-col items-center justify-center gap-3 sm:w-auto sm:flex-row sm:gap-6">
-            {/* Order My Kit button — white with grey border, turns red on hover */}
-            <button
-              type="button"
-              aria-label="Order my kit"
-              disabled={priceLoading || isSavePolling}
-              onClick={navigateToOrder}
-              className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 border-gray-300 bg-white px-7 font-semibold text-black transition-all duration-150 sm:w-auto sm:min-w-44 ${
-                priceLoading || isSavePolling
-                  ? 'cursor-not-allowed opacity-70'
-                  : 'cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
-              }`}
-            >
-              {priceLoading || isSavePolling ? (
-                <>
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-black"></div>
-                  Order my Kit!
-                </>
-              ) : (
-                <>
-                  <ShoppingCart size={16} />
-                  Order
-                </>
-              )}
-            </button>
-
             {/* Post / Remove from Community button — owners can toggle; logged-out
                 visitors see it too and are prompted to log in on click */}
             {canShowCommunityButton && (
@@ -2368,9 +2161,7 @@ export default function GeneratedModel() {
                 className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 px-7 font-semibold transition-all duration-150 sm:w-auto sm:min-w-44 ${
                   !currentGenerationId || communityToggleLoading || isSavePolling
                     ? 'bg-white text-gray-400 border-gray-200 cursor-not-allowed'
-                    : (!isCommunity && hasExitedVoxelEditor && !showVoxelEditor)
-                      ? 'bg-[#f44336] text-white border-[#f44336] cursor-pointer shadow-lg shadow-[#f44336]/25 hover:bg-[#ff6b6b] hover:border-[#ff6b6b] hover:scale-[1.03] attention-pulse'
-                      : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
+                    : 'bg-white text-black border-gray-300 cursor-pointer hover:border-[#f44336] hover:text-[#f44336] hover:scale-[1.03] hover:shadow-lg'
                 }`}
               >
                 {communityToggleLoading ? (
@@ -2386,6 +2177,31 @@ export default function GeneratedModel() {
                 )}
               </button>
             )}
+
+            {/* Order is the primary final action. */}
+            <button
+              type="button"
+              aria-label="Order my kit"
+              disabled={priceLoading || isSavePolling}
+              onClick={navigateToOrder}
+              className={`inline-flex h-12 w-full items-center justify-center gap-2 rounded-full border-2 px-7 font-semibold text-white shadow-lg shadow-[#f44336]/25 transition-all duration-150 sm:w-auto sm:min-w-44 ${
+                priceLoading || isSavePolling
+                  ? 'cursor-not-allowed border-red-300 bg-red-300 opacity-70'
+                  : 'cursor-pointer border-[#f44336] bg-[#f44336] hover:scale-[1.03] hover:border-[#ff6b6b] hover:bg-[#ff6b6b]'
+              }`}
+            >
+              {priceLoading || isSavePolling ? (
+                <>
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/50 border-t-white"></div>
+                  Order my Kit!
+                </>
+              ) : (
+                <>
+                  <ShoppingCart size={16} />
+                  Order
+                </>
+              )}
+            </button>
           </div>
           
           {/* Error message for voxel editor */}
@@ -2394,9 +2210,6 @@ export default function GeneratedModel() {
           )}
           {savePollingError && (
             <p className="text-red-500 text-sm">{savePollingError}</p>
-          )}
-          {llmEditError && (
-            <p className="text-red-500 text-sm">{llmEditError}</p>
           )}
           {communityToggleError && (
             <p className="text-red-500 text-sm">{communityToggleError}</p>

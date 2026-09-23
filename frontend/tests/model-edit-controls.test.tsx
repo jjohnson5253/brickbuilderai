@@ -6,146 +6,74 @@ import { describe, expect, it, vi } from 'vitest';
 import { ModelEditControls } from '../src/components/ModelEditControls';
 
 describe('ModelEditControls', () => {
-  it('renders AI Edit with an embedded thinking-level pill and manual edit', () => {
+  it('shows a single Edit action and hides AI editing controls', () => {
     const container = document.createElement('div');
-    document.body.appendChild(container);
     const root = createRoot(container);
 
     try {
       act(() => {
         root.render(
           <ModelEditControls
-            aiDisabled={false}
-            isAiEditing={false}
             isManualEditorOpen={false}
             manualLoading={false}
-            reasoningLevel="low"
-            onAiEdit={vi.fn()}
             onManualEdit={vi.fn()}
-            onReasoningChange={vi.fn()}
           />,
         );
       });
 
-      expect(container.textContent).toContain('AI Edit');
-      expect(container.textContent).toContain('Manual Edit');
-      expect(container.querySelector('[aria-label="Thinking level"]')?.textContent).toBe('low');
-      expect(container.querySelector('[aria-label="Choose thinking level"]')).toBeNull();
-      expect(
-        container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
-      ).toContain('w-[5.5rem]');
-      expect(
-        container.querySelector('[aria-label="Thinking level"]')?.parentElement?.className,
-      ).toContain('absolute');
-      expect(
-        container.querySelector('[aria-label="Thinking level"]')?.className,
-      ).toContain('rounded-full');
-      expect(
-        container.querySelector('[aria-label="Thinking level"]')?.className,
-      ).toContain('h-8');
-      expect(
-        container.querySelector('[aria-label="Thinking level"]')?.className,
-      ).toContain('text-center');
-      expect(
-        container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
-      ).toContain('attention-pulse');
-      expect(
-        container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
-      ).toContain('w-full');
-      expect(
-        container.querySelector('[aria-label="AI edit model"]')?.parentElement?.className,
-      ).toContain('sm:w-auto');
-      expect(
-        container.querySelector('[aria-label="AI edit model"]')?.className,
-      ).toContain('rounded-full');
-      expect(container.firstElementChild?.className).toContain('sm:flex-row');
+      expect(container.textContent).toBe('Edit');
+      expect(container.querySelector('[aria-label="Edit model"]')).not.toBeNull();
+      expect(container.querySelector('[aria-label="AI edit model"]')).toBeNull();
+      expect(container.querySelector('[aria-label="Thinking level"]')).toBeNull();
     } finally {
-      act(() => {
-        root.unmount();
-      });
-      container.remove();
+      act(() => root.unmount());
     }
   });
 
-  it('reports thinking level changes', () => {
+  it('opens the editor from the Edit action', () => {
     const container = document.createElement('div');
-    document.body.appendChild(container);
     const root = createRoot(container);
-    const onReasoningChange = vi.fn();
+    const onManualEdit = vi.fn();
 
     try {
       act(() => {
         root.render(
           <ModelEditControls
-            aiDisabled={false}
-            isAiEditing={false}
             isManualEditorOpen={false}
             manualLoading={false}
-            reasoningLevel="low"
-            onAiEdit={vi.fn()}
-            onManualEdit={vi.fn()}
-            onReasoningChange={onReasoningChange}
+            onManualEdit={onManualEdit}
           />,
         );
       });
 
-      const selector = container.querySelector('[aria-label="Thinking level"]') as HTMLButtonElement;
       act(() => {
-        selector.click();
+        (container.querySelector('[aria-label="Edit model"]') as HTMLButtonElement).click();
       });
-
-      const menu = container.querySelector('[aria-label="Choose thinking level"]');
-      expect(menu).not.toBeNull();
-      expect(menu?.className).toContain('rounded-2xl');
-      expect(menu?.className).toContain('shadow-2xl');
-
-      const highOption = Array.from(menu?.querySelectorAll('button') ?? []).find(
-        (button) => button.textContent === 'high',
-      );
-      act(() => {
-        highOption?.click();
-      });
-
-      expect(onReasoningChange).toHaveBeenCalledOnce();
-      expect(onReasoningChange).toHaveBeenCalledWith('high');
-      expect(container.querySelector('[aria-label="Choose thinking level"]')).toBeNull();
+      expect(onManualEdit).toHaveBeenCalledOnce();
     } finally {
-      act(() => {
-        root.unmount();
-      });
-      container.remove();
+      act(() => root.unmount());
     }
   });
 
-  it('shifts the medium label away from the dropdown arrow', () => {
+  it('shows the exit action while the block editor is open', () => {
     const container = document.createElement('div');
-    document.body.appendChild(container);
     const root = createRoot(container);
 
     try {
       act(() => {
         root.render(
           <ModelEditControls
-            aiDisabled={false}
-            isAiEditing={false}
-            isManualEditorOpen={false}
+            isManualEditorOpen
             manualLoading={false}
-            reasoningLevel="medium"
-            onAiEdit={vi.fn()}
             onManualEdit={vi.fn()}
-            onReasoningChange={vi.fn()}
           />,
         );
       });
 
-      expect(
-        container.querySelector('[aria-label="Thinking level"] span')?.className,
-      ).toContain('-translate-x-1');
+      expect(container.textContent).toBe('Exit Block Editor');
+      expect(container.querySelector('[aria-label="Exit block editor"]')).not.toBeNull();
     } finally {
-      act(() => {
-        root.unmount();
-      });
-      container.remove();
+      act(() => root.unmount());
     }
   });
 });
