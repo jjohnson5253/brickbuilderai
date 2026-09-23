@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom';
 import { MousePointer2, Move, Save, Pipette, Brush, Plus, Trash2, Undo2, Redo2, BoxSelect, ChevronDown, Box, Minus, ChevronLeft, ChevronRight, HelpCircle, X, AlertTriangle } from 'lucide-react';
 import { UpdateModelApiService, UpdateModelResponse } from '../services/updateModelApi';
 import posthog from 'posthog-js';
+import { useDirtyAutosave } from '../hooks/useDirtyAutosave';
 
 type InteractionMode = 'select' | 'pan' | 'add' | 'paint';
 type SelectSubMode = 'regular' | 'byColor' | 'marquee';
@@ -305,6 +306,12 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const changeVersionRef = useRef(0);
+
+  const markChanged = () => {
+    changeVersionRef.current += 1;
+    setHasChanges(true);
+  };
 
   const trackMenuClick = (menuItem: string, properties: Record<string, unknown> = {}) => {
     posthog.capture('voxel_editor_menu_item_clicked', {
@@ -863,7 +870,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     }
     
     setHistoryIndex(prev => prev - 1);
-    setHasChanges(true);
+    markChanged();
     setSaveError(null);
     
     // Advance tutorial
@@ -910,7 +917,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     }
     
     setHistoryIndex(prev => prev + 1);
-    setHasChanges(true);
+    markChanged();
     setSaveError(null);
     
     // Notify parent of changes
@@ -954,7 +961,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     });
 
     // Mark as having changes
-    setHasChanges(true);
+    markChanged();
     setSaveError(null);
 
     // Advance tutorial
@@ -994,7 +1001,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
     rebuildInstancedMesh();
     
     // Mark as having changes
-    setHasChanges(true);
+    markChanged();
     setSaveError(null);
     
     // Notify parent
@@ -1051,6 +1058,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
 
     setIsSaving(true);
     setSaveError(null);
+    const savingVersion = changeVersionRef.current;
 
     try {
       const xyzrgbContent = voxelsRef.current
@@ -1064,7 +1072,11 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       );
 
       if (response.generation_id) {
-        setHasChanges(false);
+        // Keep the editor dirty if another edit landed while this request was
+        // in flight so that change is included in the next autosave.
+        if (changeVersionRef.current === savingVersion) {
+          setHasChanges(false);
+        }
         advanceTutorialRef.current('save');
         if (onSaveSuccess) {
           await onSaveSuccess(response);
@@ -1079,6 +1091,12 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       setIsSaving(false);
     }
   };
+
+  useDirtyAutosave({
+    hasChanges,
+    isSaving: isSaving || Boolean(isProcessingSave),
+    onSave: handleSave,
+  });
 
   // Update mode ref when mode changes
   useEffect(() => {
@@ -1296,7 +1314,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       rebuildInstancedMesh();
       
       // Mark as having changes
-      setHasChanges(true);
+      markChanged();
       setSaveError(null);
       advanceTutorialRef.current('add');
       
@@ -1337,7 +1355,7 @@ export function VoxelViewer({ xyzrgbContent, problematicXyzrgbContent, className
       updateInstanceColor(voxelIndex, r, g, b);
       
       // Mark as having changes
-      setHasChanges(true);
+      markChanged();
       setSaveError(null);
       
       // Notify parent of changes
