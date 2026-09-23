@@ -126,6 +126,22 @@ def test_hollowing_keeps_the_shell_and_opens_the_bottom():
     occupancy_from_ldraw(hollow.ldr)
 
 
+def test_hanging_bricks_are_stepped_after_the_bricks_they_hang_from():
+    from src.utils.brick_design import to_ldraw
+
+    bricks = [
+        (RED, 0, 0, 0, 2, 2),   # pillar
+        (RED, 0, 0, 1, 2, 2),
+        (RED, 0, 2, 1, 2, 2),   # only held by the cap above it
+        (RED, 0, 0, 2, 2, 4),   # cap
+    ]
+    ldr = to_ldraw(bricks, (2, 4, 3), "brick")
+    steps = [[line.split()[2:5] for line in step.splitlines() if line.startswith("1 ")]
+             for step in ldr.split("0 STEP")]
+    steps = [step for step in steps if step]
+    assert steps == [[["0", "-24", "-20"]], [["0", "-48", "-20"]], [["0", "-72", "0"]], [["0", "-48", "20"]]]
+
+
 def test_audit_flags_overlaps_off_grid_and_floating_parts():
     ldr = "\n".join([
         "1 4 0 -24 0 1 0 0 0 1 0 0 0 1 3001.dat",

@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from scipy import ndimage
 
+from ..data.brick_structure import Brick, reorder_bricks_for_stability
 EMPTY = -1
 LDU_PER_STUD = 20
 
@@ -639,7 +640,12 @@ def build_design(design: Dict[str, Any], *, max_pieces: int = 5_000, repair: boo
 
 
 def to_ldraw(bricks, shape, layer_units, title: str = "Claude brick model") -> str:
-    """Write bricks as LDraw, one build step per layer. The front of the model (z = 0) faces -Z.
+    """Write bricks as LDraw. The front of the model (z = 0) faces -Z.
+
+    Bricks are ordered with the voxel2brick stability reordering so every step only adds parts
+    resting on or hanging from parts placed in earlier steps (e.g. an overhang that hangs from
+    the layer above is placed after that layer). Consecutive bricks on the same layer share a
+    step, so a model without hanging parts gets one step per layer.
 
     layer_units is "brick"/"plate" for every layer, or a list with one entry per layer."""
     width, depth, layers = shape
@@ -648,20 +654,23 @@ def to_ldraw(bricks, shape, layer_units, title: str = "Claude brick model") -> s
     bottoms = np.concatenate([[0], np.cumsum([UNITS[u]["ldu"] for u in layer_units])])
     safe_title = re.sub(r"[\r\n]+", " ", title).strip()[:120] or "Claude brick model"
     lines = [f"0 {safe_title}", "0 Name: claude-model.ldr", "0 Author: BrickBuilder AI with Claude"]
-    by_layer: Dict[int, List] = {}
-    for brick in bricks:
-        by_layer.setdefault(brick[3], []).append(brick)
-    for layer in range(layers):
-        spec = UNITS[layer_units[layer]]
-        for color, x0, z0, _, fx, fz in by_layer.get(layer, []):
-            part = spec["parts"][tuple(sorted((fx, fz)))]
-            x = (x0 + fx / 2 - width / 2) * LDU_PER_STUD
-            z = (z0 + fz / 2 - depth / 2) * LDU_PER_STUD
-            y = -int(bottoms[layer + 1])  # LDraw -Y is up; part origin is its top face
-            rot = ROT90 if fz > fx else ROT0
-            lines.append(f"1 {color} {x:g} {y:g} {z:g} {rot} {part}.dat")
-        if layer in by_layer:
+    by_brick = {Brick(h=fx, w=fz, x=x0, y=z0, z=layer, color=color): (color, x0, z0, layer, fx, fz)
+                for color, x0, z0, layer, fx, fz in bricks}
+    ordered, _ = reorder_bricks_for_stability(list(by_brick), (width, depth, layers))
+    step_layer = None
+    for brick in ordered:
+        color, x0, z0, layer, fx, fz = by_brick[brick]
+        if step_layer is not None and layer != step_layer:
             lines.append("0 STEP")
+        step_layer = layer
+        part = UNITS[layer_units[layer]]["parts"][tuple(sorted((fx, fz)))]
+        x = (x0 + fx / 2 - width / 2) * LDU_PER_STUD
+        z = (z0 + fz / 2 - depth / 2) * LDU_PER_STUD
+        y = -int(bottoms[layer + 1])  # LDraw -Y is up; part origin is its top face
+        rot = ROT90 if fz > fx else ROT0
+        lines.append(f"1 {color} {x:g} {y:g} {z:g} {rot} {part}.dat")
+    if step_layer is not None:
+        lines.append("0 STEP")
     return "\n".join(lines) + "\n"
 
 

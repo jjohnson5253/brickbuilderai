@@ -115,6 +115,120 @@ class Brick:
                 raise ValueError(f"LDR format is ill-formatted: {brick_ldr}")
 
 
+def brick_support_type(occupancy: np.ndarray, brick: Brick) -> str:
+    """
+    Determine how a brick is supported by the occupied voxels (indexed [x, y, z]).
+
+    Returns:
+        'ground' - brick is on ground level (z=0)
+        'below' - brick has support from below
+        'above' - brick only has support from above
+        'floating' - brick has no support
+    """
+    if brick.z == 0:
+        return 'ground'
+
+    if np.any(occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z - 1]):
+        return 'below'
+
+    if brick.z + 1 < occupancy.shape[2] and np.any(
+            occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z + 1]):
+        return 'above'
+
+    return 'floating'
+
+
+def reorder_bricks_for_stability(bricks: list[Brick],
+                                 shape: tuple[int, int, int]) -> tuple[list[Brick], set[Brick]]:
+    """
+    Reorder bricks to place each at its absolute earliest possible position.
+
+    Places ALL below-supported bricks per round (safe because z-first sorting
+    guarantees monotonic placement), but only ONE above-supported brick per
+    round (to allow correct interleaving with newly-unlocked below bricks).
+    Uses an index-set for O(1) removal instead of O(n) list removal.
+
+    Complexity: O(n × rounds) where rounds ≈ max(z), down from O(n²).
+
+    Args:
+        bricks: List of bricks to reorder
+        shape: (x, y, z) size of the voxel space the bricks live in
+
+    Returns:
+        Tuple of (ordered bricks list, set of deferred/force-placed bricks)
+    """
+    if not bricks:
+        return bricks, set()
+
+    occupancy = np.zeros(shape, dtype=np.int32)
+    ordered_bricks = []
+    remaining_set = set(range(len(bricks)))  # indices into bricks list
+    deferred_bricks = set()
+
+    # Track which voxels belong to deferred bricks
+    deferred_voxels = np.zeros(shape, dtype=bool)
+
+    def place(brick: Brick) -> None:
+        occupancy[brick.slice] += 1
+        ordered_bricks.append(brick)
+
+    while remaining_set:
+        # Categorize all remaining bricks
+        supported_below = []
+        supported_above = []
+
+        for idx in remaining_set:
+            support = brick_support_type(occupancy, bricks[idx])
+            if support == 'ground' or support == 'below':
+                supported_below.append(idx)
+            elif support == 'above':
+                supported_above.append(idx)
+
+        # Sort supported_below by lowest z first (ground-up building)
+        supported_below.sort(key=lambda i: (bricks[i].z, bricks[i].x, bricks[i].y))
+        # Sort supported_above by highest z first (top-down building)
+        supported_above.sort(key=lambda i: (-bricks[i].z, bricks[i].x, bricks[i].y))
+
+        # First priority: place ALL bricks supported from below this round.
+        # This is safe because z-first sorting means a brick at z=k can only
+        # unlock bricks at z=k+1, which sort after all z<=k bricks.
+        if supported_below:
+            for idx in supported_below:
+                brick = bricks[idx]
+                place(brick)
+                remaining_set.discard(idx)
+
+                # Check if this brick is supported ONLY by deferred voxels
+                if brick.z > 0:
+                    support_voxels = occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z - 1]
+                    deferred_support = deferred_voxels[brick.slice_2d[0], brick.slice_2d[1], brick.z - 1]
+                    if np.all((support_voxels > 0) == deferred_support):
+                        deferred_bricks.add(brick)
+                        deferred_voxels[brick.slice] = True
+
+        # Second priority: place ONE brick supported from above (highest z first).
+        # Only one per round so we re-categorize — placing this brick may
+        # unlock below-supported bricks that should take priority next round.
+        elif supported_above:
+            idx = supported_above[0]
+            brick = bricks[idx]
+            place(brick)
+            remaining_set.discard(idx)
+            deferred_bricks.add(brick)  # Track hanging bricks as deferred
+            deferred_voxels[brick.slice] = True
+
+        # Safety: force-place one brick to avoid infinite loop
+        else:
+            forced_idx = max(remaining_set, key=lambda i: (-bricks[i].z, bricks[i].x, bricks[i].y))
+            forced_brick = bricks[forced_idx]
+            place(forced_brick)
+            remaining_set.discard(forced_idx)
+            deferred_bricks.add(forced_brick)  # Track this as deferred
+            deferred_voxels[forced_brick.slice] = True
+
+    return ordered_bricks, deferred_bricks
+
+
 class BrickStructure:
     """
     Represents a brick structure in the form of a list of bricks.
@@ -164,124 +278,12 @@ class BrickStructure:
         np.save(filepath, self.voxel_occupancy)
     
     def _reorder_bricks_for_stability(self, bricks: list[Brick]) -> tuple[list[Brick], set[Brick]]:
-        """
-        Reorder bricks to place each at its absolute earliest possible position.
-
-        Places ALL below-supported bricks per round (safe because z-first sorting
-        guarantees monotonic placement), but only ONE above-supported brick per
-        round (to allow correct interleaving with newly-unlocked below bricks).
-        Uses an index-set for O(1) removal instead of O(n) list removal.
-
-        Complexity: O(n × rounds) where rounds ≈ max(z), down from O(n²).
-
-        Args:
-            bricks: List of bricks to reorder
-
-        Returns:
-            Tuple of (ordered bricks list, set of deferred/force-placed bricks)
-        """
-        if not bricks:
-            return bricks, set()
-
-        temp_structure = BrickStructure([], world_dim=self.world_dim)
-        ordered_bricks = []
-        remaining_set = set(range(len(bricks)))  # indices into bricks list
-        deferred_bricks = set()
-
-        # Track which voxels belong to deferred bricks
-        deferred_voxels = np.zeros((self.world_dim, self.world_dim, self.world_dim), dtype=bool)
-
-        while remaining_set:
-            # Categorize all remaining bricks
-            supported_below = []
-            supported_above = []
-
-            for idx in remaining_set:
-                brick = bricks[idx]
-                support = temp_structure._get_brick_support_type(brick)
-                if support == 'ground' or support == 'below':
-                    supported_below.append(idx)
-                elif support == 'above':
-                    supported_above.append(idx)
-
-            # Sort supported_below by lowest z first (ground-up building)
-            supported_below.sort(key=lambda i: (bricks[i].z, bricks[i].x, bricks[i].y))
-            # Sort supported_above by highest z first (top-down building)
-            supported_above.sort(key=lambda i: (-bricks[i].z, bricks[i].x, bricks[i].y))
-
-            placed_this_round = False
-
-            # First priority: place ALL bricks supported from below this round.
-            # This is safe because z-first sorting means a brick at z=k can only
-            # unlock bricks at z=k+1, which sort after all z<=k bricks.
-            if supported_below:
-                for idx in supported_below:
-                    brick = bricks[idx]
-                    temp_structure.add_brick(brick)
-                    ordered_bricks.append(brick)
-                    remaining_set.discard(idx)
-                    placed_this_round = True
-
-                    # Check if this brick is supported ONLY by deferred voxels
-                    if brick.z > 0:
-                        support_voxels = temp_structure.voxel_occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z - 1]
-                        deferred_support = deferred_voxels[brick.slice_2d[0], brick.slice_2d[1], brick.z - 1]
-                        if np.all((support_voxels > 0) == deferred_support):
-                            deferred_bricks.add(brick)
-                            deferred_voxels[brick.slice] = True
-
-            # Second priority: place ONE brick supported from above (highest z first).
-            # Only one per round so we re-categorize — placing this brick may
-            # unlock below-supported bricks that should take priority next round.
-            elif supported_above:
-                idx = supported_above[0]
-                brick = bricks[idx]
-                temp_structure.add_brick(brick)
-                ordered_bricks.append(brick)
-                remaining_set.discard(idx)
-                placed_this_round = True
-                deferred_bricks.add(brick)  # Track hanging bricks as deferred
-                deferred_voxels[brick.slice] = True
-
-            # Safety: force-place one brick to avoid infinite loop
-            if not placed_this_round:
-                forced_idx = max(remaining_set, key=lambda i: (-bricks[i].z, bricks[i].x, bricks[i].y))
-                forced_brick = bricks[forced_idx]
-                temp_structure.add_brick(forced_brick)
-                ordered_bricks.append(forced_brick)
-                remaining_set.discard(forced_idx)
-                deferred_bricks.add(forced_brick)  # Track this as deferred
-                deferred_voxels[forced_brick.slice] = True
-
-        return ordered_bricks, deferred_bricks
+        """Reorder bricks so no build step has floating parts. See reorder_bricks_for_stability."""
+        return reorder_bricks_for_stability(bricks, (self.world_dim,) * 3)
 
     def _get_brick_support_type(self, brick: Brick) -> str:
-        """
-        Determine how a brick is supported in the current structure.
-        
-        Returns:
-            'ground' - brick is on ground level (z=0)
-            'below' - brick has support from below
-            'above' - brick only has support from above
-            'floating' - brick has no support
-        """
-        if brick.z == 0:
-            return 'ground'
-        
-        has_support_below = np.any(
-            self.voxel_occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z - 1]
-        )
-        if has_support_below:
-            return 'below'
-        
-        has_support_above = (
-            brick.z != self.world_dim - 1 and 
-            np.any(self.voxel_occupancy[brick.slice_2d[0], brick.slice_2d[1], brick.z + 1])
-        )
-        if has_support_above:
-            return 'above'
-        
-        return 'floating'
+        """Determine how a brick is supported in the current structure. See brick_support_type."""
+        return brick_support_type(self.voxel_occupancy, brick)
 
     def _compute_exterior_mask(self) -> np.ndarray:
         """
