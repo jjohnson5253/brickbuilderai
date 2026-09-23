@@ -48,7 +48,7 @@ vi.mock('../src/components/ProfileMenu', () => ({
   ProfileMenu: () => null,
 }));
 
-import LandingPage, { DEFAULT_THREE_D_MODEL, GenerationMethodSelector } from '../src/pages/LandingPage';
+import LandingPage, { DEFAULT_GENERATION_METHOD, DEFAULT_THREE_D_MODEL, GenerationMethodSelector } from '../src/pages/LandingPage';
 import { DEFAULT_LLM_MODEL } from '../src/services/llmToBricksApi';
 
 describe('LandingPage', () => {
@@ -59,7 +59,8 @@ describe('LandingPage', () => {
     expect(markup).not.toContain('Create and Build');
   });
 
-  it('defaults to SAM3D for 3D Render and Claude Opus 5.5 for LLM Render', () => {
+  it('defaults to LLM Render with Claude Opus 5.5, and SAM3D for 3D Render', () => {
+    expect(DEFAULT_GENERATION_METHOD).toBe('llm');
     expect(DEFAULT_THREE_D_MODEL).toBe('sam3d');
     expect(DEFAULT_LLM_MODEL).toBe('claude-opus-5-5');
 

@@ -62,6 +62,7 @@ const STYLE_PRESETS: { label: string; value: StyleOption; promptOption: string }
 ];
 
 type GenerationMethod = "3d" | "llm";
+export const DEFAULT_GENERATION_METHOD: GenerationMethod = "llm";
 const GENERATION_METHOD_PRESETS: Array<{
   label: string;
   value: GenerationMethod;
@@ -329,7 +330,7 @@ export default function LandingPage() {
   const [size, setSize] = useState<SizeValue>("big");
   const [modelQuality, setModelQuality] = useState<ModelQuality>("regular");
   const [styleOption, setStyleOption] = useState<StyleOption>("videogame");
-  const [generationMethod, setGenerationMethod] = useState<GenerationMethod>("3d");
+  const [generationMethod, setGenerationMethod] = useState<GenerationMethod>(DEFAULT_GENERATION_METHOD);
   const [threeDModel, setThreeDModel] = useState<ThreeDModel>(DEFAULT_THREE_D_MODEL);
   const [llmModel, setLlmModel] = useState<string>(DEFAULT_LLM_MODEL);
   const [imgFile, setImgFile] = useState<File | null>(null);
