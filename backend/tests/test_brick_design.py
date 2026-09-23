@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from src.utils.brick_design import (
@@ -161,3 +162,43 @@ def test_preview_is_a_png():
     png = render_preview_png(result.grid, result.unit, load_palette())
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     assert len(png) > 2000
+
+
+def _xyzrgb_cells(xyzrgb):
+    return {tuple(map(int, line.split())) for line in xyzrgb.splitlines()}
+
+
+def test_grid_to_xyzrgb_uses_pipeline_axes_and_palette_colors():
+    from src.utils.brick_design import grid_to_xyzrgb
+
+    grid = np.full((2, 3, 2), -1)
+    grid[1, 2, 0] = RED
+    grid[0, 0, 1] = GRAY
+    cells = _xyzrgb_cells(grid_to_xyzrgb(grid, "brick", load_palette()))
+    red = tuple(int(load_palette()[RED][1][i:i + 2], 16) for i in (0, 2, 4))
+    gray = tuple(int(load_palette()[GRAY][1][i:i + 2], 16) for i in (0, 2, 4))
+    assert cells == {(1, 2, 0, *red), (0, 0, 1, *gray)}
+
+
+def test_grid_to_xyzrgb_merges_three_plates_into_one_brick_layer():
+    from src.utils.brick_design import grid_to_xyzrgb
+
+    grid = np.full((1, 1, 4), -1)
+    grid[0, 0, 0] = RED
+    grid[0, 0, 1] = GRAY
+    grid[0, 0, 2] = GRAY
+    grid[0, 0, 3] = RED
+    cells = _xyzrgb_cells(grid_to_xyzrgb(grid, "plate", load_palette()))
+    gray = tuple(int(load_palette()[GRAY][1][i:i + 2], 16) for i in (0, 2, 4))
+    red = tuple(int(load_palette()[RED][1][i:i + 2], 16) for i in (0, 2, 4))
+    assert cells == {(0, 0, 0, *gray), (0, 0, 1, *red)}
+
+
+def test_build_result_voxels_are_solid_and_exclude_the_base():
+    result = build_design(castle_design(hollow=True, shapes=[
+        {"shape": "box", "x": [0, 11], "y": [0, 7], "z": [0, 11], "color": GRAY},
+    ], grid={"width": 12, "depth": 12, "layers": 8}))
+    cells = _xyzrgb_cells(result.xyzrgb())
+    assert result.has_base and (result.grid == -1).any()   # the built model is hollow...
+    assert len(cells) == 12 * 12 * 8                       # ...but the exported voxels are solid
+    assert {c[2] for c in cells} == set(range(8))          # design layers only, no base plate

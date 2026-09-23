@@ -16,6 +16,7 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from ..utils.auth import deduct_credits, get_user_with_optional_auth, handle_auth_and_tracking
 from ..utils.brick_design import (
+    BuildResult,
     DesignError,
     audit_ldraw,
     build_design,
@@ -382,7 +383,19 @@ def _design_system_prompt(request: LlmToBricksRequest) -> str:
     )
 
 
-async def _generate_ldr_with_design(request: LlmToBricksRequest) -> str:
+@dataclass(frozen=True)
+class LlmBuild:
+    ldr: str
+    voxels_xyzrgb: Optional[str] = None  # set in design mode: the model's voxels for editing/resizing
+
+
+def voxel_extent(xyzrgb: str) -> int:
+    """Longest axis of xyzrgb voxels in cells: the unit /resizeModel's detail_level uses."""
+    coords = [tuple(map(int, line.split()[:3])) for line in xyzrgb.splitlines() if line.strip()]
+    return max(max(axis) - min(axis) + 1 for axis in zip(*coords)) if coords else 0
+
+
+async def _generate_ldr_with_design(request: LlmToBricksRequest) -> BuildResult:
     """The model designs voxels; brick_design builds, verifies and renders; the model fixes and reviews."""
     palette = load_palette()
     loop = asyncio.get_running_loop()
@@ -460,7 +473,7 @@ async def _generate_ldr_with_design(request: LlmToBricksRequest) -> str:
 
     if not best:
         raise ValueError("The model did not produce a buildable brick design")
-    return best.ldr
+    return best
 
 
 async def _generate_ldr_direct(request: LlmToBricksRequest) -> str:
@@ -490,11 +503,12 @@ async def _generate_ldr_direct(request: LlmToBricksRequest) -> str:
     return best
 
 
-async def _generate_ldr(request: LlmToBricksRequest) -> str:
+async def _generate_ldr(request: LlmToBricksRequest) -> LlmBuild:
     if LDR_MODE == "direct":
-        return await _generate_ldr_direct(request)
+        return LlmBuild(ldr=await _generate_ldr_direct(request))
     try:
-        return validate_ldr_content(await _generate_ldr_with_design(request))
+        result = await _generate_ldr_with_design(request)
+        return LlmBuild(ldr=validate_ldr_content(result.ldr), voxels_xyzrgb=result.xyzrgb() or None)
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -518,7 +532,8 @@ async def process_llm_to_bricks_task(
     try:
         await generation_storage.update_status(generation_id, "processing")
         heartbeat_task = asyncio.create_task(heartbeat())
-        ldr_content = await _generate_ldr(request)
+        build = await _generate_ldr(request)
+        ldr_content = build.ldr
 
         await deduct_credits(
             user_info=user_info,
@@ -552,6 +567,16 @@ async def process_llm_to_bricks_task(
         await generation_storage.store_parts_list_csv(
             generation_id, ldr_content, raise_on_error=True
         )
+        if build.voxels_xyzrgb:
+            # xyzrgb feeds the block editor (and is replaced by its saves); design_voxels keeps
+            # the original voxels as the source for /resizeModel.
+            await generation_storage.store_model_file(
+                generation_id, build.voxels_xyzrgb, "xyzrgb", raise_on_error=True
+            )
+            await generation_storage.store_model_file(
+                generation_id, build.voxels_xyzrgb, "design_voxels", raise_on_error=True
+            )
+            await generation_storage.update_detail_level(generation_id, voxel_extent(build.voxels_xyzrgb))
         # The shared generations schema persists the LDR and parts list but
         # does not require an mpd_url column. The frontend follows the same
         # path as existing generations and converts the saved LDR through

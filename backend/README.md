@@ -160,6 +160,13 @@ from `gobrick_colors.csv`) and `src/utils/brick_design.py` builds it:
 6. order the build steps with the voxel2brick stability reordering so no step
    contains a floating part (overhangs are placed after what they hang from)
 
+The model's solid voxels (un-hollowed, without the plate base; plate layers
+merged three to a brick layer) are saved in the voxel pipeline's xyzrgb format
+as both `xyzrgb_url`, which the block editor loads and its saves replace, and
+`design_voxels_url`, the untouched source `/resizeModel` rescales (up or down)
+for later resizes. `detail_level` is updated to the voxels' longest axis so the
+resize slider starts at the model's real size.
+
 Overlapping or off-grid bricks can't occur in this mode. Build errors go back to
 the model as tool errors (`LLM_TO_BRICKS_DESIGN_MAX_ATTEMPTS`, default `3`); on
 the last attempt unsupported bricks are recolored or dropped instead of failing.

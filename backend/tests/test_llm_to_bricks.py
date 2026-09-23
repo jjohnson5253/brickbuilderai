@@ -108,14 +108,19 @@ def test_background_task_stores_standard_generation_artifacts(monkeypatch, tmp_p
             calls.append(("parts", generation_id, content, kwargs))
             return "https://example.com/parts.csv"
 
+        async def update_detail_level(self, generation_id, detail_level):
+            calls.append(("detail", generation_id, detail_level))
+
     class FakePacker:
         def pack_ldraw_model(self, ldr_path):
             mpd_path = tmp_path / "model.mpd"
             mpd_path.write_text("0 FILE model.ldr\n", encoding="utf-8")
             return str(mpd_path)
 
+    voxels = "0 0 0 255 0 0\n3 1 0 255 0 0\n0 0 1 255 0 0\n"
+
     async def fake_generate(_request):
-        return validate_ldr_content(VALID_PART)
+        return module.LlmBuild(ldr=validate_ldr_content(VALID_PART), voxels_xyzrgb=voxels)
 
     async def fake_deduct(**_kwargs):
         return {}
@@ -147,6 +152,37 @@ def test_background_task_stores_standard_generation_artifacts(monkeypatch, tmp_p
     assert not any(call[:3] == ("model", "generation-1", "mpd") for call in calls)
     assert any(call[0] == "parts" for call in calls)
     assert any(call[0] == "images" for call in calls)
+    # the design voxels are saved for the block editor and as the resize source
+    assert ("model", "generation-1", "xyzrgb", voxels, {"raise_on_error": True}) in calls
+    assert ("model", "generation-1", "design_voxels", voxels, {"raise_on_error": True}) in calls
+    assert ("detail", "generation-1", 4) in calls
+
+
+def test_voxel_extent_is_the_longest_axis():
+    assert module.voxel_extent("0 0 0 1 1 1\n3 1 0 1 1 1\n0 0 5 1 1 1\n") == 6
+    assert module.voxel_extent("") == 0
+
+
+def test_generate_ldr_returns_design_voxels_in_design_mode_and_none_in_direct_mode(monkeypatch):
+    result = module.build_design(GOOD_DESIGN)
+
+    async def fake_design(_request):
+        return result
+
+    async def fake_direct(_request):
+        return validate_ldr_content(VALID_PART)
+
+    monkeypatch.setattr(module, "_generate_ldr_with_design", fake_design)
+    monkeypatch.setattr(module, "_generate_ldr_direct", fake_direct)
+    request = LlmToBricksRequest(prompt="tower")
+
+    monkeypatch.setattr(module, "LDR_MODE", "design")
+    design_build = asyncio.run(module._generate_ldr(request))
+    assert design_build.voxels_xyzrgb == result.xyzrgb()
+    assert "3001.dat" in design_build.ldr or "3003.dat" in design_build.ldr
+
+    monkeypatch.setattr(module, "LDR_MODE", "direct")
+    assert asyncio.run(module._generate_ldr(request)).voxels_xyzrgb is None
 
 
 def test_start_records_the_selected_model_and_llm_endpoint(monkeypatch):
@@ -235,7 +271,7 @@ def test_design_mode_feeds_build_errors_back_then_reviews_then_accepts(monkeypat
     monkeypatch.setattr(module, "DESIGN_REVIEW_ROUNDS", 1)
     monkeypatch.setattr(module, "DESIGN_MAX_ATTEMPTS", 3)
 
-    ldr = asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a tower")))
+    ldr = asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a tower"))).ldr
 
     assert conversation.sent == 3
     assert opened["tools"][0].name == "submit_brick_design"
@@ -258,7 +294,7 @@ def test_design_mode_answers_every_tool_call_and_nudges_text_only_turns(monkeypa
         _call("accept_design", {}, "a2"),
     ])
     monkeypatch.setattr(module, "DESIGN_REVIEW_ROUNDS", 1)
-    ldr = asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a tower")))
+    ldr = asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a tower"))).ldr
     assert conversation.user_texts == ["Please submit the model with the submit_brick_design tool."]
     early_accept, review = conversation.tool_results[0]
     assert (early_accept.call_id, early_accept.is_error) == ("a1", True)
@@ -270,7 +306,7 @@ def test_design_mode_repairs_on_last_attempt_instead_of_failing(monkeypatch):
     _scripted(monkeypatch, [_call("submit_brick_design", FLOATING_DESIGN, "t1")])
     monkeypatch.setattr(module, "DESIGN_MAX_ATTEMPTS", 1)
     monkeypatch.setattr(module, "DESIGN_REVIEW_ROUNDS", 0)
-    ldr = asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a slab")))
+    ldr = asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a slab"))).ldr
     assert "3001.dat" in ldr or "3007.dat" in ldr
 
 

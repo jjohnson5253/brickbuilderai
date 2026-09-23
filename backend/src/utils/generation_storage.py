@@ -19,6 +19,10 @@ from .brickowl_utils import parse_ldr_file, generate_parts_list_csv
 logger = logging.getLogger(__name__)
 
 
+# Generation columns holding voxel sources that derived (resized/edited) generations must keep so
+# they can be resized again.
+RESIZE_SOURCE_KEYS = ("sam3d_voxel_data_url", "design_voxels_url")
+
 class GenerationStorage:
     """Handles storing and retrieving generation data in Supabase Storage + Database"""
     
@@ -401,6 +405,7 @@ class GenerationStorage:
                 "xyzrgb": ".xyzrgb",
                 "unconverted_xyzrgb": ".xyzrgb",
                 "problematic_xyzrgb": ".xyzrgb",
+                "design_voxels": ".xyzrgb",
                 "sam3d_voxel_data": ".json"
             }
             
@@ -414,6 +419,7 @@ class GenerationStorage:
                 "xyzrgb": "text/plain",
                 "unconverted_xyzrgb": "text/plain",
                 "problematic_xyzrgb": "text/plain",
+                "design_voxels": "text/plain",
                 "sam3d_voxel_data": "application/json"
             }
             
@@ -563,6 +569,16 @@ class GenerationStorage:
             logger.error(f"Failed to update status for generation {generation_id}: {e}")
             # Don't raise - this shouldn't break the main flow
     
+    async def update_detail_level(self, generation_id: str, detail_level: float) -> None:
+        """Record the model's actual size so the resize slider starts at it."""
+        try:
+            self.client.table("generations").update({
+                "detail_level": detail_level,
+                "updated_at": datetime.utcnow().isoformat(),
+            }).eq("id", generation_id).execute()
+        except Exception as e:
+            logger.error(f"Failed to update detail level for generation {generation_id}: {e}")
+
     async def update_payment_status(
         self,
         generation_id: str,

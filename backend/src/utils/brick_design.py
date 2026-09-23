@@ -478,10 +478,16 @@ class BuildResult:
     weak_bricks: int = 0
     grounded_groups: int = 1
     warnings: List[str] = field(default_factory=list)
+    solid_grid: Optional[np.ndarray] = None  # grid before hollowing, design layers only
 
     @property
     def piece_count(self) -> int:
         return len(self.bricks)
+
+    def xyzrgb(self, palette: Optional[Dict[int, Tuple[str, str]]] = None) -> str:
+        """The model's solid voxels (without the plate base) as xyzrgb; see grid_to_xyzrgb."""
+        grid = self.solid_grid if self.solid_grid is not None else self.grid
+        return grid_to_xyzrgb(grid, self.unit, palette or load_palette())
 
     def summary(self, palette: Optional[Dict[int, Tuple[str, str]]] = None) -> str:
         palette = palette or load_palette()
@@ -503,6 +509,33 @@ class BuildResult:
         lines.append("Pieces by color: " + ", ".join(
             f"{palette.get(c, (str(c), ''))[0]} {n}" for c, n in by_color.most_common()))
         return "\n".join(lines)
+
+
+PLATES_PER_BRICK = 3
+
+
+def grid_to_xyzrgb(grid: np.ndarray, unit: str, palette: Dict[int, Tuple[str, str]]) -> str:
+    """Export a design grid in the voxel pipeline's xyzrgb format ("x y z r g b" per line).
+
+    The pipeline's voxels are one stud square and one brick tall with z up, and its y axis is the
+    design's z (front = 0), so this file feeds the block editor, /updateModel and /resizeModel like
+    any other generation. Plate layers are merged three at a time into brick layers: a cell is
+    filled if any of its plates is, taking the most common plate color."""
+    if unit == "plate":
+        layers = grid.shape[2]
+        merged = np.full(grid.shape[:2] + (-(-layers // PLATES_PER_BRICK),), EMPTY, dtype=grid.dtype)
+        for out_layer in range(merged.shape[2]):
+            chunk = grid[:, :, out_layer * PLATES_PER_BRICK:(out_layer + 1) * PLATES_PER_BRICK]
+            for x, z in zip(*np.nonzero((chunk != EMPTY).any(axis=2))):
+                colors = chunk[x, z][chunk[x, z] != EMPTY]
+                merged[x, z, out_layer] = Counter(colors.tolist()).most_common(1)[0][0]
+        grid = merged
+    lines = []
+    for x, z, layer in zip(*np.nonzero(grid != EMPTY)):
+        rgb = palette.get(int(grid[x, z, layer]), ("", "808080"))[1]
+        r, g, b = (int(rgb[i:i + 2], 16) for i in (0, 2, 4))
+        lines.append(f"{x} {z} {layer} {r} {g} {b}")
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def _hollow(grid: np.ndarray) -> np.ndarray:
@@ -605,6 +638,7 @@ def build_design(design: Dict[str, Any], *, max_pieces: int = 5_000, repair: boo
                 break
         result = _pack(work, bool(offset))
 
+    removed = np.zeros(work.shape, dtype=bool)
     if result.loose:
         mask = np.isin(result.owner, result.loose)
         labels, _ = ndimage.label(mask)
@@ -620,6 +654,7 @@ def build_design(design: Dict[str, Any], *, max_pieces: int = 5_000, repair: boo
                 "at least 2 studs deep, or support them from below."
             )
         work[mask] = EMPTY
+        removed |= mask
         warnings.append(f"Removed {len(result.loose)} brick(s) that could not be connected ({'; '.join(areas)}).")
         result = _pack(work, bool(offset))
 
@@ -634,9 +669,14 @@ def build_design(design: Dict[str, Any], *, max_pieces: int = 5_000, repair: boo
     layer_units = (["plate"] if offset else []) + [unit] * (work.shape[2] - offset)
     ldr = to_ldraw(result.bricks, work.shape, layer_units,
                    title=str(design.get("title") or "Brick model"))
+    # The un-hollowed model with the builder's recolors and removals applied: a solid source for
+    # the voxel pipeline (block editor / resize), which hollows models itself.
+    solid_grid = np.where(work != EMPTY, work, grid)
+    solid_grid[removed] = EMPTY
     return BuildResult(ldr=ldr, unit=unit, grid=work[:, :, offset:], bricks=result.bricks,
                        has_base=bool(offset), weak_bricks=weak,
-                       grounded_groups=result.grounded_groups, warnings=warnings)
+                       grounded_groups=result.grounded_groups, warnings=warnings,
+                       solid_grid=solid_grid[:, :, offset:])
 
 
 def to_ldraw(bricks, shape, layer_units, title: str = "Brick model") -> str:
