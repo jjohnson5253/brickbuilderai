@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 
 import pytest
 from pydantic import ValidationError
@@ -148,3 +149,81 @@ def test_background_task_stores_standard_generation_artifacts(monkeypatch, tmp_p
     assert not any(call[:3] == ("model", "generation-1", "mpd") for call in calls)
     assert any(call[0] == "parts" for call in calls)
     assert any(call[0] == "images" for call in calls)
+
+
+GOOD_DESIGN = {
+    "title": "Tower",
+    "base_color": 2,
+    "grid": {"width": 8, "depth": 8, "layers": 6},
+    "shapes": [{"shape": "cylinder", "axis": "y", "center": [3.5, 3.5], "radius": 3, "range": [0, 5], "color": 71}],
+}
+FLOATING_DESIGN = {
+    "grid": {"width": 8, "depth": 8, "layers": 8},
+    "shapes": [
+        {"shape": "box", "x": [0, 7], "y": [0, 0], "z": [0, 7], "color": 71},
+        {"shape": "box", "x": [2, 4], "y": [4, 5], "z": [2, 4], "color": 4},
+    ],
+}
+
+
+def _tool_response(name, tool_input, tool_id):
+    return {"stop_reason": "tool_use",
+            "content": [{"type": "tool_use", "id": tool_id, "name": name, "input": tool_input}]}
+
+
+def _scripted_claude(monkeypatch, responses):
+    sent = []
+
+    async def fake_post(_client, _headers, payload):
+        sent.append(copy.deepcopy(payload))  # the loop keeps appending to the same message list
+        return responses[len(sent) - 1]
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr(module, "_post_messages", fake_post)
+    return sent
+
+
+def test_design_mode_feeds_build_errors_back_then_reviews_then_accepts(monkeypatch):
+    sent = _scripted_claude(monkeypatch, [
+        _tool_response("submit_brick_design", FLOATING_DESIGN, "t1"),
+        _tool_response("submit_brick_design", GOOD_DESIGN, "t2"),
+        _tool_response("accept_design", {}, "t3"),
+    ])
+    monkeypatch.setattr(module, "DESIGN_REVIEW_ROUNDS", 1)
+    monkeypatch.setattr(module, "DESIGN_MAX_ATTEMPTS", 3)
+
+    ldr = asyncio.run(module._generate_ldr_with_design(ClaudeToBricksRequest(prompt="a tower")))
+
+    assert len(sent) == 3
+    assert sent[0]["tools"][0]["name"] == "submit_brick_design"
+    assert "COLORS" in sent[0]["system"] and "71 Light Bluish Gray" in sent[0]["system"]
+    error_result = sent[1]["messages"][-1]["content"][0]
+    assert error_result["is_error"] and "float" in error_result["content"]
+    review_result = sent[2]["messages"][-1]["content"][0]
+    assert review_result["content"][1]["type"] == "image"
+    assert "Built" in review_result["content"][0]["text"]
+    validated = validate_ldr_content(ldr)
+    assert module.audit_ldraw(validated).ok
+    assert "0 STEP" in validated
+
+
+def test_design_mode_repairs_on_last_attempt_instead_of_failing(monkeypatch):
+    _scripted_claude(monkeypatch, [_tool_response("submit_brick_design", FLOATING_DESIGN, "t1")])
+    monkeypatch.setattr(module, "DESIGN_MAX_ATTEMPTS", 1)
+    monkeypatch.setattr(module, "DESIGN_REVIEW_ROUNDS", 0)
+    ldr = asyncio.run(module._generate_ldr_with_design(ClaudeToBricksRequest(prompt="a slab")))
+    assert "3001.dat" in ldr or "3007.dat" in ldr
+
+
+def test_direct_mode_sends_audit_feedback_and_uses_the_corrected_model(monkeypatch):
+    overlapping = f"{VALID_PART}\n{VALID_PART}"
+    sent = _scripted_claude(monkeypatch, [
+        _tool_response("submit_ldr_model", {"ldr_content": overlapping}, "d1"),
+        _tool_response("submit_ldr_model", {"ldr_content": VALID_PART}, "d2"),
+    ])
+    monkeypatch.setattr(module, "DIRECT_FIX_ROUNDS", 1)
+    ldr = asyncio.run(module._generate_ldr_direct(ClaudeToBricksRequest(prompt="brick")))
+    assert len(sent) == 2
+    feedback = sent[1]["messages"][-1]["content"][0]
+    assert feedback["is_error"] and "overlap" in feedback["content"]
+    assert ldr.count("3001.dat") == 1
