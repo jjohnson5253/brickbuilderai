@@ -1,3 +1,4 @@
+import React from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, LayoutDashboard } from "lucide-react";
 
@@ -7,12 +8,22 @@ import { SiteFooter } from "../components/SiteFooter";
 
 const posts = [
   {
+    title: "Best AI LEGO design tools in 2026 (ranked)",
+    href: "/blog/best-ai-lego-design-tools-2026",
+    description:
+      "A ranked comparison of AI LEGO design tools in 2026, including BrickBuilder.ai, LLM spatial reasoning workflows, SAM3D, TRELLIS, and LEGO-Ace.",
+    date: "September 23, 2026",
+    image: "/assets/blog/brickworld26/llm-brick-generation.jpg",
+    imageAlt: "AI-generated LEGO-style scene used for design tool comparison",
+  },
+  {
     title: "Using AI to design LEGO in 2026",
     href: "/blog/using-ai-to-design-lego-in-2026",
     description:
       "A practical overview of the current AI LEGO design landscape, from image-to-3D pipelines to native brick generation models.",
     date: "June 25, 2026",
     image: "/assets/blog/brickworld26/brickbuilderai-models.jpg",
+    imageAlt: "BrickBuilderAI models displayed at BrickWorld 2026",
   },
 ];
 
@@ -86,7 +97,7 @@ export default function BlogIndexPage() {
                   <Link to={post.href} aria-label={post.title}>
                     <img
                       src={post.image}
-                      alt="BrickBuilderAI models displayed at BrickWorld 2026"
+                      alt={post.imageAlt}
                       className="aspect-[4/3] w-full rounded-lg border border-slate-200 object-cover"
                     />
                   </Link>
