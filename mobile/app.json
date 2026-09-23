@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "BrickBuilder",
+    "slug": "brickbuilder",
+    "version": "0.1.0",
+    "orientation": "default",
+    "scheme": "brickbuilder",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#ffffff",
+    "ios": {
+      "bundleIdentifier": "ai.brickbuilder.app",
+      "buildNumber": "1",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "BrickBuilder uses the camera only when you choose to photograph a model for a new generation.",
+        "NSPhotoLibraryUsageDescription": "BrickBuilder lets you choose a reference image for a new brick-model generation.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "ai.brickbuilder.app",
+      "predictiveBackGestureEnabled": false
+    },
+    "extra": {
+      "eas": {
+        "projectId": "a4cde02d-2b94-4193-89e4-54eaccb5e311"
+      }
+    },
+    "owner": "jakesessiongalaxys-team"
+  }
+}

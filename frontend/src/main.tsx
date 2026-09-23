@@ -2,8 +2,11 @@
   import { PostHogProvider } from "posthog-js/react";
   import { HelmetProvider } from "react-helmet-async";
   import { AuthProvider } from "./contexts/AuthContext";
+  import { registerMobileShellAnalytics } from "./utils/mobileShellAnalytics";
   import App from "./App.tsx";
   import "./index.css";
+
+  registerMobileShellAnalytics();
 
   createRoot(document.getElementById("root")!).render(
     <HelmetProvider>
