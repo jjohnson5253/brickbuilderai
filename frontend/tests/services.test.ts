@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaimGenerationApiService } from '../src/services/claimGenerationApi';
+import { LlmToBricksApiService } from '../src/services/llmToBricksApi';
 import { CreateCheckoutSessionApiService } from '../src/services/createCheckoutSessionApi';
 import { EstimatePriceApiService } from '../src/services/estimatePriceApi';
 import { GetCommunityGenerationsApiService } from '../src/services/getCommunityGenerationsApi';
@@ -31,6 +32,8 @@ describe('JSON API service contracts', () => {
 
   const cases: Array<[string, () => Promise<unknown>, string, unknown, unknown]> = [
     ['claim', () => ClaimGenerationApiService.claimGeneration('g1', 'tok'), '/claimGeneration', { generation_id: 'g1' }, { generation_id: 'g1', claimed: true }],
+    ['llm bricks', () => LlmToBricksApiService.generate({ prompt: ' castle ' }, 'tok'), '/llmToBricks', { prompt: 'castle', image_media_type: 'image/png', detail_level: 40, model: 'claude-opus-5-5' }, { generation_id: 'g2', message: 'started' }],
+    ['llm bricks openai', () => LlmToBricksApiService.generate({ prompt: 'castle', model: 'gpt-5.6-sol' }, 'tok'), '/llmToBricks', { prompt: 'castle', image_media_type: 'image/png', detail_level: 40, model: 'gpt-5.6-sol' }, { generation_id: 'g3', message: 'started' }],
     ['checkout', () => CreateCheckoutSessionApiService.createCheckoutSession({ quantity: 2 }, 'tok'), '/createCheckoutSession', { quantity: 2 }, { session_id: 's1', checkout_url: 'url' }],
     ['community', () => GetCommunityGenerationsApiService.getCommunityGenerations('tok', 10, 2, true), '/getCommunityGenerations', { limit: 10, offset: 2, processing: true }, { generations: [], total_count: 0, has_more: false }],
     ['by image', () => GetGenerationsByImageApiService.getGenerationsByImage('tok', 'img'), '/getGenerationsByImage', { processed_image_url: 'img' }, { generations: [], total_count: 0 }],
@@ -133,6 +136,8 @@ describe('JSON API service contracts', () => {
     await expect(GetPriceApiService.getPrice('')).rejects.toThrow('Generation ID is required');
     await expect(LdrToMpdApiService.convertLdrToMpd('')).rejects.toThrow('LDR content is required');
     await expect(SendWaitlistEmailApiService.sendWaitlistEmail('')).rejects.toThrow('Email is required');
+    await expect(LlmToBricksApiService.generate({})).rejects.toThrow('A prompt or image is required');
+    await expect(LlmToBricksApiService.generate({ prompt: 'castle', model: 'unknown' })).rejects.toThrow('Unsupported model');
     expect(fetch).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from fastapi import HTTPException, Depends
 
-from ..utils.generation_storage import generation_storage
+from ..utils.generation_storage import RESIZE_SOURCE_KEYS, generation_storage
 from ..utils.authorization import get_generation_or_404
 from ..utils.posthog_client import track_api_call, track_error
 from ..utils.conversions.glb2brick import glb2brick
@@ -108,9 +108,10 @@ async def process_update_model_task(
             if generation.get('external_glb_url'):
                 update_data['external_glb_url'] = generation['external_glb_url']
             
-            # Reference same SAM3D voxel data URL
-            if generation.get('sam3d_voxel_data_url'):
-                update_data['sam3d_voxel_data_url'] = generation['sam3d_voxel_data_url']
+            # Reference the same resize source (SAM3D voxel data or LLM design voxels)
+            for source_key in RESIZE_SOURCE_KEYS:
+                if generation.get(source_key):
+                    update_data[source_key] = generation[source_key]
             
             if update_data:
                 generation_storage.client.table("generations").update(update_data).eq("id", generation_id).execute()

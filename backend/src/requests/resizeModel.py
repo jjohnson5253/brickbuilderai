@@ -16,11 +16,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from ..utils.auth import get_user_with_optional_auth, handle_auth_and_tracking, deduct_credits
 from ..utils.posthog_client import track_api_call, track_error
 from ..utils.pack_ldraw_model import LDrawPacker
-from ..utils.generation_storage import generation_storage
+from ..utils.generation_storage import RESIZE_SOURCE_KEYS, generation_storage
 from ..utils.authorization import get_generation_or_404
 from ..utils.conversions.glb2brick import glb2brick, glb2xyzrgb
 from ..utils.sam3d_stream import decode_sam3d_voxels_to_xyzrgb
-from ..utils.conversions.voxel_utils import downsample_xyzrgb
+from ..utils.conversions.voxel_utils import downsample_xyzrgb, resample_xyzrgb
 from ..utils.color_conversions import convert_xyzrgb_to_ldr_colors
 
 # Configure logging
@@ -134,9 +134,10 @@ async def process_resize_model_task(
         if generation.get('external_glb_url'):
             update_data['external_glb_url'] = generation['external_glb_url']
 
-        # Reference same SAM3D voxel data URL (for future resizes)
-        if generation.get('sam3d_voxel_data_url'):
-            update_data['sam3d_voxel_data_url'] = generation['sam3d_voxel_data_url']
+        # Reference the same resize source (SAM3D voxel data or LLM design voxels)
+        for source_key in RESIZE_SOURCE_KEYS:
+            if generation.get(source_key):
+                update_data[source_key] = generation[source_key]
 
         if update_data:
             generation_storage.client.table("generations").update(update_data).eq("id", generation_id).execute()
@@ -285,14 +286,15 @@ async def resize_model(
         logger.info(f"Fetching generation record: {request.generation_id}")
         generation = await get_generation_or_404(request.generation_id, auth_info)
 
-        # Check if we have SAM3D voxel data or a GLB file
+        # Check if we have SAM3D voxel data, LLM design voxels or a GLB file
         sam3d_voxel_data_url = generation.get('sam3d_voxel_data_url')
+        design_voxels_url = generation.get('design_voxels_url')
         has_glb = bool(generation.get('glb_url'))
 
-        if not sam3d_voxel_data_url and not has_glb:
+        if not sam3d_voxel_data_url and not design_voxels_url and not has_glb:
             raise HTTPException(
                 status_code=400,
-                detail="Generation does not have a GLB file or SAM3D voxel data to resize"
+                detail="Generation does not have a GLB file or voxel data to resize"
             )
 
         # Create new generation record early so we can store files to it
@@ -357,6 +359,24 @@ async def resize_model(
                     xyzrgb_path = temp_xyzrgb.name
 
                 logger.info(f"SAM3D decode + downsample complete (target={target_resolution}). XYZRGB file: {xyzrgb_path}")
+
+            elif design_voxels_url:
+                # --- LLM design path: rescale the model's own voxels ---
+                logger.info(f"Downloading LLM design voxels from: {design_voxels_url}")
+                design_bytes = await generation_storage.download_file_from_storage(design_voxels_url)
+                loop = asyncio.get_event_loop()
+                target_resolution = max(1, int(request.detail_level))
+                xyzrgb_content = await loop.run_in_executor(
+                    None, resample_xyzrgb, design_bytes.decode("utf-8"), target_resolution
+                )
+                # Downsampling averages colors, so snap them back onto the LDR palette
+                xyzrgb_content = await loop.run_in_executor(
+                    None, convert_xyzrgb_to_ldr_colors, xyzrgb_content
+                )
+                with tempfile.NamedTemporaryFile(suffix='.xyzrgb', delete=False, mode='w') as temp_xyzrgb:
+                    temp_xyzrgb.write(xyzrgb_content)
+                    xyzrgb_path = temp_xyzrgb.name
+                logger.info(f"LLM design voxels resampled (target={target_resolution}). XYZRGB file: {xyzrgb_path}")
 
             else:
                 # --- GLB path: voxelize as before ---

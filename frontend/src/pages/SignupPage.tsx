@@ -150,27 +150,29 @@ function SignupPage() {
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
               )}
 
-              {/* Divider */}
-              <div className="flex items-center gap-3 pt-1">
-                <div className="h-px flex-1 bg-slate-200" />
-                <span className="text-xs text-slate-500">or</span>
-                <div className="h-px flex-1 bg-slate-200" />
-              </div>
+              <div data-native-mobile-hidden="true">
+                {/* Divider */}
+                <div className="flex items-center gap-3 pt-1">
+                  <div className="h-px flex-1 bg-slate-200" />
+                  <span className="text-xs text-slate-500">or</span>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
 
-              {/* Google OAuth */}
-              <button
-                type="button"
-                className="h-11 w-full rounded-lg border border-slate-300 bg-white text-slate-800 transition-colors flex items-center justify-center gap-2 hover:bg-slate-50 hover:border-slate-400"
-                onClick={handleGoogleSignIn}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="18" height="18" aria-hidden="true" focusable="false">
-                  <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.3 9.1 3.4l6.8-6.8C35.4 2.3 30 0 24 0 14.7 0 6.7 5.4 2.7 13.2l7.9 6.1C12.3 13.1 17.6 9.5 24 9.5z"/>
-                  <path fill="#34A853" d="M46.1 24.5c0-1.7-.1-3.3-.4-4.9H24v9.3h12.6c-.6 3.1-2.5 5.7-5.2 7.4l8 6.2c4.6-4.3 6.7-10.6 6.7-18z"/>
-                  <path fill="#4A90E2" d="M10.6 28.7c-1.1-3.1-1.1-6.5 0-9.6l-7.9-6.1C.9 17.7 0 20.8 0 24s.9 6.3 2.7 11.1l7.9-6.4z"/>
-                  <path fill="#FBBC05" d="M24 48c6 0 11.4-2 15.1-5.4l-8-6.2c-2.2 1.4-5 2.2-7.1 2.2-6.4 0-11.8-3.6-13.4-8.6l-7.9 6.4C6.7 42.6 14.7 48 24 48z"/>
-                </svg>
-                Sign up with Google
-              </button>
+                {/* Google OAuth */}
+                <button
+                  type="button"
+                  className="h-11 w-full rounded-lg border border-slate-300 bg-white text-slate-800 transition-colors flex items-center justify-center gap-2 hover:bg-slate-50 hover:border-slate-400 mt-4"
+                  onClick={handleGoogleSignIn}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="18" height="18" aria-hidden="true" focusable="false">
+                    <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.3 9.1 3.4l6.8-6.8C35.4 2.3 30 0 24 0 14.7 0 6.7 5.4 2.7 13.2l7.9 6.1C12.3 13.1 17.6 9.5 24 9.5z"/>
+                    <path fill="#34A853" d="M46.1 24.5c0-1.7-.1-3.3-.4-4.9H24v9.3h12.6c-.6 3.1-2.5 5.7-5.2 7.4l8 6.2c4.6-4.3 6.7-10.6 6.7-18z"/>
+                    <path fill="#4A90E2" d="M10.6 28.7c-1.1-3.1-1.1-6.5 0-9.6l-7.9-6.1C.9 17.7 0 20.8 0 24s.9 6.3 2.7 11.1l7.9-6.4z"/>
+                    <path fill="#FBBC05" d="M24 48c6 0 11.4-2 15.1-5.4l-8-6.2c-2.2 1.4-5 2.2-7.1 2.2-6.4 0-11.8-3.6-13.4-8.6l-7.9 6.4C6.7 42.6 14.7 48 24 48z"/>
+                  </svg>
+                  Sign up with Google
+                </button>
+              </div>
 
               <p className="text-xs text-slate-500 text-center">
                 Already have an account? <Link to="/login" state={{ from: redirectTo }} className="text-[#f44336] hover:underline">Log in</Link>.

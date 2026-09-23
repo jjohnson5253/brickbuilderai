@@ -126,7 +126,10 @@ def parse_parts_list_csv(csv_content: str) -> tuple[Dict[str, int], float]:
     return parts_dict, total_weight
 
 
-def calculate_price(parts_dict: Dict[str, int]) -> tuple[float, list[PartPriceDetail]]:
+def calculate_price(
+    parts_dict: Dict[str, int],
+    unit_price_override: Optional[float] = None,
+) -> tuple[float, list[PartPriceDetail]]:
     """
     Calculate total price based on parts and pricing table
     
@@ -140,7 +143,11 @@ def calculate_price(parts_dict: Dict[str, int]) -> tuple[float, list[PartPriceDe
     parts_breakdown = []
     
     for part_id, quantity in parts_dict.items():
-        unit_price = PART_PRICES.get(part_id, DEFAULT_PART_PRICE)
+        unit_price = (
+            unit_price_override
+            if unit_price_override is not None
+            else PART_PRICES.get(part_id, DEFAULT_PART_PRICE)
+        )
         part_total = unit_price * quantity
         total_price += part_total
         
@@ -223,14 +230,37 @@ async def get_price(request: GetPriceRequest, auth_info: dict) -> GetPriceRespon
             )
         
         # Calculate price
-        base_price, parts_breakdown = calculate_price(parts_dict)
+        # Direct LLM generations (and older records from its former name) use flat per-piece pricing.
+        is_llm_direct_generation = generation.get("endpoint") in ("llmToBricks", "claudeToBricks")
+        base_price, parts_breakdown = calculate_price(
+            parts_dict,
+            unit_price_override=DEFAULT_PART_PRICE if is_llm_direct_generation else None,
+        )
         total_parts = sum(parts_dict.values())
         unique_part_types = len(parts_dict)
         
-        # Apply margin upsale percentage
-        total_price = round(base_price * (1 + MARGIN_UPSALE_PERCENTAGE), 2)
+        # Claude-direct designs use the requested flat $0.10-per-piece estimate.
+        # Existing generation paths retain the catalog pricing and margin.
+        total_price = (
+            base_price
+            if is_llm_direct_generation
+            else round(base_price * (1 + MARGIN_UPSALE_PERCENTAGE), 2)
+        )
         
-        logger.info(f"Price calculated: ${base_price} + {MARGIN_UPSALE_PERCENTAGE*100}% margin = ${total_price} for {total_parts} parts ({unique_part_types} unique types), weight: {total_weight}kg")
+        pricing_label = (
+            "$0.10 flat per piece"
+            if is_llm_direct_generation
+            else f"catalog price + {MARGIN_UPSALE_PERCENTAGE*100}% margin"
+        )
+        logger.info(
+            "Price calculated: $%s -> $%s (%s) for %s parts (%s unique types), weight: %skg",
+            base_price,
+            total_price,
+            pricing_label,
+            total_parts,
+            unique_part_types,
+            total_weight,
+        )
         
         message = f"Price estimate: ${total_price:.2f} USD for {total_parts} parts"
         

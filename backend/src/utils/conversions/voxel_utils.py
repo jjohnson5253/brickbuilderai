@@ -374,3 +374,41 @@ def downsample_xyzrgb(xyzrgb_content: str, voxel_size: int) -> str:
         f"(target {voxel_size}, scale {scale:.2f})"
     )
     return "\n".join(lines)
+
+
+def upsample_xyzrgb(xyzrgb_content: str, voxel_size: int) -> str:
+    """
+    Nearest-neighbour upsample XYZRGB data so the longest axis spans *voxel_size* cells.
+
+    Content already at or above the target is returned unchanged. Output
+    coordinates start at 0 on every axis.
+    """
+    data = np.loadtxt(xyzrgb_content.splitlines(), ndmin=2)
+    coords = data[:, :3].astype(int)
+    colors = data[:, 3:6].astype(int)
+    mins = coords.min(axis=0)
+    extents = coords.max(axis=0) - mins + 1
+    if int(extents.max()) >= voxel_size:
+        return xyzrgb_content
+
+    scale = voxel_size / int(extents.max())
+    source = np.full(tuple(extents), -1, dtype=np.int64)
+    source[tuple((coords - mins).T)] = np.arange(len(coords))
+
+    out_extents = np.maximum(1, np.round(extents * scale).astype(int))
+    axes = [np.minimum(np.floor(np.arange(n) / scale).astype(int), e - 1)
+            for n, e in zip(out_extents, extents)]
+    picked = source[np.ix_(*axes)]
+    out_coords = np.argwhere(picked >= 0)
+    out_colors = colors[picked[picked >= 0]]
+    return "\n".join(f"{x} {y} {z} {r} {g} {b}"
+                     for (x, y, z), (r, g, b) in zip(out_coords.tolist(), out_colors.tolist()))
+
+
+def resample_xyzrgb(xyzrgb_content: str, voxel_size: int) -> str:
+    """Scale XYZRGB data up or down so the longest axis spans about *voxel_size* cells."""
+    coords = np.loadtxt(xyzrgb_content.splitlines(), ndmin=2)[:, :3]
+    longest = int((coords.max(axis=0) - coords.min(axis=0)).max()) + 1
+    if longest < voxel_size:
+        return upsample_xyzrgb(xyzrgb_content, voxel_size)
+    return downsample_xyzrgb(xyzrgb_content, voxel_size)

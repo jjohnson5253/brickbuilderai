@@ -23,6 +23,7 @@ from .requests.ldrToMpd import ldr_to_mpd, LdrToMpdRequest, LdrToMpdResponse
 from .requests.resizeModel import resize_model, ResizeModelRequest, ResizeModelResponse
 from .requests.promptEditModel import prompt_edit_model, PromptEditModelRequest
 from .requests.llmRender import llm_render, llm_render_stream, LlmRenderRequest, LlmRenderResponse
+from .requests.llmToBricks import llm_to_bricks, LlmToBricksRequest
 from .requests.createCheckoutSession import create_checkout_session, CreateCheckoutSessionRequest, CreateCheckoutSessionResponse
 from .requests.stripeWebhook import stripe_webhook, StripeWebhookRequest, StripeWebhookResponse
 from .requests.getGeneration import get_generation, GetGenerationRequest, GetGenerationResponse
@@ -197,6 +198,15 @@ async def textToBricks_endpoint(
     if request.stream:
         return await text_to_bricks_stream(request, auth_info)
     return await text_to_bricks(request, auth_info)
+
+
+@app.post("/llmToBricks", response_model=ImageToBricksResponse)
+async def llm_to_bricks_endpoint(
+    request: LlmToBricksRequest,
+    auth_info: dict = Depends(get_user_with_optional_auth),
+) -> ImageToBricksResponse:
+    """Have a Claude or OpenAI model design a brick model directly, then store normal artifacts."""
+    return await llm_to_bricks(request, auth_info)
 
 
 @app.post("/glbToBricks", response_model=GlbToBricksResponse)

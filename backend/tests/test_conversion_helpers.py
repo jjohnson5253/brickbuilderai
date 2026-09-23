@@ -63,3 +63,29 @@ def test_parse_fal_stream_results_keeps_latest_appearance_and_glb():
     assert result["glb_bytes"] == b"glb"
     with pytest.raises(Exception, match="failed"):
         parse_fal_stream_results('data: {"type":"error","message":"failed"}')
+
+
+def _cells(xyzrgb):
+    return {tuple(map(int, line.split())) for line in xyzrgb.splitlines() if line.strip()}
+
+
+def test_upsample_xyzrgb_scales_nearest_neighbour_to_the_target():
+    from src.utils.conversions.voxel_utils import upsample_xyzrgb
+
+    source = "0 0 0 255 0 0\n1 0 0 0 0 255\n"
+    cells = _cells(upsample_xyzrgb(source, 4))
+    # every axis scales by the same factor (2), so the 1-cell-thick row becomes 2 x 2 thick
+    assert cells == {(x, y, z, *((255, 0, 0) if x < 2 else (0, 0, 255)))
+                     for x in range(4) for y in range(2) for z in range(2)}
+    assert upsample_xyzrgb(source, 2) is source
+
+
+def test_resample_xyzrgb_grows_or_shrinks_the_longest_axis():
+    from src.utils.conversions.voxel_utils import resample_xyzrgb
+
+    source = "\n".join(f"{x} 0 {z} 10 20 30" for x in range(4) for z in range(2))
+    grown = _cells(resample_xyzrgb(source, 8))
+    shrunk = _cells(resample_xyzrgb(source, 2))
+    assert max(c[0] for c in grown) == 7 and max(c[2] for c in grown) == 3
+    assert max(c[0] for c in shrunk) == 1 and max(c[2] for c in shrunk) == 0
+    assert {c[3:] for c in grown | shrunk} == {(10, 20, 30)}

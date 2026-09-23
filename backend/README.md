@@ -125,6 +125,59 @@ Anthropic's Messages API instead, and requires `ANTHROPIC_API_KEY` (see also
 scoped to a workspace, also set `ANTHROPIC_WORKSPACE_ID` (from the Anthropic
 Console under Settings > Workspaces), or requests fail with
 "API key is not scoped to a workspace".
+
+`POST /llmToBricks` ("LLM Render" in the app) accepts a text prompt, a base64
+image, or both, plus an optional `model`, and asks that Claude or OpenAI model to
+design a brick model. The asynchronous generation then follows the normal
+artifact flow: LDR validation, MPD packing, parts-list creation, Supabase
+upload, and `/generation/{id}` polling.
+
+`model` must be one of the allow-listed IDs in `SUPPORTED_MODELS`
+(`src/requests/llmToBricks.py`): `claude-opus-5-5` (default), `claude-opus-5`,
+`claude-sonnet-5`, `claude-fable-5`, `gpt-5.6-sol`, `gpt-5.6-terra` or `gpt-5.5`.
+Claude models use `ANTHROPIC_API_KEY` (and optional `ANTHROPIC_WORKSPACE_ID`)
+through the Messages API; OpenAI models use `OPENAI_API_KEY` through the
+Responses API. Both go through the same provider-neutral tool conversation in
+`src/utils/llm_tool_conversation.py`. Configure it with `LLM_TO_BRICKS_MODEL`
+(default model when the request omits one), `LLM_TO_BRICKS_MAX_TOKENS` (default
+`65536`), `LLM_TO_BRICKS_TIMEOUT_SECONDS` (default `600`, per model call) and
+`LLM_TO_BRICKS_OPENAI_REASONING_EFFORT` (default `medium`).
+
+By default (`LLM_TO_BRICKS_MODE=design`) the model does not write LDraw
+coordinates. It submits a voxel design (boxes, ellipsoids, cylinders and
+per-layer pixel maps on a stud grid, in brick or plate layers, using only colors
+from `gobrick_colors.csv`) and `src/utils/brick_design.py` builds it:
+
+1. rasterize the shapes; reject parts that float (reported in design coordinates)
+2. hollow solid volumes to a 2-stud shell (open bottom)
+3. pack voxels into standard bricks/plates layer by layer, alternating bond
+   direction, placing overhangs and one-stud columns first and preferring
+   bricks that bond to the grounded structure
+4. back-fill hidden interior around anything still floating and re-pack; with
+   `base_color`, a plate base is packed last to tie separate parts together
+5. report loose bricks, weak joints and separate pieces back to the model, with
+   two isometric preview renders for a review round
+6. order the build steps with the voxel2brick stability reordering so no step
+   contains a floating part (overhangs are placed after what they hang from)
+
+The model's solid voxels (un-hollowed, without the plate base; plate layers
+merged three to a brick layer) are saved in the voxel pipeline's xyzrgb format
+as both `xyzrgb_url`, which the block editor loads and its saves replace, and
+`design_voxels_url`, the untouched source `/resizeModel` rescales (up or down)
+for later resizes. `detail_level` is updated to the voxels' longest axis so the
+resize slider starts at the model's real size.
+
+Overlapping or off-grid bricks can't occur in this mode. Build errors go back to
+the model as tool errors (`LLM_TO_BRICKS_DESIGN_MAX_ATTEMPTS`, default `3`); on
+the last attempt unsupported bricks are recolored or dropped instead of failing.
+The model then reviews the renders and accepts or revises
+(`LLM_TO_BRICKS_DESIGN_REVIEW_ROUNDS`, default `1`; `0` skips the review).
+`detail_level` is used as the target size in studs (clamped to 12-64).
+
+`LLM_TO_BRICKS_MODE=direct` keeps the original raw-LDraw path. Its output is
+audited with `audit_ldraw` (overlaps, off-grid and floating bricks/plates) and
+the model gets `LLM_TO_BRICKS_DIRECT_FIX_ROUNDS` (default `1`) chances to
+correct it.
 ```bash
 curl -X POST http://localhost:8002/llmRender \
   -H "Content-Type: application/json" \

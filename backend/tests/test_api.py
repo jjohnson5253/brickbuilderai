@@ -57,6 +57,7 @@ def test_untrusted_vercel_origins_are_not_allowed_by_cors(origin):
         ("resize_model_endpoint", "resize_model", ("request", AUTH), ("request", AUTH)),
         ("prompt_edit_model_endpoint", "prompt_edit_model", ("request", AUTH, None), ("request", AUTH)),
         ("llm_render_endpoint", "llm_render", ("request", AUTH), ("request", AUTH)),
+        ("llm_to_bricks_endpoint", "llm_to_bricks", ("request", AUTH), ("request", AUTH)),
         ("create_checkout_session_endpoint", "create_checkout_session", ("request", AUTH), ("request", AUTH)),
         ("get_user_generations_endpoint", "get_user_generations", ("body", "http-request", AUTH), ("body", AUTH, "http-request")),
         ("get_generations_by_image_endpoint", "get_generations_by_image", ("body", AUTH), ("body", AUTH)),
