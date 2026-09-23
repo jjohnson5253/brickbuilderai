@@ -1,3 +1,5 @@
+import type { MobileChangeRequestContext } from './config';
+
 export const MOBILE_ANALYTICS_EVENT = 'brickbuilder:mobile-shell-analytics';
 
 export type MobileShellEventName =
@@ -5,6 +7,7 @@ export type MobileShellEventName =
   | 'mobile_shell_navigation_clicked'
   | 'mobile_shell_back_clicked'
   | 'mobile_shell_reload_clicked'
+  | 'mobile_shell_change_request_clicked'
   | 'mobile_shell_external_link_opened';
 
 type AnalyticsProperty = string | number | boolean | null;
@@ -19,8 +22,19 @@ export function createAnalyticsDispatchScript(
   return `window.dispatchEvent(new CustomEvent(${browserEventName}, { detail: ${detail} })); true;`;
 }
 
-export function createNativeBootstrapScript(platform: 'ios' | 'android'): string {
-  const shellInfo = JSON.stringify({ platform, version: '0.1.0' });
+export function createNativeBootstrapScript(
+  platform: 'ios' | 'android',
+  changeRequest: MobileChangeRequestContext = {
+    requestId: '',
+    branch: 'main',
+    sha: '',
+  },
+): string {
+  const shellInfo = JSON.stringify({
+    platform,
+    version: '0.1.0',
+    changeRequest,
+  });
 
   return `
     window.__BRICKBUILDER_NATIVE_APP__ = Object.freeze(${shellInfo});

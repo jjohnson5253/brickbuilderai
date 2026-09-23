@@ -41,6 +41,27 @@ export function parseGitHubVercelPreview(event) {
   }
 }
 
+export function parseTestFlightReady(event) {
+  if (event?.action !== 'testflight_ready'
+      || !Number.isInteger(event.pr_number) || event.pr_number < 1
+      || typeof event.sha !== 'string' || !/^[0-9a-f]{40}$/i.test(event.sha)
+      || typeof event.build_url !== 'string') return null;
+  try {
+    const buildUrl = new URL(event.build_url);
+    const isExpoHost = ['expo.dev', 'expo.io'].some((host) =>
+      buildUrl.hostname === host || buildUrl.hostname.endsWith(`.${host}`));
+    if (buildUrl.protocol !== 'https:' || buildUrl.username || buildUrl.password
+        || !isExpoHost) return null;
+    return {
+      prNumber: event.pr_number,
+      sha: event.sha.toLowerCase(),
+      buildUrl: buildUrl.toString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function previewAuthLink(previewUrl, requestId, props = {}) {
   const url = new URL(previewUrl);
   url.searchParams.set('change_request', requestId);
@@ -80,13 +101,55 @@ export function previewEmailMessage(signedPreviewUrl, pr) {
   };
 }
 
+export function testFlightEmailMessage(testFlightUrl, buildUrl, pr) {
+  const title = typeof pr?.title === 'string' ? pr.title.trim() : '';
+  const branch = typeof pr?.head?.ref === 'string' ? pr.head.ref : '';
+  const rawPullUrl = typeof pr?.html_url === 'string' ? pr.html_url : '';
+  let pullUrl;
+  let inviteUrl;
+  let expoUrl;
+  try {
+    const parsedPull = new URL(rawPullUrl);
+    const parsedInvite = new URL(testFlightUrl);
+    const parsedBuild = new URL(buildUrl);
+    if (parsedPull.protocol !== 'https:' || parsedPull.hostname !== 'github.com'
+        || parsedPull.username || parsedPull.password) throw new Error();
+    if (parsedInvite.protocol !== 'https:' || parsedInvite.hostname !== 'testflight.apple.com'
+        || parsedInvite.username || parsedInvite.password || parsedInvite.search || parsedInvite.hash
+        || !/^\/(?:join\/[A-Za-z0-9_-]+)?\/?$/.test(parsedInvite.pathname)) throw new Error();
+    const isExpoHost = ['expo.dev', 'expo.io'].some((host) =>
+      parsedBuild.hostname === host || parsedBuild.hostname.endsWith(`.${host}`));
+    if (parsedBuild.protocol !== 'https:' || parsedBuild.username || parsedBuild.password
+        || !isExpoHost) throw new Error();
+    pullUrl = parsedPull.toString();
+    inviteUrl = parsedInvite.toString();
+    expoUrl = parsedBuild.toString();
+  } catch {
+    throw new Error('Build delivery links are not usable.');
+  }
+  if (!title || !branch) throw new Error('GitHub did not return complete pull request details.');
+
+  return {
+    subject: `BrickBuilder iOS preview ready: ${title}`,
+    lines: [
+      `Install in TestFlight: ${inviteUrl}`,
+      `EAS build details: ${expoUrl}`,
+      `Pull request: ${title}`,
+      `GitHub: ${pullUrl}`,
+      `Branch: ${branch}`,
+      'Open Request an app change in this build to approve it or ask for another revision.',
+    ],
+  };
+}
+
 export function matchesChangePreview(row, branch, deploymentSha, origin) {
-  if (!row || !origin) return false;
+  if (!row) return false;
   if (deploymentSha !== undefined && deploymentSha !== null && deploymentSha !== '') {
     return typeof branch === 'string' && branch === row.branch
       && typeof deploymentSha === 'string' && /^[0-9a-f]{40}$/i.test(deploymentSha)
       && deploymentSha.toLowerCase() === String(row.notified_sha || '').toLowerCase();
   }
+  if (!origin) return false;
   try {
     return new URL(origin).hostname === new URL(row.preview_url).hostname;
   } catch {

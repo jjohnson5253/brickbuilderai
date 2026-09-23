@@ -14,11 +14,18 @@
         "simulator": true
       }
     },
+    "feedback": {
+      "extends": "production"
+    },
     "production": {
       "autoIncrement": true
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "ascAppId": "6815050463"
+      }
+    }
   }
 }

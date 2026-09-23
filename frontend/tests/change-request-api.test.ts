@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  approveChangeRequest, checkChangeRequestAccess, getChangeRequest, submitChangeRequest,
+  approveChangeRequest, checkChangeRequestAccess, getChangeRequest,
+  getChangeRequestRuntimeContext, submitChangeRequest,
 } from '../src/services/changeRequestApi';
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete window.__BRICKBUILDER_NATIVE_APP__;
+});
 
 function response(body: unknown, ok = true) {
   return Promise.resolve({ ok, json: async () => body } as Response);
@@ -40,8 +44,36 @@ describe('change request API', () => {
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const form = init.body as FormData;
     expect(form.get('branch')).toBe('main');
+    expect(form.get('target')).toBe('web');
     expect(form.get('description')).toBe('Make the editor clearer');
     expect(form.getAll('screenshots')).toEqual([image]);
+  });
+
+  it('uses the exact iOS feedback build context', async () => {
+    window.__BRICKBUILDER_NATIVE_APP__ = Object.freeze({
+      platform: 'ios',
+      version: '0.1.0',
+      changeRequest: {
+        requestId: 'req-ios',
+        branch: 'copilot/change-request-ios',
+        sha: '0123456789abcdef0123456789abcdef01234567',
+      },
+    });
+    expect(getChangeRequestRuntimeContext()).toEqual({
+      target: 'ios',
+      requestId: 'req-ios',
+      branch: 'copilot/change-request-ios',
+      sha: '0123456789abcdef0123456789abcdef01234567',
+    });
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(() => response({
+      id: 'req-ios', status: 'working',
+    }));
+    await submitChangeRequest('token', 'Adjust the mobile toolbar', [], 'req-ios');
+    const form = fetchMock.mock.calls[0][1]?.body as FormData;
+    expect(form.get('target')).toBe('ios');
+    expect(form.get('branch')).toBe('copilot/change-request-ios');
+    expect(form.get('deployment_sha')).toBe('0123456789abcdef0123456789abcdef01234567');
   });
 
   it('sends approval with the authenticated revision context', async () => {

@@ -1,4 +1,4 @@
-name: Deliver Vercel change preview
+name: Deliver change request preview
 
 on:
   deployment_status:
@@ -72,6 +72,12 @@ jobs:
        github.event.workflow_run.pull_requests[0].base.ref == 'staging'))
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    outputs:
+      build_required: ${{ steps.complete.outputs.build_required }}
+      request_id: ${{ steps.complete.outputs.request_id }}
+      pr_number: ${{ steps.complete.outputs.pr_number }}
+      sha: ${{ steps.complete.outputs.sha }}
+      branch: ${{ steps.complete.outputs.branch }}
     env:
       GH_TOKEN: ${{ github.token }}
       CHANGE_REQUEST_EVENT_SECRET: ${{ secrets.CHANGE_REQUEST_EVENT_SECRET }}
@@ -82,6 +88,7 @@ jobs:
       ENDPOINT: https://smzdytfghwslpbqnwdov.supabase.co/functions/v1/change-request
     steps:
       - name: Record Copilot completion
+        id: complete
         run: |
           test -n "$CHANGE_REQUEST_EVENT_SECRET"
           if [[ "$GITHUB_EVENT_NAME" == workflow_run ]]; then
@@ -101,15 +108,23 @@ jobs:
           test "$(jq -r '.user.type' <<<"$pull")" = Bot
           PR_SHA="$(jq -r '.head.sha' <<<"$pull")"
           if [[ -n "$COMPLETION_SHA" ]]; then test "$PR_SHA" = "$COMPLETION_SHA"; fi
+          retry=false
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then retry=true; fi
           jq -n \
             --argjson pr_number "$PR_NUMBER" \
             --arg sha "$PR_SHA" \
-            '{action: "agent_complete", pr_number: $pr_number, sha: $sha}' > payload.json
-          curl --fail-with-body --show-error --silent --retry 2 --retry-all-errors \
+            --argjson retry "$retry" \
+            '{action: "agent_complete", pr_number: $pr_number, sha: $sha, retry: $retry}' > payload.json
+          response="$(curl --fail-with-body --show-error --silent --retry 2 --retry-all-errors \
             --request POST "$ENDPOINT" \
             --header "x-change-request-event-secret: $CHANGE_REQUEST_EVENT_SECRET" \
             --header 'content-type: application/json' \
-            --data-binary @payload.json
+            --data-binary @payload.json)"
+          echo "build_required=$(jq -r '.build_required // false' <<<"$response")" >> "$GITHUB_OUTPUT"
+          echo "request_id=$(jq -r '.request_id // empty' <<<"$response")" >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "sha=$PR_SHA" >> "$GITHUB_OUTPUT"
+          echo "branch=$(jq -r '.branch // empty' <<<"$response")" >> "$GITHUB_OUTPUT"
 
           # A preview can finish before GitHub has published the completed
           # task-to-PR artifact. In that case the event cannot be joined yet.
@@ -145,3 +160,125 @@ jobs:
               --header 'content-type: application/json' \
               --data-binary @preview-payload.json
           fi
+
+  build-ios-preview:
+    needs: notify-ready
+    if: needs.notify-ready.outputs.build_required == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: change-request-ios-${{ needs.notify-ready.outputs.sha }}
+      cancel-in-progress: false
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      CHANGE_REQUEST_EVENT_SECRET: ${{ secrets.CHANGE_REQUEST_EVENT_SECRET }}
+      ENDPOINT: https://smzdytfghwslpbqnwdov.supabase.co/functions/v1/change-request
+      REQUEST_ID: ${{ needs.notify-ready.outputs.request_id }}
+      PR_NUMBER: ${{ needs.notify-ready.outputs.pr_number }}
+      PR_SHA: ${{ needs.notify-ready.outputs.sha }}
+      PR_BRANCH: ${{ needs.notify-ready.outputs.branch }}
+      REPOSITORY: ${{ github.repository }}
+      TESTFLIGHT_GROUP: ${{ vars.TESTFLIGHT_GROUP }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.notify-ready.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+      - name: Install EAS CLI
+        run: npm install --global eas-cli@latest
+      - name: Resolve the exact web preview
+        id: web-preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          preview_url=""
+          for attempt in $(seq 1 60); do
+            deployment_ids="$(gh api \
+              "repos/$REPOSITORY/deployments?sha=$PR_SHA&environment=Preview&per_page=100" \
+              --jq '.[] | select(.creator.login == "vercel[bot]") | .id')"
+            while IFS= read -r deployment_id; do
+              [[ -n "$deployment_id" ]] || continue
+              preview_url="$(gh api "repos/$REPOSITORY/deployments/$deployment_id/statuses?per_page=100" \
+                --jq '[.[] | select(.state == "success" and .creator.login == "vercel[bot]"
+                  and (.environment_url // "") != "")][0].environment_url // ""')"
+              [[ -z "$preview_url" ]] || break
+            done <<<"$deployment_ids"
+            [[ -z "$preview_url" ]] || break
+            sleep 10
+          done
+          test -n "$preview_url"
+          echo "url=$preview_url" >> "$GITHUB_OUTPUT"
+      - name: Add this revision to the Expo bundle
+        working-directory: mobile
+        env:
+          WEB_PREVIEW_URL: ${{ steps.web-preview.outputs.url }}
+        run: |
+          jq \
+            --arg request_id "$REQUEST_ID" \
+            --arg branch "$PR_BRANCH" \
+            --arg sha "$PR_SHA" \
+            --arg web_preview_url "$WEB_PREVIEW_URL" \
+            '.build.feedback.env += {
+              EXPO_PUBLIC_CHANGE_REQUEST_ID: $request_id,
+              EXPO_PUBLIC_GIT_BRANCH: $branch,
+              EXPO_PUBLIC_GIT_SHA: $sha,
+              EXPO_PUBLIC_WEB_APP_URL: $web_preview_url
+            }' eas.json > eas.runtime.json
+          mv eas.runtime.json eas.json
+      - name: Build and upload the iOS revision
+        id: eas
+        working-directory: mobile
+        run: |
+          test -n "$EXPO_TOKEN"
+          test -n "$TESTFLIGHT_GROUP"
+          eas build --platform ios --profile feedback --non-interactive --wait --json > build.json
+          BUILD_ID="$(jq -r 'if type == "array" then .[0].id else .id end' build.json)"
+          BUILD_URL="$(jq -r 'if type == "array" then .[0].buildDetailsPageUrl else .buildDetailsPageUrl end' build.json)"
+          BUILD_NUMBER="$(jq -r 'if type == "array" then .[0].appBuildVersion else .appBuildVersion end' build.json)"
+          test -n "$BUILD_ID" && test "$BUILD_ID" != null
+          test -n "$BUILD_URL" && test "$BUILD_URL" != null
+          test -n "$BUILD_NUMBER" && test "$BUILD_NUMBER" != null
+          eas submit --platform ios --profile production --id "$BUILD_ID" \
+            --groups "$TESTFLIGHT_GROUP" --auto-testflight-setup --non-interactive --wait
+
+          ready=false
+          for attempt in $(seq 1 80); do
+            eas submit:status --platform ios --profile production --json --non-interactive > testflight.json
+            build="$(jq -c --arg number "$BUILD_NUMBER" \
+              '.ios.testFlightBuilds[] | select(.buildNumber == $number)' testflight.json | head -1)"
+            processing="$(jq -r '.processingState // empty' <<<"$build")"
+            internal="$(jq -r '.internalState // empty' <<<"$build")"
+            if [[ "$processing" == VALID && ( "$internal" == IN_BETA_TESTING || "$internal" == BETA_APPROVED ) ]]; then
+              ready=true
+              break
+            fi
+            if [[ "$processing" == FAILED || "$processing" == INVALID || "$internal" == PROCESSING_EXCEPTION ]]; then
+              echo "TestFlight rejected build $BUILD_NUMBER ($processing / $internal)." >&2
+              exit 1
+            fi
+            sleep 30
+          done
+          test "$ready" = true
+          echo "build_url=$BUILD_URL" >> "$GITHUB_OUTPUT"
+      - name: Email the TestFlight preview
+        env:
+          BUILD_URL: ${{ steps.eas.outputs.build_url }}
+        run: |
+          jq -n \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg sha "$PR_SHA" \
+            --arg build_url "$BUILD_URL" \
+            '{action: "testflight_ready", pr_number: $pr_number, sha: $sha, build_url: $build_url}' \
+            > testflight-payload.json
+          curl --fail-with-body --show-error --silent --retry 2 --retry-all-errors \
+            --request POST "$ENDPOINT" \
+            --header "x-change-request-event-secret: $CHANGE_REQUEST_EVENT_SECRET" \
+            --header 'content-type: application/json' \
+            --data-binary @testflight-payload.json

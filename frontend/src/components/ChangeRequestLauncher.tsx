@@ -1,12 +1,15 @@
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ImagePlus, Loader2, WandSparkles, X } from 'lucide-react';
+import posthog from 'posthog-js';
 import { useAuth } from '../contexts/AuthContext';
 import {
   approveChangeRequest, checkChangeRequestAccess, getChangeRequest,
-  submitChangeRequest, type ChangeRequestState,
+  getChangeRequestRuntimeContext, submitChangeRequest, type ChangeRequestState,
 } from '../services/changeRequestApi';
-
-const requestIdFromUrl = () => new URLSearchParams(window.location.search).get('change_request') || undefined;
+import {
+  notifyMobileChangeRequestAccess,
+  OPEN_CHANGE_REQUEST_EVENT,
+} from '../utils/mobileShellAnalytics';
 
 type ChangeRequestContextValue = {
   enabled: boolean;
@@ -27,15 +30,22 @@ export function ChangeRequestProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<ChangeRequestState | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const requestId = useMemo(requestIdFromUrl, []);
+  const runtime = useMemo(getChangeRequestRuntimeContext, []);
+  const requestId = runtime.requestId;
+  const isIos = runtime.target === 'ios';
   const token = session?.access_token;
 
   useEffect(() => {
-    if (loading || !token) { setEnabled(false); return; }
+    if (loading || !token) {
+      setEnabled(false);
+      notifyMobileChangeRequestAccess(false);
+      return;
+    }
     let active = true;
     void checkChangeRequestAccess(token).then(async (allowed) => {
       if (!active) return;
       setEnabled(allowed);
+      notifyMobileChangeRequestAccess(allowed);
       if (!allowed) return;
       const state = await getChangeRequest(token, requestId).catch(() => null);
       if (!active) return;
@@ -45,6 +55,19 @@ export function ChangeRequestProvider({ children }: { children: ReactNode }) {
     return () => { active = false; };
   }, [loading, requestId, token]);
 
+  useEffect(() => {
+    const openFromNative = () => {
+      if (!enabled || !token) return;
+      posthog.capture('change_request_opened', {
+        source: 'native_toolbar',
+        target: runtime.target,
+      });
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_CHANGE_REQUEST_EVENT, openFromNative);
+    return () => window.removeEventListener(OPEN_CHANGE_REQUEST_EVENT, openFromNative);
+  }, [enabled, runtime.target, token]);
+
   const submit = async () => {
     if (!token) { setMessage('Sign in to request a change.'); return; }
     if (!description.trim()) { setMessage('Describe what you want to change.'); return; }
@@ -52,11 +75,18 @@ export function ChangeRequestProvider({ children }: { children: ReactNode }) {
     try {
       const result = await submitChangeRequest(token, description, files, request?.id || requestId);
       setRequest((current) => current ? { ...current, status: 'working' } : {
-        id: result.id, status: 'working', branch: null, pr_number: null,
-        preview_url: null, revision: 1,
+        id: result.id, status: 'working', target: runtime.target, branch: null,
+        pr_number: null, preview_url: null, mobile_build_url: null,
+        testflight_url: null, notified_sha: null, revision: 1,
       });
       setDescription(''); setFiles([]);
-      setMessage('Copilot is working on it. You will receive an email when the preview is ready.');
+      posthog.capture('change_request_submitted', {
+        target: runtime.target,
+        revision: request ? request.revision + 1 : 1,
+      });
+      setMessage(isIos
+        ? 'Copilot is working on it. You will receive an email when the TestFlight build is ready.'
+        : 'Copilot is working on it. You will receive an email when the preview is ready.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not submit the change.');
     } finally { setBusy(false); }
@@ -69,6 +99,7 @@ export function ChangeRequestProvider({ children }: { children: ReactNode }) {
     try {
       const result = await approveChangeRequest(token, request.id);
       setRequest({ ...request, status: 'approved' });
+      posthog.capture('change_request_approved', { target: runtime.target });
       setMessage(`Merged into staging. Main pull request: ${result.main_pr_url || 'email pending'}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not approve the change.');
@@ -77,21 +108,35 @@ export function ChangeRequestProvider({ children }: { children: ReactNode }) {
 
   return <ChangeRequestContext.Provider value={{
     enabled: enabled && Boolean(token),
-    openForm: () => setOpen(true),
+    openForm: () => {
+      posthog.capture('change_request_opened', {
+        source: 'profile_menu',
+        target: runtime.target,
+      });
+      setOpen(true);
+    },
   }}>
     {children}
     {enabled && token && open && <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/55 p-3 sm:items-center">
       <section className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-7" role="dialog" aria-modal="true" aria-labelledby="change-request-title">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
-            <h2 id="change-request-title" className="text-xl font-extrabold text-slate-950">What do you want to change?</h2>
-            <p className="mt-1 text-sm text-slate-600">Describe the result and attach up to four screenshots.</p>
+            <h2 id="change-request-title" className="text-xl font-extrabold text-slate-950">
+              {isIos ? 'What do you want to change in the iPhone app?' : 'What do you want to change?'}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {isIos
+                ? 'Describe the result and attach up to four screenshots. We will email you a private TestFlight build.'
+                : 'Describe the result and attach up to four screenshots.'}
+            </p>
           </div>
           <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
         </div>
 
         {request?.status === 'preview_ready' && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-          <p className="font-semibold text-emerald-950">This preview is ready for your review.</p>
+          <p className="font-semibold text-emerald-950">
+            {isIos ? 'This TestFlight build is ready for your review.' : 'This preview is ready for your review.'}
+          </p>
           <button type="button" disabled={busy} onClick={approve} className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> Looks good — merge to staging
           </button>
