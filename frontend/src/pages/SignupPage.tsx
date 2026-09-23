@@ -36,7 +36,7 @@ function SignupPage() {
     }
     try {
       setLoading(true);
-      const { error: authError } = await signInWithOtp(email);
+      const { error: authError } = await signInWithOtp(email, redirectTo);
       if (authError) {
         setError(authError.message);
         return;
