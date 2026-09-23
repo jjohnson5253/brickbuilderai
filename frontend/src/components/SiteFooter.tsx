@@ -1,5 +1,7 @@
+import React from "react";
 import { Link } from "react-router-dom";
 import { Github, Instagram, Youtube } from "lucide-react";
+import posthog from "posthog-js";
 
 // TikTok icon (not provided by lucide-react)
 function TikTokIcon({ className }: { className?: string }) {
@@ -76,6 +78,13 @@ export function SiteFooter() {
           </Link>
           <Link to="/community" className="hover:text-[#f44336] transition-colors">
             Community Models
+          </Link>
+          <Link
+            to="/privacy"
+            onClick={() => posthog.capture("footer_privacy_policy_clicked")}
+            className="hover:text-[#f44336] transition-colors"
+          >
+            Privacy Policy
           </Link>
         </div>
         <div className="text-xs text-slate-400">
