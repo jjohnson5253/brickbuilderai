@@ -7,6 +7,7 @@ only native presentation concerns:
 
 - iOS safe-area and status-bar handling
 - a small native Create / Dashboard / Back / Reload toolbar
+- an allowlisted Request an app change control backed by the web flow
 - persistent web authentication and browser storage
 - image/file upload support through the system picker
 - WebGL support for the model viewer and block editor
@@ -48,6 +49,7 @@ The profiles mirror the setup used by Session Galaxy:
 
 - `development`: development client for devices
 - `preview`: internal iOS Simulator build
+- `feedback`: exact-commit App Store build used by the change-request workflow
 - `production`: signed App Store build with an auto-incremented build number
 
 One-time setup:
@@ -56,8 +58,8 @@ One-time setup:
    registered in your Apple Developer and App Store Connect accounts. Change it
    before the first release if you prefer a different identifier.
 2. Install and authenticate EAS CLI: `npm install -g eas-cli && eas login`.
-3. Run `eas init` from this directory. It links the project and adds the EAS
-   project ID to the Expo config.
+3. Confirm the existing EAS project ID in `app.json` is available to the Expo
+   account that will build the app.
 4. Create the app record in App Store Connect with the same bundle identifier.
 
 Build and submit:
@@ -70,6 +72,32 @@ eas submit --platform ios --latest
 
 EAS can manage the distribution certificate and provisioning profile. The
 submitted build appears in TestFlight after Apple finishes processing it.
+
+## In-app change requests
+
+For signed-in users on the private change-request allowlist, the native toolbar
+shows **Change**. It opens the same React form and Supabase Edge Function used
+by the website; the native app does not duplicate submission or approval
+logic.
+
+An iOS request starts Copilot on a branch from `staging`. When the pull request
+is complete, GitHub Actions waits for the matching Vercel preview, builds an
+Expo binary that embeds that exact branch, submits it to the configured
+TestFlight internal group, and emails the requester only after Apple reports
+the build as available. The build carries the request ID, branch, and commit
+SHA so approval and revision requests are checked against the artifact being
+tested.
+
+Repository configuration for that automation:
+
+- Secret `EXPO_TOKEN`: Expo personal access token for the project owner.
+- Variable `TESTFLIGHT_GROUP`: App Store Connect internal group name, such as
+  `Team (Expo)`.
+- Secret `CHANGE_REQUEST_EVENT_SECRET`: shared with the Supabase Edge Function.
+
+The Edge Function also needs `CHANGE_REQUEST_TESTFLIGHT_URL`, set to the app's
+TestFlight invitation URL. See `docs/feedback-agent-flow.md` for deployment
+order and database migration details.
 
 Before production review, complete App Store Connect's privacy questionnaire
 for uploaded images, account data, purchases, and analytics; add support and

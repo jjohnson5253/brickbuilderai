@@ -24,6 +24,7 @@ import {
   LlmToBricksApiService,
   getLlmModelOption,
 } from "../services/llmToBricksApi";
+import { isNativeMobileShell } from "../utils/mobileShellAnalytics";
 import posthog from "posthog-js";
 
 // Toggle whether users must be logged in before starting a generation.
@@ -359,7 +360,9 @@ export default function LandingPage() {
 
   const navigate = useNavigate();
   const [isCardHidden, setIsCardHidden] = useState(false);
-  const [areOptionsHidden, setAreOptionsHidden] = useState(true);
+  const [areOptionsHidden, setAreOptionsHidden] = useState(
+    () => !isNativeMobileShell(),
+  );
   const [showGlbUpload, setShowGlbUpload] = useState(false);
   const [generationStats, setGenerationStats] = useState<GenerationStats | null>(null);
 

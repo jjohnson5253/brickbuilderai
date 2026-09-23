@@ -17,13 +17,17 @@ import {
   createNativeBootstrapScript,
   type MobileShellEventName,
 } from './analytics';
-import { WEB_APP_URL } from './config';
+import { MOBILE_CHANGE_REQUEST, WEB_APP_URL } from './config';
 import {
   APP_ROUTES,
   buildAppUrl,
   classifyNavigation,
   getExternalLinkHostname,
 } from './navigation';
+import {
+  OPEN_CHANGE_REQUEST_EVENT,
+  parseChangeRequestAccessMessage,
+} from './webMessages';
 
 const BRAND_RED = '#f44336';
 const WEB_VIEW_SOURCE = { uri: WEB_APP_URL };
@@ -75,6 +79,7 @@ export function BrickBuilderWebView() {
   const [loadProgress, setLoadProgress] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [webViewKey, setWebViewKey] = useState(0);
+  const [canRequestChanges, setCanRequestChanges] = useState(false);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
@@ -123,6 +128,17 @@ export function BrickBuilderWebView() {
     webViewRef.current?.reload();
   }, [injectAnalytics]);
 
+  const openChangeRequest = useCallback(() => {
+    const analytics = createAnalyticsDispatchScript(
+      'mobile_shell_change_request_clicked',
+    );
+    webViewRef.current?.injectJavaScript(
+      `${analytics}\nwindow.dispatchEvent(new CustomEvent(${JSON.stringify(
+        OPEN_CHANGE_REQUEST_EVENT,
+      )})); true;`,
+    );
+  }, []);
+
   const retry = useCallback(() => {
     setLoadError(null);
     setLoadProgress(0);
@@ -170,6 +186,7 @@ export function BrickBuilderWebView() {
             originWhitelist={['*']}
             injectedJavaScriptBeforeContentLoaded={createNativeBootstrapScript(
               Platform.OS === 'android' ? 'android' : 'ios',
+              MOBILE_CHANGE_REQUEST,
             )}
             javaScriptEnabled
             domStorageEnabled
@@ -198,6 +215,10 @@ export function BrickBuilderWebView() {
             onNavigationStateChange={(navigationState) => {
               setCanGoBack(navigationState.canGoBack);
               setCurrentUrl(navigationState.url);
+            }}
+            onMessage={({ nativeEvent }) => {
+              const enabled = parseChangeRequestAccessMessage(nativeEvent.data);
+              if (enabled !== null) setCanRequestChanges(enabled);
             }}
             onShouldStartLoadWithRequest={(request) => {
               const disposition = classifyNavigation(request.url, WEB_APP_URL);
@@ -288,6 +309,13 @@ export function BrickBuilderWebView() {
             active={currentPath === APP_ROUTES.dashboard}
             onPress={() => navigateTo('dashboard')}
           />
+          {canRequestChanges && (
+            <ToolbarButton
+              label="Change"
+              symbol="✦"
+              onPress={openChangeRequest}
+            />
+          )}
           <ToolbarButton label="Reload" symbol="↻" onPress={reload} />
         </View>
       </View>
