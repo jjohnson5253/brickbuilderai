@@ -1,6 +1,14 @@
 import React from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { act } from 'react-dom/test-utils';
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('posthog-js', () => ({
+  default: {
+    capture: vi.fn(),
+  },
+}));
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -96,5 +104,81 @@ describe('LandingPage', () => {
     expect(markup).toContain('<option value="gpt-5.6-sol">GPT-5.6 Sol</option>');
     expect(markup).not.toContain('SAM3D');
     expect(markup).toMatch(/aria-pressed="true"[^>]*>LLM Render/);
+  });
+
+  it('reports method changes and model selections through the shared controls', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const onChange = vi.fn();
+    const onThreeDModelChange = vi.fn();
+    const onLlmModelChange = vi.fn();
+
+    try {
+      act(() => {
+        root.render(
+          <GenerationMethodSelector
+            value="llm"
+            onChange={onChange}
+            onThreeDModelChange={onThreeDModelChange}
+            onLlmModelChange={onLlmModelChange}
+          />,
+        );
+      });
+
+      const threeDButton = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === '3D Render',
+      );
+      act(() => threeDButton?.click());
+      expect(onChange).toHaveBeenCalledWith('3d');
+
+      const llmSelect = container.querySelector('select') as HTMLSelectElement;
+      act(() => {
+        llmSelect.value = 'gpt-5.6-sol';
+        llmSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      expect(onLlmModelChange).toHaveBeenCalledWith('gpt-5.6-sol');
+
+      act(() => {
+        root.render(
+          <GenerationMethodSelector
+            value="3d"
+            onChange={onChange}
+            onThreeDModelChange={onThreeDModelChange}
+            onLlmModelChange={onLlmModelChange}
+          />,
+        );
+      });
+
+      const threeDSelect = container.querySelector('select') as HTMLSelectElement;
+      act(() => {
+        threeDSelect.value = 'trellis';
+        threeDSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      expect(onThreeDModelChange).toHaveBeenCalledWith('trellis');
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
+  it('expands the shared method and model controls by default in the native shell', () => {
+    window.__BRICKBUILDER_NATIVE_APP__ = Object.freeze({
+      platform: 'ios',
+      version: '0.1.0',
+    });
+
+    try {
+      const markup = renderToStaticMarkup(<LandingPage />);
+
+      expect(markup).toContain('Generation method:');
+      expect(markup).toContain('3D Render');
+      expect(markup).toContain('LLM Render');
+      expect(markup).toContain('LLM model:');
+      expect(markup).toContain('Claude Opus 5.5');
+      expect(markup).toContain('GPT-5.6 Sol');
+    } finally {
+      delete window.__BRICKBUILDER_NATIVE_APP__;
+    }
   });
 });
