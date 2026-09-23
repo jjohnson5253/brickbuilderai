@@ -21,10 +21,9 @@ from .imageToBricks import ImageToBricksResponse
 
 logger = logging.getLogger(__name__)
 
-# Anthropic currently exposes Opus 5 as ``claude-opus-5``. Keeping the model
-# configurable lets deployments move to a later Opus snapshot without a code
-# release when Anthropic adds one.
-DEFAULT_MODEL = os.getenv("ANTHROPIC_LDR_MODEL", "claude-opus-5")
+# Keep the model configurable so deployments can pin a different Anthropic
+# model without a code release.
+DEFAULT_MODEL = os.getenv("ANTHROPIC_LDR_MODEL", "claude-opus-5-5")
 ANTHROPIC_API_VERSION = os.getenv("ANTHROPIC_API_VERSION", "2023-06-01")
 ANTHROPIC_MAX_TOKENS = int(os.getenv("ANTHROPIC_LDR_MAX_TOKENS", "65536"))
 ANTHROPIC_TIMEOUT_SECONDS = float(os.getenv("ANTHROPIC_LDR_TIMEOUT_SECONDS", "600"))
@@ -149,7 +148,9 @@ files, custom geometry, stickers, base64, Markdown fences, or explanatory prose 
                 },
             }
         ],
-        "tool_choice": {"type": "tool", "name": "submit_ldr_model"},
+        # Opus 5.5 rejects forced tool use. The system prompt still tells it to
+        # submit through this tool, while auto keeps the request API-compatible.
+        "tool_choice": {"type": "auto"},
     }
 
 
@@ -165,6 +166,21 @@ def _extract_ldr_content(response_json: Dict[str, Any]) -> str:
         ldr_content = tool_input.get("ldr_content")
         if isinstance(ldr_content, str):
             return ldr_content
+
+    # Tool choice must remain automatic for Opus 5.5, so tolerate a plain-text
+    # final answer and pass it through the same strict LDraw validator.
+    text_content = "\n".join(
+        block.get("text", "")
+        for block in response_json.get("content", [])
+        if block.get("type") == "text" and isinstance(block.get("text"), str)
+    ).strip()
+    if text_content:
+        try:
+            decoded = json.loads(text_content)
+        except json.JSONDecodeError:
+            return text_content
+        if isinstance(decoded, dict) and isinstance(decoded.get("ldr_content"), str):
+            return decoded["ldr_content"]
     raise ValueError("Claude did not return an LDraw model")
 
 

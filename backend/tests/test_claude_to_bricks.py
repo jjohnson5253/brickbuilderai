@@ -38,17 +38,17 @@ def test_request_accepts_text_or_supported_image_and_rejects_invalid_input():
             ClaudeToBricksRequest(**kwargs)
 
 
-def test_anthropic_payload_uses_opus_tool_output_and_optional_image():
+def test_anthropic_payload_uses_opus_5_5_auto_tool_output_and_optional_image():
     encoded = base64.b64encode(b"png").decode()
     request = ClaudeToBricksRequest(
         prompt="a lighthouse",
         image_base64=encoded,
         image_media_type="image/png",
     )
-    payload = _anthropic_payload(request, model="claude-opus-5")
+    payload = _anthropic_payload(request)
 
-    assert payload["model"] == "claude-opus-5"
-    assert payload["tool_choice"] == {"type": "tool", "name": "submit_ldr_model"}
+    assert payload["model"] == "claude-opus-5-5"
+    assert payload["tool_choice"] == {"type": "auto"}
     content = payload["messages"][0]["content"]
     assert content[0]["source"]["data"] == encoded
     assert content[1]["text"] == "a lighthouse"
@@ -77,6 +77,18 @@ def test_extract_and_validate_ldr_content():
         validate_ldr_content(f"{VALID_PART}\n0 FILE another.ldr\n{VALID_PART}")
     with pytest.raises(ValueError, match="truncated"):
         _extract_ldr_content({"stop_reason": "max_tokens", "content": []})
+
+
+def test_extract_ldr_content_accepts_text_fallback_for_auto_tool_choice():
+    response = {"content": [{"type": "text", "text": VALID_PART}]}
+    assert validate_ldr_content(_extract_ldr_content(response)).endswith(VALID_PART + "\n")
+
+    json_response = {
+        "content": [
+            {"type": "text", "text": '{"ldr_content": "' + VALID_PART + '"}'}
+        ]
+    }
+    assert _extract_ldr_content(json_response) == VALID_PART
 
 
 def test_background_task_stores_standard_generation_artifacts(monkeypatch, tmp_path):

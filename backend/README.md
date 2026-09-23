@@ -130,7 +130,7 @@ Console under Settings > Workspaces), or requests fail with
 Claude to create a complete LDraw model directly. The asynchronous generation
 then follows the normal artifact flow: LDR validation, MPD packing, parts-list
 creation, Supabase upload, and `/generation/{id}` polling. It uses
-`claude-opus-5` by default. Configure it with `ANTHROPIC_LDR_MODEL`,
+`claude-opus-5-5` by default. Configure it with `ANTHROPIC_LDR_MODEL`,
 `ANTHROPIC_LDR_MAX_TOKENS` (default `65536`), and
 `ANTHROPIC_LDR_TIMEOUT_SECONDS` (default `600`). It shares `ANTHROPIC_API_KEY`
 and optional `ANTHROPIC_WORKSPACE_ID` with `/llmRender`.
