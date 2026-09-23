@@ -90,6 +90,13 @@ export default function LoginModal({
     trackAuthMethodSelected("login_modal", method);
   };
 
+  const handleLoginSuccess = () => {
+    if (remember) localStorage.setItem("remember_email", email);
+    else localStorage.removeItem("remember_email");
+    if (onSuccess) onSuccess();
+    else onClose();
+  };
+
   const handleGetCode = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -131,9 +138,7 @@ export default function LoginModal({
         setError(authError.message);
         return;
       }
-      if (remember) localStorage.setItem("remember_email", email);
-      else localStorage.removeItem("remember_email");
-      onSuccess?.();
+      handleLoginSuccess();
     } catch {
       setError("Password sign-in failed. Please try again.");
     } finally {
@@ -155,11 +160,7 @@ export default function LoginModal({
         setError(authError.message);
         return;
       }
-      if (remember) localStorage.setItem("remember_email", email);
-      else localStorage.removeItem("remember_email");
-      // Note: caller's onSuccess is responsible for closing the modal so we
-      // don't accidentally trigger any cleanup wired into onClose.
-      onSuccess?.();
+      handleLoginSuccess();
     } catch {
       setError("Verification failed. Please try again.");
     } finally {
