@@ -335,9 +335,11 @@ async def process_claude_to_bricks_task(
         await generation_storage.store_parts_list_csv(
             generation_id, ldr_content, raise_on_error=True
         )
-        await generation_storage.store_model_file(
-            generation_id, mpd_content, "mpd", raise_on_error=True
-        )
+        # The shared generations schema persists the LDR and parts list but
+        # does not require an mpd_url column. The frontend follows the same
+        # path as existing generations and converts the saved LDR through
+        # /ldrToMpd when no MPD URL is present. Packing above still verifies
+        # that Claude's LDraw output can be expanded successfully.
         await generation_storage.update_status(generation_id, "completed")
 
         track_image_conversion(

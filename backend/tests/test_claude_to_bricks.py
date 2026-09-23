@@ -145,6 +145,6 @@ def test_background_task_stores_standard_generation_artifacts(monkeypatch, tmp_p
 
     assert ("status", "generation-1", "completed", None) in calls
     assert any(call[:3] == ("model", "generation-1", "ldr") for call in calls)
-    assert any(call[:3] == ("model", "generation-1", "mpd") for call in calls)
+    assert not any(call[:3] == ("model", "generation-1", "mpd") for call in calls)
     assert any(call[0] == "parts" for call in calls)
     assert any(call[0] == "images" for call in calls)
