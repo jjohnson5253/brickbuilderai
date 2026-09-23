@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import posthog from 'posthog-js';
-import { captureMobileShellAnalytics } from '../src/utils/mobileShellAnalytics';
+import {
+  captureMobileShellAnalytics,
+  isNativeMobileShell,
+} from '../src/utils/mobileShellAnalytics';
 
 vi.mock('posthog-js', () => ({
   default: {
@@ -12,6 +15,18 @@ vi.mock('posthog-js', () => ({
 describe('mobile shell analytics', () => {
   beforeEach(() => {
     vi.mocked(posthog.capture).mockClear();
+    delete window.__BRICKBUILDER_NATIVE_APP__;
+  });
+
+  it('recognizes the validated native shell marker', () => {
+    expect(isNativeMobileShell()).toBe(false);
+
+    window.__BRICKBUILDER_NATIVE_APP__ = Object.freeze({
+      platform: 'ios',
+      version: '0.1.0',
+    });
+
+    expect(isNativeMobileShell()).toBe(true);
   });
 
   it('captures allow-listed native shell interactions', () => {

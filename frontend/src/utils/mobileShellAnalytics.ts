@@ -3,6 +3,17 @@ import posthog from 'posthog-js';
 export const MOBILE_SHELL_ANALYTICS_EVENT =
   'brickbuilder:mobile-shell-analytics';
 
+type NativeMobileShellInfo = Readonly<{
+  platform: 'ios' | 'android';
+  version: string;
+}>;
+
+declare global {
+  interface Window {
+    __BRICKBUILDER_NATIVE_APP__?: NativeMobileShellInfo;
+  }
+}
+
 const ALLOWED_EVENT_NAMES = new Set([
   'mobile_shell_loaded',
   'mobile_shell_navigation_clicked',
@@ -17,6 +28,17 @@ type MobileShellEventDetail = {
   eventName: string;
   properties?: Record<string, unknown>;
 };
+
+export function isNativeMobileShell(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  const shellInfo = window.__BRICKBUILDER_NATIVE_APP__;
+  return Boolean(
+    shellInfo &&
+      (shellInfo.platform === 'ios' || shellInfo.platform === 'android') &&
+      typeof shellInfo.version === 'string',
+  );
+}
 
 function isEventDetail(value: unknown): value is MobileShellEventDetail {
   return Boolean(
