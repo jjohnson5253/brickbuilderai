@@ -24,7 +24,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: AuthError | null }>
   signUp: (email: string, password: string) => Promise<{ error: AuthError | null }>
   signOut: () => Promise<{ error: AuthError | null }>
-  signInWithOtp: (email: string) => Promise<{ error: AuthError | null }>
+  signInWithOtp: (email: string, redirectPath?: string) => Promise<{ error: AuthError | null }>
   verifyOtp: (email: string, token: string) => Promise<{ error: AuthError | null }>
   signInWithGoogle: (redirectPath?: string) => Promise<{ error: AuthError | null }>
   refreshUserProfile: () => Promise<void>
@@ -252,12 +252,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: null }
   }
 
-  const signInWithOtp = async (email: string) => {
+  const signInWithOtp = async (email: string, redirectPath?: string) => {
+    const safePath = redirectPath && redirectPath.startsWith('/') ? redirectPath : '/dashboard'
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
         shouldCreateUser: true,
-        emailRedirectTo: `${window.location.origin}/dashboard`
+        emailRedirectTo: `${window.location.origin}${safePath}`
       }
     })
     return { error }
