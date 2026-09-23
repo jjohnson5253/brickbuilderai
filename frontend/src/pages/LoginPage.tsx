@@ -27,7 +27,6 @@ export default function LoginPage() {
   const [authMethod, setAuthMethod] = useState<AuthMethod>("magic_link");
 
   useEffect(() => {
-    console.log("LoginPage v6: OTP only, no password");
     const saved = localStorage.getItem("remember_email");
     if (saved) setEmail(saved);
   }, []);
