@@ -45,6 +45,7 @@ Generation time is typically under 30 seconds when SAM3D is used.
 | Folder | What it is | Stack |
 | --- | --- | --- |
 | `frontend/` | Web app: upload, 3D viewer, instructions, checkout | React, Vite, TypeScript, Three.js, Tailwind, Supabase, Stripe |
+| `mobile/` | iOS-first native shell reusing every web-app feature | Expo, React Native, EAS, WebView |
 | `backend/` | API that converts images/text into brick models | fal.ai Python, FastAPI, Open3D, Trimesh |
 | `serverless/` | Image-to-3D voxel generation worker | SAM-3D, Docker, RunPod |
 
@@ -115,6 +116,15 @@ The SAM3D worker image is published publicly on Docker Hub as `jjohnson5253/mani
 5. Deploy, then copy the endpoint ID and your RunPod API key into `RUNPOD_ENDPOINT_ID` and `RUNPOD_API_KEY` in `backend/.env`.
 
 See `serverless/README.md` if you want to build and push your own image instead.
+
+## Mobile app (iOS-first)
+
+The Expo app in [`mobile/`](mobile/) wraps the deployed web app so generation,
+the dashboard, generated-model view, ordering, and the block editor continue to
+use the same frontend and backend business logic. It adds a small native
+navigation shell, safe-area handling, upload permissions, and EAS build/submit
+profiles. See [`mobile/README.md`](mobile/README.md) for local development and
+TestFlight/App Store steps.
 
 ## Testing
 
