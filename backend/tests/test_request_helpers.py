@@ -1,3 +1,4 @@
+import asyncio
 import base64
 
 import pytest
@@ -5,6 +6,8 @@ from pydantic import ValidationError
 
 from src.requests.estimatePrice import EstimatePriceRequest
 from src.requests.getPrice import calculate_price, parse_parts_list_csv
+from src.requests import getPrice as get_price_module
+from src.requests.getPrice import GetPriceRequest
 from src.requests.getUserGenerations import _filter_duplicate_glb_generations
 from src.requests.ldrToMpd import LdrToMpdRequest, extract_last_step_from_ldr
 from src.requests.textToBricks import TextToBricksRequest
@@ -25,6 +28,38 @@ def test_calculate_price_uses_known_and_default_prices_and_sorts():
     assert [detail.part_id for detail in details] == ["3001.dat", "unknown.dat"]
     assert details[0].total_price == 0.6
     assert details[1].unit_price == 0.1
+
+
+def test_calculate_price_can_apply_flat_ten_cent_claude_pricing():
+    total, details = calculate_price(
+        {"3001.dat": 4, "2456.dat": 2},
+        unit_price_override=0.10,
+    )
+    assert total == 0.6
+    assert all(detail.unit_price == 0.10 for detail in details)
+
+
+def test_get_price_uses_flat_ten_cent_total_for_claude_generations(monkeypatch):
+    class FakeStorage:
+        async def get_generation(self, _generation_id):
+            return {
+                "endpoint": "claudeToBricks",
+                "parts_list_csv_url": "https://example.com/parts.csv",
+            }
+
+    async def fake_fetch(_url):
+        return "LdrawId,Qty,Weight\n3001.dat,4,1\n2456.dat,2,1\n"
+
+    monkeypatch.setattr(get_price_module, "generation_storage", FakeStorage())
+    monkeypatch.setattr(get_price_module, "fetch_csv_content", fake_fetch)
+    monkeypatch.setattr(get_price_module, "track_api_call", lambda **_kwargs: None)
+
+    response = asyncio.run(
+        get_price_module.get_price(GetPriceRequest(generation_id="generation-1"), {})
+    )
+    assert response.total_parts == 6
+    assert response.total_price == 0.60
+    assert all(part.unit_price == 0.10 for part in response.parts_breakdown)
 
 
 def test_extract_last_step_handles_explicit_implicit_and_no_steps():

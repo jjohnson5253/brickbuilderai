@@ -48,7 +48,7 @@ vi.mock('../src/components/ProfileMenu', () => ({
   ProfileMenu: () => null,
 }));
 
-import LandingPage from '../src/pages/LandingPage';
+import LandingPage, { GenerationMethodSelector } from '../src/pages/LandingPage';
 
 describe('LandingPage', () => {
   it('uses the updated hero headline', () => {
@@ -56,5 +56,17 @@ describe('LandingPage', () => {
 
     expect(markup).toContain('Imagine. Create. Build.');
     expect(markup).not.toContain('Create and Build');
+  });
+
+  it('offers the direct Claude Opus generation method in settings', () => {
+    const markup = renderToStaticMarkup(
+      <GenerationMethodSelector value="claude" onChange={() => undefined} />,
+    );
+
+    expect(markup).toContain('Generation method:');
+    expect(markup).toContain('3D Pipeline');
+    expect(markup).toContain('Claude Opus');
+    expect(markup).toContain('Ask Claude Opus to design the LDraw model directly');
+    expect(markup).toContain('aria-pressed="true"');
   });
 });

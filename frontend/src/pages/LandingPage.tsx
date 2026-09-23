@@ -17,6 +17,8 @@ import { SiteFooter } from "../components/SiteFooter";
 import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { GenerationStats, GetGenerationStatsApiService } from "../services/getGenerationStatsApi";
+import { ClaudeToBricksApiService } from "../services/claudeToBricksApi";
+import posthog from "posthog-js";
 
 // Check if 3D streaming (SAM3D) is enabled by default via environment variable.
 // Streaming requires a RunPod endpoint, so it is opt-in: default to Standard
@@ -64,6 +66,74 @@ const GENERATION_TYPE_PRESETS: { label: string; value: GenerationType; descripti
   { label: "Streaming", value: "streaming", description: "SAM3D with live 3D preview" },
   { label: "Standard", value: "non-streaming", description: "Trellis (faster, no preview)" },
 ];
+
+type GenerationMethod = "classic" | "claude";
+const GENERATION_METHOD_PRESETS: Array<{
+  label: string;
+  value: GenerationMethod;
+  description: string;
+}> = [
+  {
+    label: "3D Pipeline",
+    value: "classic",
+    description: "Create a 3D model, then convert it into bricks",
+  },
+  {
+    label: "Claude Opus",
+    value: "claude",
+    description: "Ask Claude Opus to design the LDraw model directly",
+  },
+];
+
+export function GenerationMethodSelector({
+  value,
+  disabled = false,
+  onChange,
+}: {
+  value: GenerationMethod;
+  disabled?: boolean;
+  onChange: (value: GenerationMethod) => void;
+}) {
+  return (
+    <div
+      className="flex w-full max-w-xl flex-col items-start gap-2 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm sm:flex-row sm:items-center sm:gap-3"
+      style={{ zIndex: 25 }}
+    >
+      <span className="shrink-0 text-sm font-medium text-slate-600">Generation method:</span>
+      <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+        {GENERATION_METHOD_PRESETS.map((method) => {
+          const active = method.value === value;
+          return (
+            <button
+              key={method.value}
+              type="button"
+              onClick={() => {
+                if (disabled) return;
+                onChange(method.value);
+                posthog.capture('landing_generation_method_selected', {
+                  generation_method: method.value,
+                });
+              }}
+              className={`min-h-10 flex-1 rounded-full px-4 py-2 text-sm transition-all duration-150 sm:flex-none ${
+                active
+                  ? "border border-transparent bg-[#f44336] text-white"
+                  : "border border-slate-300 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50"
+              }`}
+              aria-pressed={active}
+              disabled={disabled}
+              title={method.description}
+            >
+              {method.label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-52">
+        {GENERATION_METHOD_PRESETS.find(method => method.value === value)?.description}
+      </p>
+    </div>
+  );
+}
 
 const NAV_LINKS = [
   { label: "Products", href: "#products" },
@@ -200,6 +270,7 @@ export default function LandingPage() {
   const [generationType, setGenerationType] = useState<GenerationType>(
     STREAMING_ENABLED_BY_DEFAULT ? "streaming" : "non-streaming"
   );
+  const [generationMethod, setGenerationMethod] = useState<GenerationMethod>("classic");
   const [imgFile, setImgFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -425,6 +496,7 @@ export default function LandingPage() {
         modelQuality?: ModelQuality;
         styleOption?: StyleOption;
         generationType?: GenerationType;
+        generationMethod?: GenerationMethod;
         areOptionsHidden?: boolean;
         image?: { name: string; type: string; base64: string } | null;
       };
@@ -433,6 +505,7 @@ export default function LandingPage() {
       if (payload.modelQuality) setModelQuality(payload.modelQuality);
       if (payload.styleOption) setStyleOption(payload.styleOption);
       if (payload.generationType) setGenerationType(payload.generationType);
+      if (payload.generationMethod) setGenerationMethod(payload.generationMethod);
       if (typeof payload.areOptionsHidden === 'boolean') setAreOptionsHidden(payload.areOptionsHidden);
       if (payload.image && payload.image.base64) {
         try {
@@ -553,6 +626,7 @@ export default function LandingPage() {
         modelQuality,
         styleOption,
         generationType,
+        generationMethod,
         areOptionsHidden,
         image: imageData,
       };
@@ -674,8 +748,20 @@ export default function LandingPage() {
       // when streaming, or Trellis (non-streamed) when standard.
       const stream3d = generationType === 'streaming';
 
-      // Use image API if image is uploaded, otherwise use text API
-      if (imgFile) {
+      if (generationMethod === 'claude') {
+        const imageBase64 = imgFile ? await fileToBase64(imgFile) : undefined;
+        setGenerationStatus('Claude is designing your brick model…');
+        postResponse = await ClaudeToBricksApiService.generate(
+          {
+            prompt: prompt.trim() || undefined,
+            imageBase64,
+            imageMediaType: imgFile?.type || 'image/png',
+            detailLevel: getVoxelSize(size),
+          },
+          authToken,
+        );
+        modelName = prompt.trim() || imgFile?.name.replace(/\.[^/.]+$/, '') || 'claude-model';
+      } else if (imgFile) {
         console.log(`Generating from image (3D ${stream3d ? 'streaming' : 'standard'}):`, imgFile.name);
         const imageBase64 = await fileToBase64(imgFile);
         postResponse = await ImageToBricksApiService.generateBricksFromImageStream(
@@ -812,7 +898,7 @@ export default function LandingPage() {
 
   return (
     <div
-      className="min-h-screen text-slate-900 relative"
+      className="min-h-screen overflow-x-hidden text-slate-900 relative"
       style={{ backgroundColor: "#fbfbfd" }}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -1012,9 +1098,18 @@ export default function LandingPage() {
               </div>
             )} */}
 
-            {/* Style chips - hidden during loading */}
+            {/* Generation method selector - hidden during loading */}
             {!loading && !areOptionsHidden && (
-              <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
+              <GenerationMethodSelector
+                value={generationMethod}
+                disabled={loading}
+                onChange={setGenerationMethod}
+              />
+            )}
+
+            {/* Style chips - hidden during loading and unused for direct Claude generation */}
+            {!loading && !areOptionsHidden && generationMethod === 'classic' && (
+              <div className="flex flex-wrap items-center justify-center gap-3 relative" style={{ zIndex: 25 }}>
                 <span className="text-sm text-slate-500">Style:</span>
                 {STYLE_PRESETS.map((st) => {
                   const active = st.value === styleOption;
@@ -1037,8 +1132,8 @@ export default function LandingPage() {
             )}
 
             {/* Generation Mode chips - hidden during loading */}
-            {!loading && !areOptionsHidden && (
-              <div className="flex items-center gap-3 relative" style={{ zIndex: 25 }}>
+            {!loading && !areOptionsHidden && generationMethod === 'classic' && (
+              <div className="flex flex-wrap items-center justify-center gap-3 relative" style={{ zIndex: 25 }}>
                 <span className="text-sm text-slate-500">3D Mode:</span>
                 {GENERATION_TYPE_PRESETS.map((gt) => {
                   const active = gt.value === generationType;
