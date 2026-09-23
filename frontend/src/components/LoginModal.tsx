@@ -90,11 +90,16 @@ export default function LoginModal({
     trackAuthMethodSelected("login_modal", method);
   };
 
-  const handleLoginSuccess = () => {
+  const handleLoginSuccess = (closeWhenNoSuccess = false) => {
     if (remember) localStorage.setItem("remember_email", email);
     else localStorage.removeItem("remember_email");
-    if (onSuccess) onSuccess();
-    else onClose();
+    if (onSuccess) {
+      onSuccess();
+      return;
+    }
+    if (closeWhenNoSuccess) {
+      onClose();
+    }
   };
 
   const handleGetCode = async (e: FormEvent) => {
@@ -138,7 +143,7 @@ export default function LoginModal({
         setError(authError.message);
         return;
       }
-      handleLoginSuccess();
+      handleLoginSuccess(true);
     } catch {
       setError("Password sign-in failed. Please try again.");
     } finally {
