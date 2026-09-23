@@ -17,14 +17,14 @@ import { SiteFooter } from "../components/SiteFooter";
 import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
 import { GenerationStats, GetGenerationStatsApiService } from "../services/getGenerationStatsApi";
-import { ClaudeToBricksApiService } from "../services/claudeToBricksApi";
+import {
+  DEFAULT_LLM_MODEL,
+  LLM_MODEL_OPTIONS,
+  LlmProvider,
+  LlmToBricksApiService,
+  getLlmModelOption,
+} from "../services/llmToBricksApi";
 import posthog from "posthog-js";
-
-// Check if 3D streaming (SAM3D) is enabled by default via environment variable.
-// Streaming requires a RunPod endpoint, so it is opt-in: default to Standard
-// (Trellis) unless VITE_ENABLE_STREAMING is explicitly set to 'true'.
-// Note: Image generation always uses flux-2 streaming regardless of this setting
-const STREAMING_ENABLED_BY_DEFAULT = import.meta.env.VITE_ENABLE_STREAMING === 'true';
 
 // Toggle whether users must be logged in before starting a generation.
 const REQUIRE_LOGIN_FOR_GENERATION = false;
@@ -61,76 +61,138 @@ const STYLE_PRESETS: { label: string; value: StyleOption; promptOption: string }
   { label: "Block", value: "voxel", promptOption: "c" },
 ];
 
-type GenerationType = "streaming" | "non-streaming";
-const GENERATION_TYPE_PRESETS: { label: string; value: GenerationType; description?: string }[] = [
-  { label: "Streaming", value: "streaming", description: "SAM3D with live 3D preview" },
-  { label: "Standard", value: "non-streaming", description: "Trellis (faster, no preview)" },
-];
-
-type GenerationMethod = "classic" | "claude";
+type GenerationMethod = "3d" | "llm";
 const GENERATION_METHOD_PRESETS: Array<{
   label: string;
   value: GenerationMethod;
   description: string;
 }> = [
   {
-    label: "3D Pipeline",
-    value: "classic",
+    label: "3D Render",
+    value: "3d",
     description: "Create a 3D model, then convert it into bricks",
   },
   {
-    label: "Claude Opus",
-    value: "claude",
-    description: "Ask Claude Opus to design the LDraw model directly",
+    label: "LLM Render",
+    value: "llm",
+    description: "Have an AI model design the brick model directly",
   },
 ];
 
+export type ThreeDModel = "sam3d" | "trellis";
+export const DEFAULT_THREE_D_MODEL: ThreeDModel = "sam3d";
+const THREE_D_MODEL_OPTIONS: Array<{ id: ThreeDModel; label: string; description: string }> = [
+  { id: "sam3d", label: "SAM3D", description: "Live 3D preview while it generates" },
+  { id: "trellis", label: "Trellis", description: "No live preview" },
+];
+
+const LLM_PROVIDER_GROUPS: Array<{ provider: LlmProvider; label: string }> = [
+  { provider: "anthropic", label: "Claude" },
+  { provider: "openai", label: "OpenAI" },
+];
+
+const isThreeDModel = (value: unknown): value is ThreeDModel =>
+  THREE_D_MODEL_OPTIONS.some((option) => option.id === value);
+
 export function GenerationMethodSelector({
   value,
+  threeDModel = DEFAULT_THREE_D_MODEL,
+  llmModel = DEFAULT_LLM_MODEL,
   disabled = false,
   onChange,
+  onThreeDModelChange = () => undefined,
+  onLlmModelChange = () => undefined,
 }: {
   value: GenerationMethod;
+  threeDModel?: ThreeDModel;
+  llmModel?: string;
   disabled?: boolean;
   onChange: (value: GenerationMethod) => void;
+  onThreeDModelChange?: (value: ThreeDModel) => void;
+  onLlmModelChange?: (value: string) => void;
 }) {
+  const modelSelectId = "landing-render-model";
+  const modelDescription = value === "3d"
+    ? THREE_D_MODEL_OPTIONS.find((option) => option.id === threeDModel)?.description
+    : GENERATION_METHOD_PRESETS.find((method) => method.value === value)?.description;
+
+  const handleModelChange = (modelId: string) => {
+    if (disabled) return;
+    if (value === "3d") {
+      if (!isThreeDModel(modelId)) return;
+      onThreeDModelChange(modelId);
+    } else {
+      if (!getLlmModelOption(modelId)) return;
+      onLlmModelChange(modelId);
+    }
+    posthog.capture('landing_render_model_selected', {
+      generation_method: value,
+      model: modelId,
+      provider: value === "3d" ? "3d" : getLlmModelOption(modelId)?.provider,
+    });
+  };
+
   return (
     <div
-      className="flex w-full max-w-xl flex-col items-start gap-2 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm sm:flex-row sm:items-center sm:gap-3"
+      className="flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm"
       style={{ zIndex: 25 }}
     >
-      <span className="shrink-0 text-sm font-medium text-slate-600">Generation method:</span>
-      <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-        {GENERATION_METHOD_PRESETS.map((method) => {
-          const active = method.value === value;
-          return (
-            <button
-              key={method.value}
-              type="button"
-              onClick={() => {
-                if (disabled) return;
-                onChange(method.value);
-                posthog.capture('landing_generation_method_selected', {
-                  generation_method: method.value,
-                });
-              }}
-              className={`min-h-10 flex-1 rounded-full px-4 py-2 text-sm transition-all duration-150 sm:flex-none ${
-                active
-                  ? "border border-transparent bg-[#f44336] text-white"
-                  : "border border-slate-300 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50"
-              }`}
-              aria-pressed={active}
-              disabled={disabled}
-              title={method.description}
-            >
-              {method.label}
-            </button>
-          );
-        })}
+      <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">Generation method:</span>
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          {GENERATION_METHOD_PRESETS.map((method) => {
+            const active = method.value === value;
+            return (
+              <button
+                key={method.value}
+                type="button"
+                onClick={() => {
+                  if (disabled) return;
+                  onChange(method.value);
+                  posthog.capture('landing_generation_method_selected', {
+                    generation_method: method.value,
+                  });
+                }}
+                className={`min-h-10 flex-1 rounded-full px-4 py-2 text-sm transition-all duration-150 sm:flex-none ${
+                  active
+                    ? "border border-transparent bg-[#f44336] text-white"
+                    : "border border-slate-300 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50"
+                }`}
+                aria-pressed={active}
+                disabled={disabled}
+                title={method.description}
+              >
+                {method.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
-      <p className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-52">
-        {GENERATION_METHOD_PRESETS.find(method => method.value === value)?.description}
-      </p>
+      <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <label htmlFor={modelSelectId} className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
+          {value === "3d" ? "3D model:" : "LLM model:"}
+        </label>
+        <select
+          id={modelSelectId}
+          value={value === "3d" ? threeDModel : llmModel}
+          onChange={(event) => handleModelChange(event.target.value)}
+          disabled={disabled}
+          className="min-h-10 w-full min-w-0 cursor-pointer rounded-full border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition-colors hover:border-red-200 focus:border-[#f44336] focus:outline-none focus:ring-2 focus:ring-red-100 disabled:cursor-not-allowed sm:w-56"
+        >
+          {value === "3d"
+            ? THREE_D_MODEL_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))
+            : LLM_PROVIDER_GROUPS.map((group) => (
+                <optgroup key={group.provider} label={group.label}>
+                  {LLM_MODEL_OPTIONS.filter((option) => option.provider === group.provider).map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </optgroup>
+              ))}
+        </select>
+        <p className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-40">{modelDescription}</p>
+      </div>
     </div>
   );
 }
@@ -267,10 +329,9 @@ export default function LandingPage() {
   const [size, setSize] = useState<SizeValue>("big");
   const [modelQuality, setModelQuality] = useState<ModelQuality>("regular");
   const [styleOption, setStyleOption] = useState<StyleOption>("videogame");
-  const [generationType, setGenerationType] = useState<GenerationType>(
-    STREAMING_ENABLED_BY_DEFAULT ? "streaming" : "non-streaming"
-  );
-  const [generationMethod, setGenerationMethod] = useState<GenerationMethod>("classic");
+  const [generationMethod, setGenerationMethod] = useState<GenerationMethod>("3d");
+  const [threeDModel, setThreeDModel] = useState<ThreeDModel>(DEFAULT_THREE_D_MODEL);
+  const [llmModel, setLlmModel] = useState<string>(DEFAULT_LLM_MODEL);
   const [imgFile, setImgFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -495,8 +556,9 @@ export default function LandingPage() {
         size?: SizeValue;
         modelQuality?: ModelQuality;
         styleOption?: StyleOption;
-        generationType?: GenerationType;
-        generationMethod?: GenerationMethod;
+        generationMethod?: string;
+        threeDModel?: string;
+        llmModel?: string;
         areOptionsHidden?: boolean;
         image?: { name: string; type: string; base64: string } | null;
       };
@@ -504,8 +566,11 @@ export default function LandingPage() {
       if (payload.size) setSize(payload.size);
       if (payload.modelQuality) setModelQuality(payload.modelQuality);
       if (payload.styleOption) setStyleOption(payload.styleOption);
-      if (payload.generationType) setGenerationType(payload.generationType);
-      if (payload.generationMethod) setGenerationMethod(payload.generationMethod);
+      if (payload.generationMethod === '3d' || payload.generationMethod === 'llm') {
+        setGenerationMethod(payload.generationMethod);
+      }
+      if (isThreeDModel(payload.threeDModel)) setThreeDModel(payload.threeDModel);
+      if (payload.llmModel && getLlmModelOption(payload.llmModel)) setLlmModel(payload.llmModel);
       if (typeof payload.areOptionsHidden === 'boolean') setAreOptionsHidden(payload.areOptionsHidden);
       if (payload.image && payload.image.base64) {
         try {
@@ -625,8 +690,9 @@ export default function LandingPage() {
         size,
         modelQuality,
         styleOption,
-        generationType,
         generationMethod,
+        threeDModel,
+        llmModel,
         areOptionsHidden,
         image: imageData,
       };
@@ -743,26 +809,28 @@ export default function LandingPage() {
         }
       };
 
-      // Image generation always streams via the SSE endpoint. The 3D Mode
-      // toggle only decides how the 3D step runs: SAM3D (streamed live voxels)
-      // when streaming, or Trellis (non-streamed) when standard.
-      const stream3d = generationType === 'streaming';
+      // Image generation always streams via the SSE endpoint. The 3D model
+      // only decides how the 3D step runs: SAM3D (streamed live voxels) or
+      // Trellis (non-streamed).
+      const stream3d = threeDModel === 'sam3d';
 
-      if (generationMethod === 'claude') {
+      if (generationMethod === 'llm') {
         const imageBase64 = imgFile ? await fileToBase64(imgFile) : undefined;
-        setGenerationStatus('Claude is designing your brick model…');
-        postResponse = await ClaudeToBricksApiService.generate(
+        const llmLabel = getLlmModelOption(llmModel)?.label ?? 'The AI model';
+        setGenerationStatus(`${llmLabel} is designing your brick model…`);
+        postResponse = await LlmToBricksApiService.generate(
           {
             prompt: prompt.trim() || undefined,
             imageBase64,
             imageMediaType: imgFile?.type || 'image/png',
             detailLevel: getVoxelSize(size),
+            model: llmModel,
           },
           authToken,
         );
-        modelName = prompt.trim() || imgFile?.name.replace(/\.[^/.]+$/, '') || 'claude-model';
+        modelName = prompt.trim() || imgFile?.name.replace(/\.[^/.]+$/, '') || 'llm-model';
       } else if (imgFile) {
-        console.log(`Generating from image (3D ${stream3d ? 'streaming' : 'standard'}):`, imgFile.name);
+        console.log(`Generating from image (3D model: ${threeDModel}):`, imgFile.name);
         const imageBase64 = await fileToBase64(imgFile);
         postResponse = await ImageToBricksApiService.generateBricksFromImageStream(
           imageBase64,
@@ -777,7 +845,7 @@ export default function LandingPage() {
         );
         modelName = prompt.trim() || imgFile.name.replace(/\.[^/.]+$/, ''); // Remove file extension
       } else {
-        console.log(`Generating from text prompt (3D ${stream3d ? 'streaming' : 'standard'}):`, prompt.trim());
+        console.log(`Generating from text prompt (3D model: ${threeDModel}):`, prompt.trim());
         postResponse = await TextToBricksApiService.generateBricksFromTextStream(
           prompt.trim(),
           getVoxelSize(size),
@@ -1102,13 +1170,17 @@ export default function LandingPage() {
             {!loading && !areOptionsHidden && (
               <GenerationMethodSelector
                 value={generationMethod}
+                threeDModel={threeDModel}
+                llmModel={llmModel}
                 disabled={loading}
                 onChange={setGenerationMethod}
+                onThreeDModelChange={setThreeDModel}
+                onLlmModelChange={setLlmModel}
               />
             )}
 
-            {/* Style chips - hidden during loading and unused for direct Claude generation */}
-            {!loading && !areOptionsHidden && generationMethod === 'classic' && (
+            {/* Style chips - hidden during loading and unused for LLM Render */}
+            {!loading && !areOptionsHidden && generationMethod === '3d' && (
               <div className="flex flex-wrap items-center justify-center gap-3 relative" style={{ zIndex: 25 }}>
                 <span className="text-sm text-slate-500">Style:</span>
                 {STYLE_PRESETS.map((st) => {
@@ -1125,31 +1197,6 @@ export default function LandingPage() {
                       disabled={loading}
                     >
                       {st.label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Generation Mode chips - hidden during loading */}
-            {!loading && !areOptionsHidden && generationMethod === 'classic' && (
-              <div className="flex flex-wrap items-center justify-center gap-3 relative" style={{ zIndex: 25 }}>
-                <span className="text-sm text-slate-500">3D Mode:</span>
-                {GENERATION_TYPE_PRESETS.map((gt) => {
-                  const active = gt.value === generationType;
-                  return (
-                    <button
-                      key={gt.value}
-                      onClick={() => !loading && setGenerationType(gt.value)}
-                      className={`rounded-full px-4 py-1 text-sm transition-all duration-150 ${
-                        active
-                          ? "bg-[#f44336] text-white border border-transparent"
-                          : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
-                      } ${loading ? "cursor-not-allowed" : "cursor-pointer"}`}
-                      disabled={loading}
-                      title={gt.description}
-                    >
-                      {gt.label}
                     </button>
                   );
                 })}

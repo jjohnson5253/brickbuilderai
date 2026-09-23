@@ -6,6 +6,7 @@ import math
 import os
 import re
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -23,28 +24,58 @@ from ..utils.brick_design import (
     render_preview_png,
 )
 from ..utils.generation_storage import generation_storage
+from ..utils.llm_tool_conversation import (
+    ConversationSettings,
+    ToolConversation,
+    ToolResult,
+    ToolSpec,
+    Turn,
+    UserInput,
+    create_conversation,
+)
 from ..utils.pack_ldraw_model import LDrawPacker
 from ..utils.posthog_client import track_error, track_image_conversion
 from .imageToBricks import ImageToBricksResponse
 
 logger = logging.getLogger(__name__)
 
-# Keep the model configurable so deployments can pin a different Anthropic
-# model without a code release.
-DEFAULT_MODEL = os.getenv("ANTHROPIC_LDR_MODEL", "claude-opus-5-5")
-ANTHROPIC_API_VERSION = os.getenv("ANTHROPIC_API_VERSION", "2023-06-01")
-ANTHROPIC_MAX_TOKENS = int(os.getenv("ANTHROPIC_LDR_MAX_TOKENS", "65536"))
-ANTHROPIC_TIMEOUT_SECONDS = float(os.getenv("ANTHROPIC_LDR_TIMEOUT_SECONDS", "600"))
 
-# "design" (default): Claude describes the model as colored voxel shapes on a stud grid and
+@dataclass(frozen=True)
+class LlmModel:
+    id: str
+    label: str
+    provider: str  # "anthropic" or "openai"
+
+
+# Allow-list of models users can pick. Keep in sync with LLM_MODEL_OPTIONS in
+# frontend/src/services/llmToBricksApi.ts.
+SUPPORTED_MODELS: Dict[str, LlmModel] = {m.id: m for m in (
+    LlmModel("claude-opus-5-5", "Claude Opus 5.5", "anthropic"),
+    LlmModel("claude-opus-5", "Claude Opus 5", "anthropic"),
+    LlmModel("claude-sonnet-5", "Claude Sonnet 5", "anthropic"),
+    LlmModel("claude-fable-5", "Claude Fable 5", "anthropic"),
+    LlmModel("gpt-5.6-sol", "GPT-5.6 Sol", "openai"),
+    LlmModel("gpt-5.6-terra", "GPT-5.6 Terra", "openai"),
+    LlmModel("gpt-5.5", "GPT-5.5", "openai"),
+)}
+FALLBACK_MODEL = "claude-opus-5-5"
+DEFAULT_MODEL = os.getenv("LLM_TO_BRICKS_MODEL", FALLBACK_MODEL)
+if DEFAULT_MODEL not in SUPPORTED_MODELS:
+    logger.warning("LLM_TO_BRICKS_MODEL=%r is not supported; using %s", DEFAULT_MODEL, FALLBACK_MODEL)
+    DEFAULT_MODEL = FALLBACK_MODEL
+MAX_OUTPUT_TOKENS = int(os.getenv("LLM_TO_BRICKS_MAX_TOKENS", "65536"))
+TIMEOUT_SECONDS = float(os.getenv("LLM_TO_BRICKS_TIMEOUT_SECONDS", "600"))
+OPENAI_REASONING_EFFORT = os.getenv("LLM_TO_BRICKS_OPENAI_REASONING_EFFORT", "medium")
+
+# "design" (default): the model describes the build as colored voxel shapes on a stud grid and
 # brick_design.py turns that into bricks deterministically (no overlaps, off-grid parts or
 # floating bricks), with a build -> feedback -> review loop.
-# "direct": Claude writes raw LDraw (the original path), now audited for overlaps/floating
+# "direct": the model writes raw LDraw (the original path), audited for overlaps/floating
 # parts with a correction round.
-LDR_MODE = os.getenv("CLAUDE_LDR_MODE", "design").strip().lower()
-DESIGN_MAX_ATTEMPTS = max(1, int(os.getenv("CLAUDE_DESIGN_MAX_ATTEMPTS", "3")))
-DESIGN_REVIEW_ROUNDS = max(0, int(os.getenv("CLAUDE_DESIGN_REVIEW_ROUNDS", "1")))
-DIRECT_FIX_ROUNDS = max(0, int(os.getenv("CLAUDE_DIRECT_FIX_ROUNDS", "1")))
+LDR_MODE = os.getenv("LLM_TO_BRICKS_MODE", "design").strip().lower()
+DESIGN_MAX_ATTEMPTS = max(1, int(os.getenv("LLM_TO_BRICKS_DESIGN_MAX_ATTEMPTS", "3")))
+DESIGN_REVIEW_ROUNDS = max(0, int(os.getenv("LLM_TO_BRICKS_DESIGN_REVIEW_ROUNDS", "1")))
+DIRECT_FIX_ROUNDS = max(0, int(os.getenv("LLM_TO_BRICKS_DIRECT_FIX_ROUNDS", "1")))
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_LDR_BYTES = 750_000
@@ -53,11 +84,20 @@ SUPPORTED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 PART_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+\.dat$", re.IGNORECASE)
 
 
-class ClaudeToBricksRequest(BaseModel):
+class LlmToBricksRequest(BaseModel):
     prompt: Optional[str] = None
     image_base64: Optional[str] = None
     image_media_type: str = "image/png"
     detail_level: float = 40.0
+    model: str = DEFAULT_MODEL
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        value = value.strip()
+        if value not in SUPPORTED_MODELS:
+            raise ValueError(f"model must be one of: {', '.join(SUPPORTED_MODELS)}")
+        return value
 
     @field_validator("prompt")
     @classmethod
@@ -107,43 +147,42 @@ class ClaudeToBricksRequest(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def require_prompt_or_image(self) -> "ClaudeToBricksRequest":
+    def require_prompt_or_image(self) -> "LlmToBricksRequest":
         if not self.prompt and not self.image_base64:
             raise ValueError("Provide a text prompt, an image, or both")
         return self
 
 
-def _user_content(request: ClaudeToBricksRequest) -> List[Dict[str, Any]]:
-    user_content: List[Dict[str, Any]] = []
-    if request.image_base64:
-        user_content.append(
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": request.image_media_type,
-                    "data": request.image_base64,
-                },
-            }
-        )
-    user_content.append(
-        {
-            "type": "text",
-            "text": request.prompt
-            or "Recreate the main subject in the reference image as a recognizable brick model.",
-        }
+DEFAULT_IMAGE_PROMPT = "Recreate the main subject in the reference image as a recognizable brick model."
+
+
+def _user_input(request: LlmToBricksRequest) -> UserInput:
+    return UserInput(
+        text=request.prompt or DEFAULT_IMAGE_PROMPT,
+        image_base64=request.image_base64,
+        image_media_type=request.image_media_type,
     )
-    return user_content
 
 
-def _anthropic_payload(
-    request: ClaudeToBricksRequest,
-    model: str = DEFAULT_MODEL,
-    messages: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
-    """Payload for the direct (raw LDraw) mode."""
-    user_content = _user_content(request)
-    system_prompt = """You are an expert LEGO-compatible model designer using the LDraw file format.
+def _open_conversation(
+    request: LlmToBricksRequest,
+    client: httpx.AsyncClient,
+    system: str,
+    tools: List[ToolSpec],
+) -> ToolConversation:
+    """Start a tool conversation with the request's model on its provider's API."""
+    settings = ConversationSettings(
+        model=request.model,
+        system=system,
+        tools=tools,
+        max_tokens=MAX_OUTPUT_TOKENS,
+        reasoning_effort=OPENAI_REASONING_EFFORT,
+    )
+    provider = SUPPORTED_MODELS[request.model].provider
+    return create_conversation(provider, client, settings, _user_input(request))
+
+
+DIRECT_SYSTEM_PROMPT = """You are an expert LEGO-compatible model designer using the LDraw file format.
 Create a complete, physically connected, stable model from the user's text and/or image. Return only
 official LDraw part references through the submit_ldr_model tool. Use common, currently available parts,
 standard integer LDraw color codes, valid type-1 transformation matrices, and useful 0 STEP boundaries.
@@ -151,64 +190,44 @@ Orient the finished model upright with its lowest bricks at y=0. Prefer a practi
 use fewer pieces for a simple subject and never exceed 5,000 pieces. Do not use MPD submodels, embedded
 files, custom geometry, stickers, base64, Markdown fences, or explanatory prose inside ldr_content."""
 
-    return {
-        "model": model,
-        "max_tokens": ANTHROPIC_MAX_TOKENS,
-        "system": system_prompt,
-        "thinking": {"type": "adaptive"},
-        "messages": messages or [{"role": "user", "content": user_content}],
-        "tools": [
-            {
-                "name": "submit_ldr_model",
-                "description": "Submit the finished model as a single valid LDraw .ldr file.",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "maxLength": 120},
-                        "ldr_content": {
-                            "type": "string",
-                            "description": "Complete plain-text LDraw model content.",
-                        },
-                    },
-                    "required": ["ldr_content"],
-                    "additionalProperties": False,
+DIRECT_TOOLS = [
+    ToolSpec(
+        name="submit_ldr_model",
+        description="Submit the finished model as a single valid LDraw .ldr file.",
+        schema={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "maxLength": 120},
+                "ldr_content": {
+                    "type": "string",
+                    "description": "Complete plain-text LDraw model content.",
                 },
-            }
-        ],
-        # Opus 5.5 rejects forced tool use. The system prompt still tells it to
-        # submit through this tool, while auto keeps the request API-compatible.
-        "tool_choice": {"type": "auto"},
-    }
+            },
+            "required": ["ldr_content"],
+            "additionalProperties": False,
+        },
+    )
+]
 
 
-def _extract_ldr_content(response_json: Dict[str, Any]) -> str:
-    if response_json.get("stop_reason") == "max_tokens":
-        raise ValueError("Claude's LDraw response was truncated; try a simpler model")
-    for block in response_json.get("content", []):
-        if block.get("type") != "tool_use" or block.get("name") != "submit_ldr_model":
-            continue
-        tool_input = block.get("input") or {}
-        if not isinstance(tool_input, dict):
-            continue
-        ldr_content = tool_input.get("ldr_content")
+def _extract_ldr_content(turn: Turn) -> str:
+    if turn.truncated:
+        raise ValueError("The model's LDraw response was truncated; try a simpler model")
+    for call in turn.tool_calls:
+        ldr_content = call.input.get("ldr_content") if call.name == "submit_ldr_model" else None
         if isinstance(ldr_content, str):
             return ldr_content
 
-    # Tool choice must remain automatic for Opus 5.5, so tolerate a plain-text
-    # final answer and pass it through the same strict LDraw validator.
-    text_content = "\n".join(
-        block.get("text", "")
-        for block in response_json.get("content", [])
-        if block.get("type") == "text" and isinstance(block.get("text"), str)
-    ).strip()
-    if text_content:
+    # Tool choice must remain automatic (Opus 5.5 rejects forced tool use), so tolerate a
+    # plain-text final answer and pass it through the same strict LDraw validator.
+    if turn.text:
         try:
-            decoded = json.loads(text_content)
+            decoded = json.loads(turn.text)
         except json.JSONDecodeError:
-            return text_content
+            return turn.text
         if isinstance(decoded, dict) and isinstance(decoded.get("ldr_content"), str):
             return decoded["ldr_content"]
-    raise ValueError("Claude did not return an LDraw model")
+    raise ValueError("The model did not return an LDraw model")
 
 
 def validate_ldr_content(raw_content: str) -> str:
@@ -217,7 +236,7 @@ def validate_ldr_content(raw_content: str) -> str:
         content = re.sub(r"^```(?:ldr|ldraw)?\s*", "", content, flags=re.IGNORECASE)
         content = re.sub(r"\s*```$", "", content)
     if not content or len(content.encode("utf-8")) > MAX_LDR_BYTES:
-        raise ValueError("Claude returned an empty or oversized LDraw model")
+        raise ValueError("The model returned an empty or oversized LDraw model")
 
     normalized_lines = []
     part_count = 0
@@ -260,12 +279,12 @@ def validate_ldr_content(raw_content: str) -> str:
         normalized_lines.append(" ".join(tokens))
 
     if part_count == 0:
-        raise ValueError("Claude returned an LDraw model with no parts")
+        raise ValueError("The model returned an LDraw model with no parts")
 
     if not any(line.lower().startswith("0 name:") for line in normalized_lines):
-        normalized_lines.insert(0, "0 Name: claude-model.ldr")
+        normalized_lines.insert(0, "0 Name: llm-model.ldr")
     if not any(line.lower().startswith("0 author:") for line in normalized_lines):
-        normalized_lines.insert(1, "0 Author: BrickBuilder AI with Claude")
+        normalized_lines.insert(1, "0 Author: BrickBuilder AI")
     return "\n".join(normalized_lines) + "\n"
 
 
@@ -314,10 +333,10 @@ are told about. When you review a successful build, compare it to the request/re
 right call accept_design, otherwise submit an improved design."""
 
 DESIGN_TOOLS = [
-    {
-        "name": "submit_brick_design",
-        "description": "Submit a complete voxel design for the builder to turn into bricks.",
-        "input_schema": {
+    ToolSpec(
+        name="submit_brick_design",
+        description="Submit a complete voxel design for the builder to turn into bricks.",
+        schema={
             "type": "object",
             "properties": {
                 "title": {"type": "string", "maxLength": 120},
@@ -341,12 +360,12 @@ DESIGN_TOOLS = [
             },
             "required": ["grid", "shapes"],
         },
-    },
-    {
-        "name": "accept_design",
-        "description": "Accept the most recent successful build as the final model.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
+    ),
+    ToolSpec(
+        name="accept_design",
+        description="Accept the most recent successful build as the final model.",
+        schema={"type": "object", "properties": {}},
+    ),
 ]
 
 
@@ -356,75 +375,17 @@ def _design_size_hint(detail_level: float) -> str:
             "clearly needs a different size.")
 
 
-def _design_payload(
-    request: ClaudeToBricksRequest,
-    messages: List[Dict[str, Any]],
-    model: str = DEFAULT_MODEL,
-) -> Dict[str, Any]:
-    return {
-        "model": model,
-        "max_tokens": ANTHROPIC_MAX_TOKENS,
-        "system": DESIGN_SYSTEM_PROMPT.format(
-            size_hint=_design_size_hint(request.detail_level),
-            palette=palette_prompt_text(),
-        ),
-        "thinking": {"type": "adaptive"},
-        "messages": messages,
-        "tools": DESIGN_TOOLS,
-        # Opus 5.5 rejects forced tool use; the prompt asks for the tool.
-        "tool_choice": {"type": "auto"},
-    }
+def _design_system_prompt(request: LlmToBricksRequest) -> str:
+    return DESIGN_SYSTEM_PROMPT.format(
+        size_hint=_design_size_hint(request.detail_level),
+        palette=palette_prompt_text(),
+    )
 
 
-def _anthropic_headers() -> Dict[str, str]:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured")
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": ANTHROPIC_API_VERSION,
-        "content-type": "application/json",
-    }
-    workspace_id = os.getenv("ANTHROPIC_WORKSPACE_ID")
-    if workspace_id:
-        headers["anthropic-workspace-id"] = workspace_id
-    return headers
-
-
-async def _post_messages(client: httpx.AsyncClient, headers: Dict[str, str], payload: Dict[str, Any]) -> Dict[str, Any]:
-    try:
-        response = await client.post("https://api.anthropic.com/v1/messages", headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail="Claude LDraw generation timed out") from exc
-    except httpx.HTTPStatusError as exc:
-        logger.error("Claude LDraw request failed with HTTP %s", exc.response.status_code)
-        raise HTTPException(
-            status_code=502,
-            detail=f"Claude LDraw request failed: HTTP {exc.response.status_code}",
-        ) from exc
-    except (httpx.HTTPError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=502, detail="Claude LDraw request failed") from exc
-
-
-def _tool_uses(response_json: Dict[str, Any]) -> List[Dict[str, Any]]:
-    return [b for b in response_json.get("content", []) if b.get("type") == "tool_use"]
-
-
-def _tool_result(tool_use_id: str, content: Any, is_error: bool = False) -> Dict[str, Any]:
-    result: Dict[str, Any] = {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
-    if is_error:
-        result["is_error"] = True
-    return result
-
-
-async def _generate_ldr_with_design(request: ClaudeToBricksRequest) -> str:
-    """Claude designs voxels; brick_design builds, verifies and renders; Claude fixes and reviews."""
-    headers = _anthropic_headers()
+async def _generate_ldr_with_design(request: LlmToBricksRequest) -> str:
+    """The model designs voxels; brick_design builds, verifies and renders; the model fixes and reviews."""
     palette = load_palette()
     loop = asyncio.get_running_loop()
-    messages: List[Dict[str, Any]] = [{"role": "user", "content": _user_content(request)}]
     best = None
     failures = 0
     reviews = 0
@@ -432,110 +393,104 @@ async def _generate_ldr_with_design(request: ClaudeToBricksRequest) -> str:
     def build(design: Dict[str, Any], repair: bool):
         return build_design(design, max_pieces=MAX_LDR_PARTS, repair=repair, palette=palette)
 
-    async with httpx.AsyncClient(timeout=ANTHROPIC_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+        conversation = _open_conversation(request, client, _design_system_prompt(request), DESIGN_TOOLS)
         for _ in range(DESIGN_MAX_ATTEMPTS + DESIGN_REVIEW_ROUNDS + 2):
-            response_json = await _post_messages(client, headers, _design_payload(request, messages))
-            if response_json.get("stop_reason") == "max_tokens":
+            turn = await conversation.send()
+            if turn.truncated:
                 if best:
                     break
-                raise ValueError("Claude's design was truncated; try a simpler model")
-            messages.append({"role": "assistant", "content": response_json.get("content", [])})
-            uses = _tool_uses(response_json)
-            submits = [u for u in uses if u.get("name") == "submit_brick_design"]
+                raise ValueError("The model's design was truncated; try a simpler model")
+            calls = turn.tool_calls
+            submits = [c for c in calls if c.name == "submit_brick_design"]
 
-            if not uses:
+            if not calls:
                 if best:
                     break  # answered in text after a successful build: keep that build
                 failures += 1
                 if failures >= DESIGN_MAX_ATTEMPTS:
                     break
-                messages.append({"role": "user", "content": "Please submit the model with the submit_brick_design tool."})
+                conversation.add_user_text("Please submit the model with the submit_brick_design tool.")
                 continue
-            if best and not submits and any(u.get("name") == "accept_design" for u in uses):
-                break  # Claude accepted the reviewed build
+            if best and not submits and any(c.name == "accept_design" for c in calls):
+                break  # the model accepted the reviewed build
 
-            results: List[Dict[str, Any]] = []
+            results: List[ToolResult] = []
             done = False
-            for use in uses:
-                use_id = use.get("id")
-                if use is not (submits[0] if submits else None):
-                    message = ("No successful build to accept yet." if use.get("name") == "accept_design"
+            for call in calls:
+                if call is not (submits[0] if submits else None):
+                    message = ("No successful build to accept yet." if call.name == "accept_design"
                                else "Submit exactly one submit_brick_design call per turn.")
-                    results.append(_tool_result(use_id, message, True))
+                    results.append(ToolResult(call.id, message, is_error=True))
                     continue
-                design = use.get("input") or {}
                 try:
-                    result = await loop.run_in_executor(None, build, design, False)
+                    result = await loop.run_in_executor(None, build, call.input, False)
                 except DesignError as exc:
                     failures += 1
                     if failures < DESIGN_MAX_ATTEMPTS:
-                        results.append(_tool_result(use_id, f"Build failed: {exc}", True))
+                        results.append(ToolResult(call.id, f"Build failed: {exc}", is_error=True))
                         continue
                     if best:  # a revision failed on the last try: keep the earlier good build
                         done = True
                         break
                     # Out of retries: repair what can't connect rather than failing the generation.
                     try:
-                        result = await loop.run_in_executor(None, build, design, True)
+                        result = await loop.run_in_executor(None, build, call.input, True)
                     except DesignError as final_exc:
                         if best:
                             done = True
                             break
-                        raise ValueError(f"Claude's brick design could not be built: {final_exc}") from final_exc
+                        raise ValueError(f"The brick design could not be built: {final_exc}") from final_exc
                 best = result
                 if reviews >= DESIGN_REVIEW_ROUNDS or failures >= DESIGN_MAX_ATTEMPTS:
                     done = True
                     break
                 reviews += 1
                 preview = await loop.run_in_executor(None, render_preview_png, result.grid, result.unit, palette)
-                results.append(_tool_result(use_id, [
-                    {"type": "text", "text": result.summary(palette) + "\n\nReview the renders against the"
-                     " request (and reference image, if any). Call accept_design if it is right, or"
-                     " submit_brick_design with a corrected complete design."},
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                                 "data": base64.b64encode(preview).decode()}},
-                ]))
+                results.append(ToolResult(
+                    call.id,
+                    result.summary(palette) + "\n\nReview the renders against the request (and reference"
+                    " image, if any). Call accept_design if it is right, or submit_brick_design with a"
+                    " corrected complete design.",
+                    image_png=preview,
+                ))
             if done:
                 break
-            messages.append({"role": "user", "content": results})
+            conversation.add_tool_results(results)
 
     if not best:
-        raise ValueError("Claude did not produce a buildable brick design")
+        raise ValueError("The model did not produce a buildable brick design")
     return best.ldr
 
 
-async def _generate_ldr_direct(request: ClaudeToBricksRequest) -> str:
-    """Original mode: Claude writes LDraw; basic bricks/plates are audited for overlaps, off-grid
-    and floating parts, and Claude gets DIRECT_FIX_ROUNDS chances to correct them."""
-    headers = _anthropic_headers()
-    messages: List[Dict[str, Any]] = [{"role": "user", "content": _user_content(request)}]
+async def _generate_ldr_direct(request: LlmToBricksRequest) -> str:
+    """Original mode: the model writes LDraw; basic bricks/plates are audited for overlaps, off-grid
+    and floating parts, and the model gets DIRECT_FIX_ROUNDS chances to correct them."""
     best: Optional[str] = None
-    async with httpx.AsyncClient(timeout=ANTHROPIC_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
+        conversation = _open_conversation(request, client, DIRECT_SYSTEM_PROMPT, DIRECT_TOOLS)
         for round_number in range(DIRECT_FIX_ROUNDS + 1):
-            response_json = await _post_messages(client, headers, _anthropic_payload(request, messages=messages))
+            turn = await conversation.send()
             try:
-                ldr = validate_ldr_content(_extract_ldr_content(response_json))
+                ldr = validate_ldr_content(_extract_ldr_content(turn))
             except ValueError as exc:
                 if best:
                     break
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
             best = ldr
             audit = audit_ldraw(ldr)
-            uses = [u for u in _tool_uses(response_json) if u.get("name") == "submit_ldr_model"]
-            if audit.ok or round_number == DIRECT_FIX_ROUNDS or not uses:
+            submits = [c for c in turn.tool_calls if c.name == "submit_ldr_model"]
+            if audit.ok or round_number == DIRECT_FIX_ROUNDS or not submits:
                 break
-            messages.append({"role": "assistant", "content": response_json.get("content", [])})
             feedback = (f"The model has placement problems: {audit.describe()}. Positions must be on the stud "
                         "grid (x/z centers at multiples of 10 LDU consistent with the part size; brick tops at "
                         "multiples of 8 LDU in y), parts may not overlap, and every part must rest on or hang "
                         "from another part. Submit the corrected complete model with submit_ldr_model.")
-            messages.append({"role": "user", "content": [
-                _tool_result(u.get("id"), feedback, True) for u in uses
-            ]})
+            conversation.add_tool_results([ToolResult(c.id, feedback, is_error=True) for c in turn.tool_calls])
     return best
 
 
-async def _generate_ldr_with_claude(request: ClaudeToBricksRequest) -> str:
+async def _generate_ldr(request: LlmToBricksRequest) -> str:
     if LDR_MODE == "direct":
         return await _generate_ldr_direct(request)
     try:
@@ -544,9 +499,9 @@ async def _generate_ldr_with_claude(request: ClaudeToBricksRequest) -> str:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-async def process_claude_to_bricks_task(
+async def process_llm_to_bricks_task(
     generation_id: str,
-    request: ClaudeToBricksRequest,
+    request: LlmToBricksRequest,
     user_info: Dict[str, Any],
     auth_info: Dict[str, Any],
 ) -> None:
@@ -558,21 +513,21 @@ async def process_claude_to_bricks_task(
             try:
                 await generation_storage.update_status(generation_id, "processing")
             except Exception as exc:
-                logger.warning("Claude generation heartbeat failed: %s", exc)
+                logger.warning("LLM generation heartbeat failed: %s", exc)
 
     try:
         await generation_storage.update_status(generation_id, "processing")
         heartbeat_task = asyncio.create_task(heartbeat())
-        ldr_content = await _generate_ldr_with_claude(request)
+        ldr_content = await _generate_ldr(request)
 
         await deduct_credits(
             user_info=user_info,
             auth_info=auth_info,
             credits_to_deduct=1,
-            operation_description="Anthropic LDraw generation",
+            operation_description=f"LLM LDraw generation ({request.model})",
         )
 
-        with tempfile.TemporaryDirectory(prefix="claude-ldr-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="llm-ldr-") as temp_dir:
             ldr_path = Path(temp_dir) / "model.ldr"
             ldr_path.write_text(ldr_content, encoding="utf-8")
             packer = LDrawPacker()
@@ -601,7 +556,7 @@ async def process_claude_to_bricks_task(
         # does not require an mpd_url column. The frontend follows the same
         # path as existing generations and converts the saved LDR through
         # /ldrToMpd when no MPD URL is present. Packing above still verifies
-        # that Claude's LDraw output can be expanded successfully.
+        # that the model's LDraw output can be expanded successfully.
         await generation_storage.update_status(generation_id, "completed")
 
         track_image_conversion(
@@ -610,16 +565,16 @@ async def process_claude_to_bricks_task(
             has_mpd=True,
             ldr_size=len(ldr_content),
             mpd_size=len(mpd_content),
-            image_type="claude_direct_ldr" if LDR_MODE == "direct" else "claude_brick_design",
+            image_type="llm_direct_ldr" if LDR_MODE == "direct" else "llm_brick_design",
             is_developer=user_info["is_developer"],
         )
     except Exception as exc:
-        logger.exception("Claude-to-bricks generation failed for %s", generation_id)
+        logger.exception("LLM-to-bricks generation failed for %s", generation_id)
         await generation_storage.update_status(generation_id, "failed", str(exc))
         track_error(
             error_type=type(exc).__name__,
             error_message=str(exc),
-            endpoint="/claudeToBricks",
+            endpoint="/llmToBricks",
             user_id=user_info.get("user_email", "anonymous"),
         )
     finally:
@@ -627,17 +582,18 @@ async def process_claude_to_bricks_task(
             heartbeat_task.cancel()
 
 
-async def claude_to_bricks(
-    request: ClaudeToBricksRequest,
+async def llm_to_bricks(
+    request: LlmToBricksRequest,
     auth_info: dict = Depends(get_user_with_optional_auth),
 ) -> ImageToBricksResponse:
     user_info = handle_auth_and_tracking(
         auth_info=auth_info,
-        endpoint="/claudeToBricks",
+        endpoint="/llmToBricks",
         track_properties={
             "has_image": bool(request.image_base64),
             "has_prompt": bool(request.prompt),
-            "model": DEFAULT_MODEL,
+            "model": request.model,
+            "provider": SUPPORTED_MODELS[request.model].provider,
         },
         required_credits=1,
     )
@@ -658,24 +614,24 @@ async def claude_to_bricks(
             user_type=user_type,
             prompt=request.prompt or "Image reference",
             detail_level=request.detail_level,
-            endpoint="claudeToBricks",
-            model_3d=DEFAULT_MODEL,
+            endpoint="llmToBricks",
+            model_3d=request.model,
         )
         asyncio.create_task(
-            process_claude_to_bricks_task(generation_id, request, user_info, auth_info)
+            process_llm_to_bricks_task(generation_id, request, user_info, auth_info)
         )
         return ImageToBricksResponse(
             generation_id=generation_id,
-            message="Claude generation started. Poll /generation/{generation_id} for status.",
+            message="LLM generation started. Poll /generation/{generation_id} for status.",
         )
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Failed to start Claude-to-bricks generation")
+        logger.exception("Failed to start LLM-to-bricks generation")
         track_error(
             error_type=type(exc).__name__,
             error_message=str(exc),
-            endpoint="/claudeToBricks",
+            endpoint="/llmToBricks",
             user_id=user_info.get("user_email", "anonymous"),
         )
-        raise HTTPException(status_code=500, detail="Failed to start Claude generation") from exc
+        raise HTTPException(status_code=500, detail="Failed to start LLM generation") from exc

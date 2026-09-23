@@ -48,7 +48,8 @@ vi.mock('../src/components/ProfileMenu', () => ({
   ProfileMenu: () => null,
 }));
 
-import LandingPage, { GenerationMethodSelector } from '../src/pages/LandingPage';
+import LandingPage, { DEFAULT_THREE_D_MODEL, GenerationMethodSelector } from '../src/pages/LandingPage';
+import { DEFAULT_LLM_MODEL } from '../src/services/llmToBricksApi';
 
 describe('LandingPage', () => {
   it('uses the updated hero headline', () => {
@@ -58,15 +59,41 @@ describe('LandingPage', () => {
     expect(markup).not.toContain('Create and Build');
   });
 
-  it('offers the direct Claude Opus generation method in settings', () => {
+  it('defaults to SAM3D for 3D Render and Claude Opus 5.5 for LLM Render', () => {
+    expect(DEFAULT_THREE_D_MODEL).toBe('sam3d');
+    expect(DEFAULT_LLM_MODEL).toBe('claude-opus-5-5');
+
     const markup = renderToStaticMarkup(
-      <GenerationMethodSelector value="claude" onChange={() => undefined} />,
+      <GenerationMethodSelector value="3d" onChange={() => undefined} />,
+    );
+    expect(markup).toContain('3D Render');
+    expect(markup).toContain('LLM Render');
+    expect(markup).toMatch(/<option value="sam3d" selected="">SAM3D<\/option>/);
+    expect(markup).toContain('<option value="trellis">Trellis</option>');
+  });
+
+  it('offers SAM3D and Trellis for 3D Render', () => {
+    const markup = renderToStaticMarkup(
+      <GenerationMethodSelector value="3d" threeDModel="trellis" onChange={() => undefined} />,
     );
 
     expect(markup).toContain('Generation method:');
-    expect(markup).toContain('3D Pipeline');
-    expect(markup).toContain('Claude Opus');
-    expect(markup).toContain('Ask Claude Opus to design the LDraw model directly');
-    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain('3D model:');
+    expect(markup).toMatch(/<option value="trellis" selected="">Trellis<\/option>/);
+    expect(markup).not.toContain('Claude Opus 5.5');
+  });
+
+  it('offers grouped Claude and OpenAI models for LLM Render, defaulting to Opus 5.5', () => {
+    const markup = renderToStaticMarkup(
+      <GenerationMethodSelector value="llm" onChange={() => undefined} />,
+    );
+
+    expect(markup).toContain('LLM model:');
+    expect(markup).toContain('<optgroup label="Claude">');
+    expect(markup).toContain('<optgroup label="OpenAI">');
+    expect(markup).toMatch(/<option value="claude-opus-5-5" selected="">Claude Opus 5.5<\/option>/);
+    expect(markup).toContain('<option value="gpt-5.6-sol">GPT-5.6 Sol</option>');
+    expect(markup).not.toContain('SAM3D');
+    expect(markup).toMatch(/aria-pressed="true"[^>]*>LLM Render/);
   });
 });

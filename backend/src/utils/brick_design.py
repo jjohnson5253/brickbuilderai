@@ -633,13 +633,13 @@ def build_design(design: Dict[str, Any], *, max_pieces: int = 5_000, repair: boo
     weak = sum(1 for i in range(len(result.bricks)) if degree[i] == 1)
     layer_units = (["plate"] if offset else []) + [unit] * (work.shape[2] - offset)
     ldr = to_ldraw(result.bricks, work.shape, layer_units,
-                   title=str(design.get("title") or "Claude brick model"))
+                   title=str(design.get("title") or "Brick model"))
     return BuildResult(ldr=ldr, unit=unit, grid=work[:, :, offset:], bricks=result.bricks,
                        has_base=bool(offset), weak_bricks=weak,
                        grounded_groups=result.grounded_groups, warnings=warnings)
 
 
-def to_ldraw(bricks, shape, layer_units, title: str = "Claude brick model") -> str:
+def to_ldraw(bricks, shape, layer_units, title: str = "Brick model") -> str:
     """Write bricks as LDraw. The front of the model (z = 0) faces -Z.
 
     Bricks are ordered with the voxel2brick stability reordering so every step only adds parts
@@ -652,8 +652,8 @@ def to_ldraw(bricks, shape, layer_units, title: str = "Claude brick model") -> s
     if isinstance(layer_units, str):
         layer_units = [layer_units] * layers
     bottoms = np.concatenate([[0], np.cumsum([UNITS[u]["ldu"] for u in layer_units])])
-    safe_title = re.sub(r"[\r\n]+", " ", title).strip()[:120] or "Claude brick model"
-    lines = [f"0 {safe_title}", "0 Name: claude-model.ldr", "0 Author: BrickBuilder AI with Claude"]
+    safe_title = re.sub(r"[\r\n]+", " ", title).strip()[:120] or "Brick model"
+    lines = [f"0 {safe_title}", "0 Name: llm-model.ldr", "0 Author: BrickBuilder AI"]
     by_brick = {Brick(h=fx, w=fz, x=x0, y=z0, z=layer, color=color): (color, x0, z0, layer, fx, fz)
                 for color, x0, z0, layer, fx, fz in bricks}
     ordered, _ = reorder_bricks_for_stability(list(by_brick), (width, depth, layers))

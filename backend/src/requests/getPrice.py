@@ -230,10 +230,11 @@ async def get_price(request: GetPriceRequest, auth_info: dict) -> GetPriceRespon
             )
         
         # Calculate price
-        is_claude_direct_generation = generation.get("endpoint") == "claudeToBricks"
+        # Direct LLM generations (and older records from its former name) use flat per-piece pricing.
+        is_llm_direct_generation = generation.get("endpoint") in ("llmToBricks", "claudeToBricks")
         base_price, parts_breakdown = calculate_price(
             parts_dict,
-            unit_price_override=DEFAULT_PART_PRICE if is_claude_direct_generation else None,
+            unit_price_override=DEFAULT_PART_PRICE if is_llm_direct_generation else None,
         )
         total_parts = sum(parts_dict.values())
         unique_part_types = len(parts_dict)
@@ -242,13 +243,13 @@ async def get_price(request: GetPriceRequest, auth_info: dict) -> GetPriceRespon
         # Existing generation paths retain the catalog pricing and margin.
         total_price = (
             base_price
-            if is_claude_direct_generation
+            if is_llm_direct_generation
             else round(base_price * (1 + MARGIN_UPSALE_PERCENTAGE), 2)
         )
         
         pricing_label = (
             "$0.10 flat per piece"
-            if is_claude_direct_generation
+            if is_llm_direct_generation
             else f"catalog price + {MARGIN_UPSALE_PERCENTAGE*100}% margin"
         )
         logger.info(

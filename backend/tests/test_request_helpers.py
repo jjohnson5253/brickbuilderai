@@ -39,11 +39,12 @@ def test_calculate_price_can_apply_flat_ten_cent_claude_pricing():
     assert all(detail.unit_price == 0.10 for detail in details)
 
 
-def test_get_price_uses_flat_ten_cent_total_for_claude_generations(monkeypatch):
+@pytest.mark.parametrize("endpoint", ["llmToBricks", "claudeToBricks"])
+def test_get_price_uses_flat_ten_cent_total_for_llm_generations(monkeypatch, endpoint):
     class FakeStorage:
         async def get_generation(self, _generation_id):
             return {
-                "endpoint": "claudeToBricks",
+                "endpoint": endpoint,
                 "parts_list_csv_url": "https://example.com/parts.csv",
             }
 
