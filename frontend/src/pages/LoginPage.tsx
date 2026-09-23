@@ -5,25 +5,41 @@ import FallingBricks from "../components/FallingBricks";
 import { Mail } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { SiteFooter } from "../components/SiteFooter";
+import {
+  AuthMethod,
+  trackAuthMethodSelected,
+  trackPasswordLoginSubmitted,
+} from "../utils/authAnalytics";
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const fromState = (location.state as { from?: string } | null)?.from;
   const redirectTo = fromState && fromState.startsWith("/") ? fromState : "/dashboard";
-  const { signInWithGoogle, signInWithOtp, verifyOtp } = useAuth();
+  const { signIn, signInWithGoogle, signInWithOtp, verifyOtp } = useAuth();
   const [email, setEmail] = useState("");
   const [otpCode, setOtpCode] = useState("");
+  const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [otpSent, setOtpSent] = useState(false);
+  const [authMethod, setAuthMethod] = useState<AuthMethod>("magic_link");
 
   useEffect(() => {
     console.log("LoginPage v6: OTP only, no password");
     const saved = localStorage.getItem("remember_email");
     if (saved) setEmail(saved);
   }, []);
+
+  const selectAuthMethod = (method: AuthMethod) => {
+    setAuthMethod(method);
+    setError(null);
+    setOtpCode("");
+    setOtpSent(false);
+    setPassword("");
+    trackAuthMethodSelected("login_page", method);
+  };
 
   const handleGetCode = async (e: FormEvent) => {
     e.preventDefault();
@@ -71,6 +87,35 @@ export default function LoginPage() {
     }
   };
 
+  const handlePasswordSignIn = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!email.trim()) {
+      setError("Please enter your email.");
+      return;
+    }
+    if (!password.trim()) {
+      setError("Please enter your password.");
+      return;
+    }
+    try {
+      setLoading(true);
+      trackPasswordLoginSubmitted("login_page");
+      const { error: authError } = await signIn(email, password);
+      if (authError) {
+        setError(authError.message);
+        return;
+      }
+      if (remember) localStorage.setItem("remember_email", email);
+      else localStorage.removeItem("remember_email");
+      navigate(redirectTo);
+    } catch {
+      setError("Password sign-in failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     setError(null);
     const { error: authError } = await signInWithGoogle(redirectTo);
@@ -101,11 +146,15 @@ export default function LoginPage() {
         <main style={{ border: "1px solid #e5e7eb", borderRadius: 16, background: "#fff", padding: 24, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
           <h1 className="text-2xl font-extrabold">Welcome!</h1>
           <p className="mt-1 text-sm text-slate-600">
-            {otpSent ? "Enter the code we sent to your email." : "Enter your email to start building."}
+            {otpSent
+              ? "Check your email for a magic link or enter the code we sent."
+              : authMethod === "password"
+                ? "Use your email and password to sign in."
+                : "Enter email to login or sign-up."}
           </p>
 
           {/* Email Entry Form */}
-          {!otpSent && (
+          {!otpSent && authMethod === "magic_link" && (
             <form onSubmit={handleGetCode} className="mt-5 space-y-4">
               {/* Email */}
               <div>
@@ -136,7 +185,74 @@ export default function LoginPage() {
                     : 'bg-[#f44336] hover:bg-[#ff6b6b] cursor-pointer'
                 }`}
               >
-                {loading ? "Sending..." : "Get Code"}
+                {loading ? "Sending..." : "Continue with magic link"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => selectAuthMethod("password")}
+                className="block w-full text-center text-sm text-slate-500 transition-colors hover:text-slate-700 hover:underline"
+              >
+                Use password
+              </button>
+
+              {error && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+              )}
+            </form>
+          )}
+
+          {!otpSent && authMethod === "password" && (
+            <form onSubmit={handlePasswordSignIn} className="mt-5 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                <div className="relative">
+                  <Mail className="absolute h-4 w-4 text-slate-400" style={{ left: 10, top: "50%", transform: "translateY(-50%)" }} />
+                  <input
+                    type="email"
+                    autoFocus
+                    autoComplete="email"
+                    placeholder="yours@example.com"
+                    className="input h-11 rounded-lg border-slate-300"
+                    style={{ paddingLeft: 36 }}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="Enter your password"
+                  className="input h-11 rounded-lg border-slate-300"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full h-11 rounded-xl text-white font-semibold transition-colors ${
+                  loading 
+                    ? 'bg-red-300 cursor-not-allowed' 
+                    : 'bg-[#f44336] hover:bg-[#ff6b6b] cursor-pointer'
+                }`}
+              >
+                {loading ? "Signing in..." : "Sign in with password"}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => selectAuthMethod("magic_link")}
+                className="block w-full text-center text-sm text-slate-500 transition-colors hover:text-slate-700 hover:underline"
+              >
+                Use magic link instead
               </button>
 
               {error && (
