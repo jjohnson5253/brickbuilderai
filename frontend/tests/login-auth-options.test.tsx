@@ -89,9 +89,13 @@ function changeInput(input: HTMLInputElement, value: string) {
 
 describe('login auth options', () => {
   beforeEach(() => {
+    auth.signIn.mockReset();
     auth.signIn.mockResolvedValue({ error: null });
+    auth.signInWithGoogle.mockReset();
     auth.signInWithGoogle.mockResolvedValue({ error: null });
+    auth.signInWithOtp.mockReset();
     auth.signInWithOtp.mockResolvedValue({ error: null });
+    auth.verifyOtp.mockReset();
     auth.verifyOtp.mockResolvedValue({ error: null });
     navigate.mockReset();
     vi.mocked(posthog.capture).mockClear();
@@ -196,6 +200,54 @@ describe('login auth options', () => {
       });
     } finally {
       unmount();
+    }
+  });
+
+  it('passes redirect targets into magic link requests', async () => {
+    const modalRender = renderIntoBody(
+      <LoginModal open onClose={() => undefined} redirectTo="/community" />,
+    );
+
+    try {
+      changeInput(
+        modalRender.container.querySelector('input[type="email"]') as HTMLInputElement,
+        'modal@example.com',
+      );
+
+      await act(async () => {
+        (modalRender.container.querySelector('form') as HTMLFormElement).dispatchEvent(
+          new Event('submit', { bubbles: true, cancelable: true }),
+        );
+      });
+
+      expect(auth.signInWithOtp).toHaveBeenCalledWith('modal@example.com', '/community');
+    } finally {
+      modalRender.unmount();
+    }
+
+    auth.signInWithOtp.mockClear();
+
+    const pageRender = renderIntoBody(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>,
+    );
+
+    try {
+      changeInput(
+        pageRender.container.querySelector('input[type="email"]') as HTMLInputElement,
+        'page@example.com',
+      );
+
+      await act(async () => {
+        (pageRender.container.querySelector('form') as HTMLFormElement).dispatchEvent(
+          new Event('submit', { bubbles: true, cancelable: true }),
+        );
+      });
+
+      expect(auth.signInWithOtp).toHaveBeenCalledWith('page@example.com', '/dashboard');
+    } finally {
+      pageRender.unmount();
     }
   });
 });

@@ -111,7 +111,10 @@ export default function LoginModal({
     }
     try {
       setLoading(true);
-      const { error: authError } = await signInWithOtp(email);
+      const target = redirectTo && redirectTo.startsWith("/")
+        ? redirectTo
+        : window.location.pathname + window.location.search;
+      const { error: authError } = await signInWithOtp(email, target);
       if (authError) {
         setError(authError.message);
         return;
