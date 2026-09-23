@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import posthog from 'posthog-js';
 import {
   captureMobileShellAnalytics,
+  getNativeMobileShellInfo,
   isNativeMobileShell,
+  notifyMobileChangeRequestAccess,
 } from '../src/utils/mobileShellAnalytics';
 
 vi.mock('posthog-js', () => ({
@@ -16,6 +18,7 @@ describe('mobile shell analytics', () => {
   beforeEach(() => {
     vi.mocked(posthog.capture).mockClear();
     delete window.__BRICKBUILDER_NATIVE_APP__;
+    delete window.ReactNativeWebView;
   });
 
   it('recognizes the validated native shell marker', () => {
@@ -27,6 +30,27 @@ describe('mobile shell analytics', () => {
     });
 
     expect(isNativeMobileShell()).toBe(true);
+  });
+
+  it('validates feedback-build context and notifies the native bridge', () => {
+    const postMessage = vi.fn();
+    window.__BRICKBUILDER_NATIVE_APP__ = Object.freeze({
+      platform: 'ios',
+      version: '0.1.0',
+      changeRequest: {
+        requestId: 'request-1',
+        branch: 'copilot/change-request-1',
+        sha: '0123456789abcdef',
+      },
+    });
+    window.ReactNativeWebView = { postMessage };
+
+    expect(getNativeMobileShellInfo()?.changeRequest?.requestId).toBe('request-1');
+    notifyMobileChangeRequestAccess(true);
+    expect(postMessage).toHaveBeenCalledWith(JSON.stringify({
+      type: 'brickbuilder:change-request-access',
+      enabled: true,
+    }));
   });
 
   it('captures allow-listed native shell interactions', () => {
@@ -51,5 +75,15 @@ describe('mobile shell analytics', () => {
       }),
     ).toBe(false);
     expect(posthog.capture).not.toHaveBeenCalled();
+  });
+
+  it('captures the native change-request button', () => {
+    expect(captureMobileShellAnalytics({
+      eventName: 'mobile_shell_change_request_clicked',
+    })).toBe(true);
+    expect(posthog.capture).toHaveBeenCalledWith(
+      'mobile_shell_change_request_clicked',
+      {},
+    );
   });
 });

@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  isChangeBranch, parseGitHubAgentCompletion, parseGitHubVercelPreview,
-  previewAuthLink, previewEmailMessage, taskBranchName, taskPullNumber, validateChange,
+  isChangeBranch, matchesChangePreview, parseGitHubAgentCompletion,
+  parseGitHubVercelPreview, parseTestFlightReady, previewAuthLink,
+  previewEmailMessage, taskBranchName, taskPullNumber, testFlightEmailMessage,
+  validateChange,
 } from '../../supabase/functions/_shared/change-request-spec.js';
 import { storedScreenshotPaths } from '../../supabase/functions/_shared/change-request-storage.js';
 import emailAllowlistMigration from '../../supabase/migrations/20260921000001_add_feedback_email_allowlist.sql?raw';
+import mobileMigration from '../../supabase/migrations/20260923000001_add_mobile_change_request_builds.sql?raw';
+import deliveryWorkflow from '../../.github/workflows/change-request-vercel-preview.yml?raw';
 
 describe('change request Edge contract', () => {
   it('validates product text, image limits, and work branches', () => {
@@ -20,6 +24,24 @@ describe('change request Edge contract', () => {
     const event = { action: 'vercel_preview', sha: 'A'.repeat(40), url: 'https://branch.vercel.app/path' };
     expect(parseGitHubVercelPreview(event)).toEqual({ sha: 'a'.repeat(40), url: 'https://branch.vercel.app' });
     expect(parseGitHubVercelPreview({ ...event, url: 'https://vercel.app.evil.test' })).toBeNull();
+  });
+
+  it('accepts only exact Expo TestFlight-ready events', () => {
+    const event = {
+      action: 'testflight_ready',
+      pr_number: 42,
+      sha: 'A'.repeat(40),
+      build_url: 'https://expo.dev/accounts/brickbuilder/projects/app/builds/build-1',
+    };
+    expect(parseTestFlightReady(event)).toEqual({
+      prNumber: 42,
+      sha: 'a'.repeat(40),
+      buildUrl: event.build_url,
+    });
+    expect(parseTestFlightReady({
+      ...event,
+      build_url: 'https://expo.dev.evil.test/builds/build-1',
+    })).toBeNull();
   });
 
   it('requires and embeds a Supabase magic-link token', () => {
@@ -41,6 +63,32 @@ describe('change request Edge contract', () => {
     expect(() => previewEmailMessage('https://branch.vercel.app', {
       title: 'Unsafe link', html_url: 'https://example.com/pull/42', head: { ref: 'copilot/change' },
     })).toThrow('usable pull request link');
+  });
+
+  it('builds a validated TestFlight delivery email', () => {
+    const message = testFlightEmailMessage(
+      'https://testflight.apple.com/join/BrickBuilder',
+      'https://expo.dev/accounts/brickbuilder/projects/app/builds/build-1',
+      {
+        title: 'Adjust the iPhone editor',
+        html_url: 'https://github.com/example/app/pull/42',
+        head: { ref: 'copilot/iphone-editor' },
+      },
+    );
+    expect(message.subject).toContain('Adjust the iPhone editor');
+    expect(message.lines[0]).toContain('testflight.apple.com/join/BrickBuilder');
+    expect(() => testFlightEmailMessage(
+      'https://testflight.apple.com.evil.test/join/fake',
+      'https://expo.dev/builds/build-1',
+      { title: 'Unsafe', html_url: 'https://github.com/example/app/pull/42', head: { ref: 'copilot/change' } },
+    )).toThrow('not usable');
+  });
+
+  it('allows exact-SHA approval from a native build without a browser origin', () => {
+    const sha = 'a'.repeat(40);
+    expect(matchesChangePreview({
+      branch: 'copilot/iphone-editor', notified_sha: sha,
+    }, 'copilot/iphone-editor', sha, '')).toBe(true);
   });
 
   it('uses GitHub-owned task artifacts and validates Copilot completion', () => {
@@ -71,5 +119,14 @@ describe('change request Edge contract', () => {
       'revoke all on public.change_request_email_access from anon, authenticated',
     );
     expect(emailAllowlistMigration).toContain('email = lower(trim(email))');
+  });
+
+  it('adds iOS build state and an exact-commit EAS delivery workflow', () => {
+    expect(mobileMigration).toContain("check (target in ('web', 'ios'))");
+    expect(mobileMigration).toContain("'building'");
+    expect(deliveryWorkflow).toContain('EXPO_PUBLIC_CHANGE_REQUEST_ID');
+    expect(deliveryWorkflow).toContain('EXPO_PUBLIC_WEB_APP_URL');
+    expect(deliveryWorkflow).toContain('eas build --platform ios --profile feedback');
+    expect(deliveryWorkflow).toContain("'{action: \"testflight_ready\"");
   });
 });

@@ -33,11 +33,20 @@ request branch.
    into `staging`, opens or reuses a `staging` to `main` PR, and emails that PR.
    It never merges `main`.
 
+For requests submitted from the Expo shell, the same form sends `target=ios`.
+After Copilot finishes, the workflow waits for the Vercel deployment of that
+exact commit, injects its URL and signed request context into an EAS `feedback`
+build, submits the build to an internal TestFlight group, and waits for Apple
+to mark it available. Supabase then emails the requester the TestFlight and EAS
+links. Approval or a revision request from that build must match its embedded
+branch and commit SHA. Web requests continue to use the Vercel email flow.
+
 ## Setup
 
 1. Link the Supabase CLI to project `smzdytfghwslpbqnwdov`, then apply
    `20260921000000_add_feedback_agent_flow.sql` and
-   `20260921000001_add_feedback_email_allowlist.sql`.
+   `20260921000001_add_feedback_email_allowlist.sql`, then
+   `20260923000001_add_mobile_change_request_builds.sql`.
 2. Deploy only the new function:
 
    ```bash
@@ -53,9 +62,13 @@ request branch.
    - `CHANGE_REQUEST_GITHUB_EVENT_SECRET`: a new random value shared with GitHub Actions.
    - `RESEND_API_KEY`
    - `EMAIL_FROM`, for example `BrickBuilder <noreply@brickbuilder.ai>`.
+   - `CHANGE_REQUEST_TESTFLIGHT_URL`, for example the public TestFlight join
+     URL for App Store Connect app `6815050463`.
 
 4. Add the same `CHANGE_REQUEST_GITHUB_EVENT_SECRET` value as a GitHub Actions
-   repository secret. Keep the Vercel GitHub integration enabled. Leave the
+   repository secret. Add an `EXPO_TOKEN` repository secret and a
+   `TESTFLIGHT_GROUP` repository variable containing the App Store Connect
+   internal group name. Keep the Vercel GitHub integration enabled. Leave the
    repository variable `CHANGE_REQUEST_FLOW_ENABLED` unset until all setup is
    complete; this keeps deployment events from failing during installation.
 5. Grant an existing Supabase Auth user access with privileged SQL:
@@ -76,7 +89,7 @@ request branch.
 ## Required deployment order
 
 Merge the feature into `staging`, promote `staging` through a PR to `main`,
-apply the migration, deploy the Edge Function, set both copies of the shared
-event secret, grant users access, and enable the repository variable last. A
-workflow on a non-default branch does not reliably receive every repository
+apply the migrations, deploy the Edge Function, set the Supabase and GitHub
+secrets/variables, grant users access, and enable the repository variable last.
+A workflow on a non-default branch does not reliably receive every repository
 event, so the GitHub workflow must reach `main` before end-to-end testing.

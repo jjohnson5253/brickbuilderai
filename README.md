@@ -148,8 +148,10 @@ Authorized admins can submit a product change and screenshots in the app. A
 Supabase Edge Function starts a Copilot task from `staging`; GitHub's
 `copilot_work_finished` event and Vercel's successful Preview deployment are
 joined by commit SHA before the requester receives an authenticated preview
-link. Approval merges the feature PR into `staging` and leaves a `staging` to
-`main` PR for human review. See
+link. Requests made in the iOS shell reuse the same flow, then create an
+exact-commit EAS build, deliver it through TestFlight, and email the requester
+when Apple marks it ready. Approval merges the feature PR into `staging` and
+leaves a `staging` to `main` PR for human review. See
 [the setup and architecture guide](docs/feedback-agent-flow.md).
 
 ![Feedback agent and admin flow](docs/assets/feedback-agent-loop.png)

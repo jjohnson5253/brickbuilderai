@@ -2,15 +2,29 @@ import posthog from 'posthog-js';
 
 export const MOBILE_SHELL_ANALYTICS_EVENT =
   'brickbuilder:mobile-shell-analytics';
+export const CHANGE_REQUEST_ACCESS_MESSAGE =
+  'brickbuilder:change-request-access';
+export const OPEN_CHANGE_REQUEST_EVENT =
+  'brickbuilder:open-change-request';
 
-type NativeMobileShellInfo = Readonly<{
+export type NativeMobileChangeRequestContext = Readonly<{
+  requestId: string;
+  branch: string;
+  sha: string;
+}>;
+
+export type NativeMobileShellInfo = Readonly<{
   platform: 'ios' | 'android';
   version: string;
+  changeRequest?: NativeMobileChangeRequestContext;
 }>;
 
 declare global {
   interface Window {
     __BRICKBUILDER_NATIVE_APP__?: NativeMobileShellInfo;
+    ReactNativeWebView?: {
+      postMessage: (message: string) => void;
+    };
   }
 }
 
@@ -20,6 +34,7 @@ const ALLOWED_EVENT_NAMES = new Set([
   'mobile_shell_back_clicked',
   'mobile_shell_reload_clicked',
   'mobile_shell_external_link_opened',
+  'mobile_shell_change_request_clicked',
 ]);
 
 type AnalyticsProperty = string | number | boolean | null;
@@ -29,15 +44,37 @@ type MobileShellEventDetail = {
   properties?: Record<string, unknown>;
 };
 
-export function isNativeMobileShell(): boolean {
-  if (typeof window === 'undefined') return false;
+function isChangeRequestContext(value: unknown): value is NativeMobileChangeRequestContext {
+  if (!value || typeof value !== 'object') return false;
+  const context = value as Record<string, unknown>;
+  return typeof context.requestId === 'string' &&
+    typeof context.branch === 'string' &&
+    typeof context.sha === 'string';
+}
+
+export function getNativeMobileShellInfo(): NativeMobileShellInfo | null {
+  if (typeof window === 'undefined') return null;
 
   const shellInfo = window.__BRICKBUILDER_NATIVE_APP__;
-  return Boolean(
-    shellInfo &&
-      (shellInfo.platform === 'ios' || shellInfo.platform === 'android') &&
-      typeof shellInfo.version === 'string',
-  );
+  if (!shellInfo ||
+    (shellInfo.platform !== 'ios' && shellInfo.platform !== 'android') ||
+    typeof shellInfo.version !== 'string' ||
+    (shellInfo.changeRequest !== undefined && !isChangeRequestContext(shellInfo.changeRequest))) {
+    return null;
+  }
+  return shellInfo;
+}
+
+export function isNativeMobileShell(): boolean {
+  return getNativeMobileShellInfo() !== null;
+}
+
+export function notifyMobileChangeRequestAccess(enabled: boolean): void {
+  if (!isNativeMobileShell()) return;
+  window.ReactNativeWebView?.postMessage(JSON.stringify({
+    type: CHANGE_REQUEST_ACCESS_MESSAGE,
+    enabled,
+  }));
 }
 
 function isEventDetail(value: unknown): value is MobileShellEventDetail {
