@@ -158,7 +158,9 @@ export function matchesChangePreview(row, branch, deploymentSha, origin) {
 }
 
 export function taskPullNumber(task) {
-  const id = task?.artifacts?.find((a) => a.provider === 'github' && a.type === 'pull')?.data?.id;
+  const id = task?.artifacts?.find((artifact) => artifact?.provider === 'github'
+    && (artifact.type === 'pull'
+      || (artifact.type === 'github_resource' && artifact.data?.type === 'pull')))?.data?.id;
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
