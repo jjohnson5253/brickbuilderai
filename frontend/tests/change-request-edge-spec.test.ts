@@ -93,6 +93,12 @@ describe('change request Edge contract', () => {
 
   it('uses GitHub-owned task artifacts and validates Copilot completion', () => {
     expect(taskPullNumber({ artifacts: [{ provider: 'github', type: 'pull', data: { id: 42 } }] })).toBe(42);
+    expect(taskPullNumber({ artifacts: [{
+      provider: 'github', type: 'github_resource', data: { type: 'pull', id: 9001, state: 'draft' },
+    }] })).toBe(9001);
+    expect(taskPullNumber({ artifacts: [{
+      provider: 'github', type: 'github_resource', data: { type: 'issue', id: 9001 },
+    }] })).toBeNull();
     expect(taskBranchName({ artifacts: [{
       provider: 'github', type: 'branch', data: { base_ref: 'staging', head_ref: 'copilot/change' },
     }] })).toBe('copilot/change');
