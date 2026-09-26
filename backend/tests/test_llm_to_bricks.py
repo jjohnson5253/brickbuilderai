@@ -203,6 +203,12 @@ def test_generate_ldr_returns_design_voxels_in_design_mode_and_none_in_direct_mo
     assert asyncio.run(module._generate_ldr(request)).voxels_xyzrgb is None
 
 
+def test_validate_llm_design_rejects_base_color():
+    with pytest.raises(module.DesignError, match="base_color is not allowed"):
+        module._validate_llm_design(BASE_PLATE_DESIGN)
+    assert module._validate_llm_design(GOOD_DESIGN) == GOOD_DESIGN
+
+
 def test_start_records_the_selected_model_and_llm_endpoint(monkeypatch):
     created = {}
 
