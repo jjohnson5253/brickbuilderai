@@ -105,6 +105,8 @@ export function GenerationMethodSelector({
   onLlmModelChange?: (value: string) => void;
 }) {
   const modelSelectId = "landing-render-model";
+  const imageToGlbLabelId = "landing-image-to-glb-label";
+  const imageToGlbDescriptionId = "landing-image-to-glb-description";
   const modelDescription = value === "3d"
     ? THREE_D_MODEL_OPTIONS.find((option) => option.id === threeDModel)?.description
     : GENERATION_METHOD_PRESETS.find((method) => method.value === value)?.description;
@@ -150,11 +152,16 @@ export function GenerationMethodSelector({
       style={{ zIndex: 25 }}
     >
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
-        <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
+        <span id={imageToGlbLabelId} className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
           <span className="sr-only">Image to GLB:</span>
           <span aria-hidden="true">image-to-glb:</span>
         </span>
-        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+        <div
+          className="flex w-full flex-wrap gap-2 sm:w-auto"
+          role="group"
+          aria-labelledby={imageToGlbLabelId}
+          aria-describedby={value === "3d" ? imageToGlbDescriptionId : undefined}
+        >
           {THREE_D_MODEL_OPTIONS.map((option) => {
             const active = value === "3d" && option.id === threeDModel;
             return (
@@ -177,7 +184,9 @@ export function GenerationMethodSelector({
           })}
         </div>
         {value === "3d" && (
-          <p className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-40">{threeDDescription}</p>
+          <p id={imageToGlbDescriptionId} className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-40">
+            {threeDDescription}
+          </p>
         )}
       </div>
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">

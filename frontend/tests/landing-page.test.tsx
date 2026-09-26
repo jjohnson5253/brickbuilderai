@@ -136,6 +136,8 @@ describe('LandingPage', () => {
     expect(markup).toContain('Generation method:');
     expect(markup).toContain('image-to-glb:');
     expect(markup).toMatch(/aria-pressed="true"[^>]*>Trellis/);
+    expect(markup).toContain('role="group"');
+    expect(markup).toContain('aria-describedby="landing-image-to-glb-description"');
     expect(markup).not.toContain('3D model:');
     expect(markup).not.toContain('LLM model:');
   });
@@ -212,6 +214,18 @@ describe('LandingPage', () => {
 
       onChange.mockClear();
       onThreeDModelChange.mockClear();
+      vi.mocked(capture).mockClear();
+
+      const sam3dButton = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'SAM3D',
+      );
+      act(() => {
+        sam3dButton?.click();
+      });
+      expect(onChange).not.toHaveBeenCalled();
+      expect(onThreeDModelChange).not.toHaveBeenCalled();
+      expect(capture).not.toHaveBeenCalled();
+
       vi.mocked(capture).mockClear();
 
       const activeThreeDButton = Array.from(container.querySelectorAll('button')).find(
