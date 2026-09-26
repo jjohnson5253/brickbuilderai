@@ -761,7 +761,8 @@ class GenerationStorage:
         self,
         limit: int = 10,
         status_filter: Optional[List[str]] = None,
-        offset: int = 0
+        offset: int = 0,
+        sort: str = "recent",
     ) -> list[Dict[str, Any]]:
         """
         Retrieve generations flagged as community (is_community = true)
@@ -782,9 +783,12 @@ class GenerationStorage:
             if status_filter:
                 query = query.in_("status", status_filter)
 
-            result = (query.order("created_at", desc=True)
-                     .range(offset, offset + limit - 1)
-                     .execute())
+            if sort == "top":
+                query = query.order("like_count", desc=True).order("created_at", desc=True)
+            else:
+                query = query.order("created_at", desc=True)
+
+            result = (query.range(offset, offset + limit - 1).execute())
 
             return result.data or []
 
