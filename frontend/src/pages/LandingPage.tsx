@@ -204,7 +204,6 @@ export function GenerationMethodSelector({
               <option
                 key={option.id}
                 value={option.id}
-                aria-label={`${IMAGE_TO_GLB_GROUP_LABEL} ${option.label}`}
               >
                 {option.label}
               </option>
@@ -216,7 +215,6 @@ export function GenerationMethodSelector({
                 <option
                   key={option.id}
                   value={option.id}
-                  aria-label={`${group.label} ${option.label}`}
                 >
                   {option.label}
                 </option>
