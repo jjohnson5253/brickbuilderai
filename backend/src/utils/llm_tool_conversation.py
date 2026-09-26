@@ -88,7 +88,7 @@ async def post_json(client: httpx.AsyncClient, url: str, headers: Dict[str, str]
 
 
 async def post_stream_json(client, url, headers, payload, provider, on_text):
-    """Reassemble a provider response while forwarding only visible output text."""
+    """Reassemble tools while forwarding text and Claude's exposed thinking deltas."""
     content = []
     tool_json = {}
     result = {}
@@ -132,8 +132,8 @@ async def post_stream_json(client, url, headers, payload, provider, on_text):
                         field = {"text_delta": "text", "thinking_delta": "thinking", "signature_delta": "signature"}.get(delta_type)
                         if field:
                             content[index][field] = content[index].get(field, "") + delta.get(field, "")
-                            if field == "text":
-                                await on_text(delta.get("text", ""))
+                            if field in {"text", "thinking"}:
+                                await on_text(delta.get(field, ""))
                 elif kind == "content_block_stop" and event["index"] in tool_json:
                     index = event["index"]
                     content[index]["input"] = json.loads(tool_json[index] or "{}")

@@ -125,7 +125,7 @@ def test_unknown_provider_is_rejected():
 
 
 @pytest.mark.parametrize('provider', ['Anthropic', 'OpenAI'])
-def test_streaming_visible_text_reassembles_tools_without_exposing_reasoning(provider, monkeypatch):
+def test_streaming_text_and_claude_thinking_reassemble_tools_without_signatures(provider, monkeypatch):
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
     monkeypatch.setenv('OPENAI_API_KEY', 'test')
     if provider == 'Anthropic':
@@ -133,7 +133,7 @@ def test_streaming_visible_text_reassembles_tools_without_exposing_reasoning(pro
             {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
             {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'Building'}},
             {'type': 'content_block_start', 'index': 1, 'content_block': {'type': 'thinking', 'thinking': ''}},
-            {'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'thinking_delta', 'thinking': 'private'}},
+            {'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'thinking_delta', 'thinking': 'Planning a sturdy base'}},
             {'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'signature_delta', 'signature': 'signature'}},
             {'type': 'content_block_start', 'index': 2, 'content_block': {'type': 'tool_use', 'id': 't1', 'name': 'submit', 'input': {}}},
             {'type': 'content_block_delta', 'index': 2, 'delta': {'type': 'input_json_delta', 'partial_json': '{"grid":'}},
@@ -165,7 +165,9 @@ def test_streaming_visible_text_reassembles_tools_without_exposing_reasoning(pro
             assert turn.tool_calls[0].input == {'grid': 1}
             assert 'Building' in ''.join(chunks)
             assert 'private' not in ''.join(chunks)
+            assert 'signature' not in ''.join(chunks)
             if provider == 'Anthropic':
+                assert 'Planning a sturdy base' in ''.join(chunks)
                 assert conversation.messages[-1]['content'][1]['signature'] == 'signature'
     asyncio.run(run())
 
@@ -177,4 +179,34 @@ def test_truncated_provider_stream_is_not_accepted_as_success():
             with pytest.raises(HTTPException, match='ended before completion'):
                 await module.post_stream_json(client, 'https://example.com', {}, {}, 'Anthropic', AsyncMock())
     from unittest.mock import AsyncMock
+    asyncio.run(run())
+
+
+def test_claude_thinking_is_forwarded_before_the_response_finishes(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    async def run():
+        received = asyncio.Event()
+        finish = asyncio.Event()
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for event in [
+                    {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'thinking', 'thinking': ''}},
+                    {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'thinking_delta', 'thinking': 'Planning the firetruck'}},
+                ]:
+                    yield ('data: ' + json.dumps(event) + '\n\n').encode()
+                await finish.wait()
+                yield b'data: {"type":"message_stop"}\n\n'
+        async def on_text(text):
+            if 'Planning the firetruck' in text:
+                received.set()
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=Stream()))
+        async with httpx.AsyncClient(transport=transport) as client:
+            conversation = AnthropicToolConversation(client, SETTINGS, USER)
+            task = asyncio.create_task(conversation.send_stream(on_text))
+            try:
+                await asyncio.wait_for(received.wait(), 1)
+                assert not task.done()
+            finally:
+                finish.set()
+                await task
     asyncio.run(run())

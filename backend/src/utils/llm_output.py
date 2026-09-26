@@ -1,8 +1,8 @@
 """Replayable output snapshots shared by background jobs and SSE observers.
 
 Uses the existing generation storage bucket, so reconnects and other workers
-can read the output without a database schema change. Only visible model text
-is recorded; provider reasoning blocks and signatures stay in the conversation.
+can read the output without a database schema change. Text and Claude's exposed
+thinking deltas are recorded; signatures and redacted blocks are never published.
 """
 import asyncio
 import json
