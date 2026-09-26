@@ -83,6 +83,16 @@ it('recovers a job that completed while the page was closed', async () => {
   expect(container.querySelector('img')?.getAttribute('src')).toBe('https://example.com/model-preview.png');
 });
 
+it('keeps a restored preview image while the generation is still active', async () => {
+  vi.spyOn(GetUserGenerationsApiService, 'getProcessingGenerations').mockResolvedValue([job('saved')] as never);
+  localStorage.setItem('pending_generations:user', JSON.stringify([
+    { ...job('saved'), imageUrl: 'https://example.com/source.png' },
+  ]));
+  await act(async () => root.render(<Harness />));
+  expect(container.textContent).toContain('Build saved');
+  expect(container.querySelector('img')?.getAttribute('src')).toBe('https://example.com/source.png');
+});
+
 it('keeps submitted jobs during refresh, retries network errors, and cancels on unmount', async () => {
   let finish!: (rows: never[]) => void;
   const fetchJobs = vi.spyOn(GetUserGenerationsApiService, 'getProcessingGenerations')

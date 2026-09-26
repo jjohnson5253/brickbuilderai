@@ -72,9 +72,10 @@ export function useGenerationActivity(owner: string, authToken: string | undefin
             errorMessage: status.error_message || undefined };
         }));
         if (controller.signal.aborted) return;
+        const existing = new Map(rows.current.map(row => [row.id, row]));
         const updates = new Map<string, GenerationActivity>(active.map(row => [row.id, {
           id: row.id, prompt: row.prompt, status: row.status, endpoint: row.endpoint,
-          imageUrl: row.preview_image_url || row.processed_image_url || row.external_image_url,
+          imageUrl: row.preview_image_url || row.processed_image_url || row.external_image_url || existing.get(row.id)?.imageUrl,
         }]));
         for (const result of settled) {
           if (result.status === 'fulfilled') updates.set(result.value.id, result.value);
