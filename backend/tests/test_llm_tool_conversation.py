@@ -1,5 +1,6 @@
 import asyncio
 import json
+import httpx
 
 import pytest
 from fastapi import HTTPException
@@ -121,3 +122,91 @@ def test_missing_api_key_is_a_503(monkeypatch, provider, env):
 def test_unknown_provider_is_rejected():
     with pytest.raises(ValueError, match="Unsupported"):
         create_conversation("other", None, SETTINGS, USER)
+
+
+@pytest.mark.parametrize('provider', ['Anthropic', 'OpenAI'])
+def test_streaming_text_and_claude_thinking_reassemble_tools_without_signatures(provider, monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    if provider == 'Anthropic':
+        events = [
+            {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+            {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'Building'}},
+            {'type': 'content_block_start', 'index': 1, 'content_block': {'type': 'thinking', 'thinking': ''}},
+            {'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'thinking_delta', 'thinking': 'Planning a sturdy base'}},
+            {'type': 'content_block_delta', 'index': 1, 'delta': {'type': 'signature_delta', 'signature': 'signature'}},
+            {'type': 'content_block_start', 'index': 2, 'content_block': {'type': 'tool_use', 'id': 't1', 'name': 'submit', 'input': {}}},
+            {'type': 'content_block_delta', 'index': 2, 'delta': {'type': 'input_json_delta', 'partial_json': '{"grid":'}},
+            {'type': 'content_block_delta', 'index': 2, 'delta': {'type': 'input_json_delta', 'partial_json': '1}'}},
+            {'type': 'content_block_stop', 'index': 2},
+            {'type': 'message_delta', 'delta': {'stop_reason': 'tool_use'}},
+            {'type': 'message_stop'},
+        ]
+    else:
+        events = [
+            {'type': 'response.output_text.delta', 'delta': 'Building'},
+            {'type': 'response.reasoning_text.delta', 'delta': 'private'},
+            {'type': 'response.completed', 'response': {'id': 'r1', 'status': 'completed', 'output': [
+                {'type': 'message', 'content': [{'type': 'output_text', 'text': 'Building'}]},
+                {'type': 'function_call', 'call_id': 't1', 'name': 'submit', 'arguments': '{"grid":1}'},
+            ]}},
+        ]
+    async def run():
+        chunks = []
+        async def on_text(text):
+            chunks.append(text)
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, text=''.join(
+            'data: ' + json.dumps(event) + '\n\n' for event in events)))
+        async with httpx.AsyncClient(transport=transport) as client:
+            cls = AnthropicToolConversation if provider == 'Anthropic' else OpenAIToolConversation
+            conversation = cls(client, SETTINGS, USER)
+            turn = await conversation.send_stream(on_text)
+            assert turn.text == 'Building'
+            assert turn.tool_calls[0].input == {'grid': 1}
+            assert 'Building' in ''.join(chunks)
+            assert 'private' not in ''.join(chunks)
+            assert 'signature' not in ''.join(chunks)
+            if provider == 'Anthropic':
+                assert 'Planning a sturdy base' in ''.join(chunks)
+                assert conversation.messages[-1]['content'][1]['signature'] == 'signature'
+    asyncio.run(run())
+
+
+def test_truncated_provider_stream_is_not_accepted_as_success():
+    async def run():
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, text='data: {"type":"ping"}\n\n'))
+        async with httpx.AsyncClient(transport=transport) as client:
+            with pytest.raises(HTTPException, match='ended before completion'):
+                await module.post_stream_json(client, 'https://example.com', {}, {}, 'Anthropic', AsyncMock())
+    from unittest.mock import AsyncMock
+    asyncio.run(run())
+
+
+def test_claude_thinking_is_forwarded_before_the_response_finishes(monkeypatch):
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test')
+    async def run():
+        received = asyncio.Event()
+        finish = asyncio.Event()
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for event in [
+                    {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'thinking', 'thinking': ''}},
+                    {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'thinking_delta', 'thinking': 'Planning the firetruck'}},
+                ]:
+                    yield ('data: ' + json.dumps(event) + '\n\n').encode()
+                await finish.wait()
+                yield b'data: {"type":"message_stop"}\n\n'
+        async def on_text(text):
+            if 'Planning the firetruck' in text:
+                received.set()
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=Stream()))
+        async with httpx.AsyncClient(transport=transport) as client:
+            conversation = AnthropicToolConversation(client, SETTINGS, USER)
+            task = asyncio.create_task(conversation.send_stream(on_text))
+            try:
+                await asyncio.wait_for(received.wait(), 1)
+                assert not task.done()
+            finally:
+                finish.set()
+                await task
+    asyncio.run(run())

@@ -116,6 +116,29 @@ def test_llm_render_stream_endpoint_wraps_handler(monkeypatch):
     assert response.media_type == "text/event-stream"
 
 
+def test_llm_to_bricks_stream_endpoint_wraps_handler(monkeypatch):
+    expected_events = [
+        'data: {"type":"thinking","delta":"Planning"}\n\n',
+        'data: {"type":"result","data":{"generation_id":"generation-1"}}\n\n',
+    ]
+
+    async def events():
+        for event in expected_events:
+            yield event
+
+    handler = AsyncMock(return_value=events())
+    monkeypatch.setattr(api, "llm_to_bricks_stream", handler)
+
+    async def consume_response():
+        response = await api.llm_to_bricks_stream_endpoint("request", AUTH)
+        assert isinstance(response, StreamingResponse)
+        assert response.media_type == "text/event-stream"
+        return [event async for event in response.body_iterator]
+
+    assert asyncio.run(consume_response()) == expected_events
+    handler.assert_awaited_once_with("request", AUTH)
+
+
 def test_unprotected_one_argument_endpoints(monkeypatch):
     email_handler = AsyncMock(return_value="sent")
     webhook_handler = AsyncMock(return_value="accepted")
@@ -135,3 +158,25 @@ def test_health_and_fal_key_dependency(monkeypatch):
     assert exc_info.value.status_code == 503
     monkeypatch.setattr(api, "FAL_KEY", "configured")
     assert api.require_fal_key() is None
+
+
+def test_generation_output_endpoint_validates_job_before_streaming(monkeypatch):
+    from types import SimpleNamespace
+    from uuid import UUID
+
+    id = UUID('7c1326b2-890a-4fb8-9750-d3aa15cdc8e4')
+    storage = SimpleNamespace(get_generation=AsyncMock(return_value={'status': 'processing'}))
+    monkeypatch.setattr(api, 'generation_storage', storage)
+    async def events(generation_id):
+        assert generation_id == str(id)
+        yield 'data: {"type":"output","text":"Build","status":"processing"}\n\n'
+    monkeypatch.setattr(api, 'output_events', events)
+    async def run():
+        response = await api.generation_output_endpoint(id)
+        assert response.headers['x-accel-buffering'] == 'no'
+        return [event async for event in response.body_iterator]
+    assert len(asyncio.run(run())) == 1
+    storage.get_generation.return_value = None
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(api.generation_output_endpoint(id))
+    assert error.value.status_code == 404

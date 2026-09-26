@@ -13,7 +13,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence
 
 import httpx
 from fastapi import HTTPException
@@ -87,6 +87,71 @@ async def post_json(client: httpx.AsyncClient, url: str, headers: Dict[str, str]
         raise HTTPException(status_code=502, detail=f"{provider} request failed") from exc
 
 
+async def post_stream_json(client, url, headers, payload, provider, on_text):
+    """Reassemble tools while forwarding text and Claude's exposed thinking deltas."""
+    content = []
+    tool_json = {}
+    result = {}
+    completed = False
+    try:
+        async with client.stream("POST", url, headers=headers, json={**payload, "stream": True}) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line[5:].strip()
+                if not raw or raw == "[DONE]":
+                    continue
+                event = json.loads(raw)
+                kind = event.get("type")
+                if kind in {"error", "response.failed"}:
+                    raise HTTPException(status_code=502, detail=f"{provider} stream failed")
+                if provider == "OpenAI":
+                    if kind == "response.output_text.delta":
+                        await on_text(event.get("delta", ""))
+                    elif kind == "response.output_item.added" and event.get("item", {}).get("type") == "function_call":
+                        await on_text("\nPreparing the brick design…\n")
+                    elif kind in {"response.completed", "response.incomplete"}:
+                        result = event.get("response", {})
+                        completed = True
+                elif kind == "content_block_start":
+                    index = event["index"]
+                    while len(content) <= index:
+                        content.append({})
+                    content[index] = dict(event["content_block"])
+                    if content[index].get("type") == "tool_use":
+                        tool_json[index] = ""
+                        await on_text("\nPreparing the brick design…\n")
+                elif kind == "content_block_delta":
+                    index = event["index"]
+                    delta = event["delta"]
+                    delta_type = delta.get("type")
+                    if delta_type == "input_json_delta":
+                        tool_json[index] = tool_json.get(index, "") + delta.get("partial_json", "")
+                    else:
+                        field = {"text_delta": "text", "thinking_delta": "thinking", "signature_delta": "signature"}.get(delta_type)
+                        if field:
+                            content[index][field] = content[index].get(field, "") + delta.get(field, "")
+                            if field in {"text", "thinking"}:
+                                await on_text(delta.get(field, ""))
+                elif kind == "content_block_stop" and event["index"] in tool_json:
+                    index = event["index"]
+                    content[index]["input"] = json.loads(tool_json[index] or "{}")
+                elif kind == "message_delta":
+                    result.update(event.get("delta", {}))
+                elif kind == "message_stop":
+                    result["content"] = content
+                    completed = True
+        if not completed:
+            raise HTTPException(status_code=502, detail=f"{provider} stream ended before completion")
+        await on_text("\n\n")
+        return result
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail=f"{provider} request timed out") from exc
+    except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
+        raise HTTPException(status_code=502, detail=f"{provider} stream failed") from exc
+
+
 def _require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
@@ -100,6 +165,14 @@ class ToolConversation(ABC):
     def __init__(self, client: httpx.AsyncClient, settings: ConversationSettings):
         self.client = client
         self.settings = settings
+        self.on_text: Optional[Callable[[str], Awaitable[None]]] = None
+
+    async def send_stream(self, on_text: Callable[[str], Awaitable[None]]) -> Turn:
+        self.on_text = on_text
+        try:
+            return await self.send()
+        finally:
+            self.on_text = None
 
     @abstractmethod
     async def send(self) -> Turn: ...
@@ -148,7 +221,8 @@ class AnthropicToolConversation(ToolConversation):
         }
 
     async def send(self) -> Turn:
-        response = await post_json(self.client, ANTHROPIC_URL, self._headers, self.payload(), "Anthropic")
+        response = (await post_stream_json(self.client, ANTHROPIC_URL, self._headers, self.payload(), "Anthropic", self.on_text)
+                    if self.on_text else await post_json(self.client, ANTHROPIC_URL, self._headers, self.payload(), "Anthropic"))
         content = response.get("content", [])
         self.messages.append({"role": "assistant", "content": content})
         calls = [ToolCall(id=b.get("id", ""), name=b.get("name", ""),
@@ -209,7 +283,8 @@ class OpenAIToolConversation(ToolConversation):
         return payload
 
     async def send(self) -> Turn:
-        response = await post_json(self.client, OPENAI_URL, self._headers, self.payload(), "OpenAI")
+        response = (await post_stream_json(self.client, OPENAI_URL, self._headers, self.payload(), "OpenAI", self.on_text)
+                    if self.on_text else await post_json(self.client, OPENAI_URL, self._headers, self.payload(), "OpenAI"))
         self.pending = []
         self.previous_response_id = response.get("id")
         calls: List[ToolCall] = []

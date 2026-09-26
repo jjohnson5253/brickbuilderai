@@ -119,7 +119,7 @@ def test_background_task_stores_standard_generation_artifacts(monkeypatch, tmp_p
 
     voxels = "0 0 0 255 0 0\n3 1 0 255 0 0\n0 0 1 255 0 0\n"
 
-    async def fake_generate(_request):
+    async def fake_generate(_request, on_thinking=None):
         return module.LlmBuild(ldr=validate_ldr_content(VALID_PART), voxels_xyzrgb=voxels)
 
     async def fake_deduct(**_kwargs):
@@ -166,10 +166,10 @@ def test_voxel_extent_is_the_longest_axis():
 def test_generate_ldr_returns_design_voxels_in_design_mode_and_none_in_direct_mode(monkeypatch):
     result = module.build_design(GOOD_DESIGN)
 
-    async def fake_design(_request):
+    async def fake_design(_request, on_thinking=None):
         return result
 
-    async def fake_direct(_request):
+    async def fake_direct(_request, on_thinking=None):
         return validate_ldr_content(VALID_PART)
 
     monkeypatch.setattr(module, "_generate_ldr_with_design", fake_design)
@@ -239,6 +239,12 @@ class ScriptedConversation:
         self.sent += 1
         return self.turns[self.sent - 1]
 
+    async def send_stream(self, on_text):
+        turn = await self.send()
+        if turn.text:
+            await on_text(turn.text + "\n\n")
+        return turn
+
     def add_tool_results(self, results):
         self.tool_results.append(list(results))
 
@@ -286,6 +292,26 @@ def test_design_mode_feeds_build_errors_back_then_reviews_then_accepts(monkeypat
     assert "0 STEP" in validated
 
 
+def test_design_mode_streams_visible_thinking_text(monkeypatch):
+    conversation, _ = _scripted(monkeypatch, [
+        Turn(
+            text="I am blocking out the tower silhouette.",
+            tool_calls=[ToolCall("s1", "submit_brick_design", GOOD_DESIGN)],
+        ),
+        _call("accept_design", {}, "a1"),
+    ])
+    monkeypatch.setattr(module, "DESIGN_REVIEW_ROUNDS", 1)
+    notes = []
+
+    async def on_thinking(delta):
+        notes.append(delta)
+
+    asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a tower"), on_thinking))
+
+    assert conversation.sent == 2
+    assert notes == ["I am blocking out the tower silhouette.\n\n"]
+
+
 def test_design_mode_answers_every_tool_call_and_nudges_text_only_turns(monkeypatch):
     conversation, _ = _scripted(monkeypatch, [
         Turn(text="Here is my plan"),
@@ -329,3 +355,64 @@ def test_direct_mode_sends_audit_feedback_and_uses_the_corrected_model(monkeypat
     feedback = conversation.tool_results[0][0]
     assert feedback.call_id == "d1" and feedback.is_error and "overlap" in feedback.text
     assert ldr.count("3001.dat") == 1
+
+
+def test_direct_mode_streams_visible_thinking_text(monkeypatch):
+    _scripted(monkeypatch, [
+        Turn(
+            text="I'll use a single brick while I verify the placement.",
+            tool_calls=[ToolCall("d1", "submit_ldr_model", {"ldr_content": VALID_PART})],
+        ),
+    ])
+    notes = []
+
+    async def on_thinking(delta):
+        notes.append(delta)
+
+    asyncio.run(module._generate_ldr_direct(LlmToBricksRequest(prompt="brick"), on_thinking))
+
+    assert notes == ["I'll use a single brick while I verify the placement.\n\n"]
+
+
+def test_background_generation_survives_request_cancellation(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(module.generation_storage, "create_generation", AsyncMock(return_value="background-1"))
+    monkeypatch.setattr(module, "handle_auth_and_tracking", lambda **kwargs: {
+        "is_anonymous": True, "is_developer": False, "user_email": "anon",
+    })
+
+    async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+        completed = asyncio.Event()
+        responded = asyncio.Event()
+
+        async def generate(*args):
+            started.set()
+            await release.wait()
+            completed.set()
+
+        monkeypatch.setattr(module, "process_llm_to_bricks_task", generate)
+
+        async def request():
+            response = await module.llm_to_bricks(LlmToBricksRequest(prompt="castle"), {"user_id": "anon"})
+            assert response.generation_id == "background-1"
+            responded.set()
+            await asyncio.Future()
+
+        connection = asyncio.create_task(request())
+        await asyncio.wait_for(responded.wait(), 1)
+        await asyncio.wait_for(started.wait(), 1)
+        assert not completed.is_set()
+        assert len(module._background_tasks) == 1
+        connection.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await connection
+        release.set()
+        await asyncio.wait_for(completed.wait(), 1)
+        await asyncio.gather(*module._background_tasks)
+        await asyncio.sleep(0)
+        assert not module._background_tasks
+
+    asyncio.run(scenario())

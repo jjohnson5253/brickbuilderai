@@ -70,11 +70,24 @@ export interface GetUserGenerationsResponse {
 }
 
 export class GetUserGenerationsApiService {
+  static async getProcessingGenerations(authToken?: string, signal?: AbortSignal): Promise<GenerationWithOrder[]> {
+    const generations = new Map<string, GenerationWithOrder>();
+    let offset = 0;
+    while (true) {
+      const page = await this.getUserGenerations(authToken, 50, offset, true, signal);
+      for (const generation of page.generations) generations.set(generation.id, generation);
+      if (!page.has_more || page.generations.length === 0) break;
+      offset += page.generations.length;
+    }
+    return [...generations.values()];
+  }
+
   static async getUserGenerations(
     authToken: string | undefined,
     limit: number = 50,
     offset: number = 0,
-    processing?: boolean
+    processing?: boolean,
+    signal?: AbortSignal,
   ): Promise<GetUserGenerationsResponse> {
     const url = `${API_BASE_URL}/getUserGenerations`;
 
@@ -98,6 +111,7 @@ export class GetUserGenerationsApiService {
         method: 'POST',
         headers,
         body: JSON.stringify(requestBody),
+        signal,
       });
 
       if (!response.ok) {

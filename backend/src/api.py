@@ -1,5 +1,6 @@
 import os
 import logging
+from uuid import UUID
 
 # Configure headless mode for Open3D before any imports
 os.environ["DISPLAY"] = ":99"
@@ -23,7 +24,7 @@ from .requests.ldrToMpd import ldr_to_mpd, LdrToMpdRequest, LdrToMpdResponse
 from .requests.resizeModel import resize_model, ResizeModelRequest, ResizeModelResponse
 from .requests.promptEditModel import prompt_edit_model, PromptEditModelRequest
 from .requests.llmRender import llm_render, llm_render_stream, LlmRenderRequest, LlmRenderResponse
-from .requests.llmToBricks import llm_to_bricks, LlmToBricksRequest
+from .requests.llmToBricks import llm_to_bricks, llm_to_bricks_stream, LlmToBricksRequest
 from .requests.createCheckoutSession import create_checkout_session, CreateCheckoutSessionRequest, CreateCheckoutSessionResponse
 from .requests.stripeWebhook import stripe_webhook, StripeWebhookRequest, StripeWebhookResponse
 from .requests.getGeneration import get_generation, GetGenerationRequest, GetGenerationResponse
@@ -43,6 +44,8 @@ from .requests.updateUsername import update_username, UpdateUsernameRequest, Upd
 # Import utilities
 from .utils.pack_ldraw_model import LDrawPacker
 from .utils.posthog_client import track_api_call
+from .utils.llm_output import output_events
+from .utils.generation_storage import generation_storage
 from .utils.auth import get_user_with_optional_auth, require_paid_auth
 
 # Load environment variables
@@ -207,6 +210,32 @@ async def llm_to_bricks_endpoint(
 ) -> ImageToBricksResponse:
     """Have a Claude or OpenAI model design a brick model directly, then store normal artifacts."""
     return await llm_to_bricks(request, auth_info)
+
+
+@app.post("/llmToBricks/stream")
+async def llm_to_bricks_stream_endpoint(
+    request: LlmToBricksRequest,
+    auth_info: dict = Depends(get_user_with_optional_auth),
+) -> StreamingResponse:
+    """Stream LLM design notes while the brick model is generated."""
+    return StreamingResponse(
+        await llm_to_bricks_stream(request, auth_info),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.get("/generation/{generation_id}/output")
+async def generation_output_endpoint(generation_id: UUID) -> StreamingResponse:
+    """Observe a job; disconnecting only stops observation, never generation."""
+    generation_id = str(generation_id)
+    generation = await generation_storage.get_generation(generation_id)
+    if not generation:
+        raise HTTPException(status_code=404, detail="Generation not found")
+    return StreamingResponse(
+        output_events(generation_id), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/glbToBricks", response_model=GlbToBricksResponse)
