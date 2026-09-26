@@ -1498,77 +1498,67 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
 
 export const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedItem[] }) {
   const navigate = useNavigate();
-  const [itemsPerPage, setItemsPerPage] = useState(4);
-  const [currentPage, setCurrentPage] = useState(0);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const positionRef = useRef(0);
+  const pausedRef = useRef(false);
+  // Fill even a short list before duplicating it for a seamless loop.
+  const loopItems = items.length > 0
+    ? Array.from({ length: Math.max(items.length, 8) }, (_, index) => items[index % items.length])
+    : [];
+
+  const move = (distance: number) => {
+    const track = trackRef.current;
+    const width = track?.firstElementChild?.getBoundingClientRect().width || 0;
+    if (!track || !width) return;
+    positionRef.current = ((positionRef.current + distance) % width + width) % width;
+    track.style.transform = `translate3d(${-positionRef.current}px, 0, 0)`;
+  };
 
   useEffect(() => {
-    const updateItemsPerPage = () => {
-      if (window.innerWidth >= 1280) {
-        setItemsPerPage(4);
-      } else if (window.innerWidth >= 1024) {
-        setItemsPerPage(3);
-      } else if (window.innerWidth >= 640) {
-        setItemsPerPage(2);
-      } else {
-        setItemsPerPage(1);
+    let frame: number;
+    let previous = 0;
+    const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    const step = (time: number) => {
+      if (previous && !pausedRef.current && !reducedMotion?.matches) {
+        move(37 * Math.min((time - previous) / 1000, 0.1));
       }
+      previous = time;
+      frame = requestAnimationFrame(step);
     };
-
-    updateItemsPerPage();
-    window.addEventListener('resize', updateItemsPerPage);
-
-    return () => {
-      window.removeEventListener('resize', updateItemsPerPage);
-    };
-  }, []);
-
-  const pages: FeaturedItem[][] = [];
-  for (let index = 0; index < items.length; index += itemsPerPage) {
-    pages.push(items.slice(index, index + itemsPerPage));
-  }
-
-  useEffect(() => {
-    setCurrentPage((previous) => Math.min(previous, Math.max(pages.length - 1, 0)));
-  }, [pages.length]);
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [items]);
 
   const handleScroll = (direction: 'left' | 'right') => {
-    setCurrentPage((previous) => {
-      if (direction === 'left') {
-        return Math.max(previous - 1, 0);
-      }
-      return Math.min(previous + 1, Math.max(pages.length - 1, 0));
-    });
-
+    const cardWidth = trackRef.current?.querySelector('article')?.getBoundingClientRect().width || 160;
+    move((direction === 'left' ? -1 : 1) * (cardWidth + 24));
     posthog.capture('landing_featured_models_arrow_clicked', {
-      direction,
-      item_count: items.length,
-      surface: 'landing_featured_models',
+      direction, item_count: items.length, surface: 'landing_featured_models',
     });
   };
 
   return (
-    <div className="relative w-full select-none px-4 sm:px-8">
-      <button
-        type="button"
-        aria-label="Scroll community models left"
-        onClick={() => handleScroll('left')}
-        disabled={currentPage === 0}
-        className="absolute left-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md transition hover:border-[#f44336] hover:text-[#f44336] disabled:cursor-not-allowed disabled:opacity-40 sm:left-4"
-      >
+    <div className="relative w-full select-none"
+      onMouseEnter={() => { pausedRef.current = true; }}
+      onMouseLeave={() => { pausedRef.current = false; }}
+      onFocus={() => { pausedRef.current = true; }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) pausedRef.current = false;
+      }}>
+      <button type="button" aria-label="Scroll community models left"
+        onClick={() => handleScroll('left')} disabled={items.length < 2}
+        className="absolute left-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md disabled:opacity-40">
         <ChevronLeft className="h-5 w-5" />
       </button>
       <div className="overflow-hidden">
-        <div
-          className="flex transition-transform duration-300 ease-out"
-          style={{ transform: `translateX(-${currentPage * 100}%)` }}
-        >
-          {pages.map((pageItems, pageIndex) => (
-            <div key={`page-${pageIndex}`} className="w-full flex-shrink-0">
-              <div className="grid grid-cols-1 gap-6 px-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {pageItems.map((item) => (
+        <div ref={trackRef} data-featured-track className="flex w-max" style={{ willChange: 'transform' }}>
+          {[0, 1].map((copy) => (
+            <div key={copy} data-featured-copy={copy} className="flex w-max gap-6 py-1 pr-6">
+              {loopItems.map((item, index) => (
                   <article
-                    key={item.id}
-                    className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+                    key={`${item.id}-${index}`}
+                    className="shrink-0 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+                    style={{ width: "clamp(7.5rem, 13.5vw, 12.75rem)" }}
                   >
                     <div
                       className="relative w-full overflow-hidden rounded-xl bg-slate-50"
@@ -1578,7 +1568,7 @@ export const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: Fea
                         <img
                           src={item.imageUrl}
                           alt={item.title}
-                          className="absolute left-0 top-0 h-full w-full object-cover"
+                          className="absolute left-0 top-0 h-full w-full object-contain"
                           draggable="false"
                           onDragStart={(e) => e.preventDefault()}
                         />
@@ -1608,19 +1598,14 @@ export const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: Fea
                       </button>
                     </div>
                   </article>
-                ))}
-              </div>
+              ))}
             </div>
           ))}
         </div>
       </div>
-      <button
-        type="button"
-        aria-label="Scroll community models right"
-        onClick={() => handleScroll('right')}
-        disabled={currentPage >= pages.length - 1}
-        className="absolute right-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md transition hover:border-[#f44336] hover:text-[#f44336] disabled:cursor-not-allowed disabled:opacity-40 sm:right-4"
-      >
+      <button type="button" aria-label="Scroll community models right"
+        onClick={() => handleScroll('right')} disabled={items.length < 2}
+        className="absolute right-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md disabled:opacity-40">
         <ChevronRight className="h-5 w-5" />
       </button>
     </div>

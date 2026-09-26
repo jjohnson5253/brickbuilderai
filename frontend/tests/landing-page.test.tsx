@@ -142,7 +142,7 @@ describe('LandingPage', () => {
 
       expect(container.querySelector('[aria-label="Scroll community models left"]')).toBeTruthy();
       expect(container.querySelector('[aria-label="Scroll community models right"]')).toBeTruthy();
-      expect(Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.includes('View Model'))).toHaveLength(8);
+      expect(Array.from(container.querySelectorAll('[data-featured-copy="0"] button')).filter((button) => button.textContent?.includes('View Model'))).toHaveLength(8);
       expect(container.textContent).toContain('Model 1');
       expect(container.textContent).toContain('20');
       expect(container.textContent).toContain('Sep 26, 2026');
@@ -152,7 +152,7 @@ describe('LandingPage', () => {
     }
   });
 
-  it('disables carousel arrows when the featured models fit on one page', async () => {
+  it('disables carousel arrows when there is only one distinct model', async () => {
     vi.spyOn(GetUserGenerationsApiService, 'getProcessingGenerations').mockResolvedValue([]);
     vi.spyOn(GetGenerationStatsApiService, 'getGenerationStats').mockResolvedValue({ generation_count: 12, brick_count: 400 });
     vi.spyOn(GetCommunityGenerationsApiService, 'getCommunityGenerations').mockResolvedValue({
