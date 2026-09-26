@@ -69,11 +69,28 @@ it('restores every active job and retains completed and failed outcomes independ
 
 it('recovers a job that completed while the page was closed', async () => {
   vi.spyOn(GetUserGenerationsApiService, 'getProcessingGenerations').mockResolvedValue([]);
-  vi.spyOn(GetGenerationApiService, 'getGeneration').mockResolvedValue({ status: 'completed', prompt: 'Castle' } as never);
+  vi.spyOn(GetGenerationApiService, 'getGeneration').mockResolvedValue({
+    status: 'completed',
+    prompt: 'Castle',
+    preview_image_url: 'https://example.com/model-preview.png',
+    external_image_url: 'https://example.com/source.png',
+    processed_image_url: null,
+  } as never);
   localStorage.setItem('pending_generations:user', JSON.stringify([job('saved')]));
   await act(async () => root.render(<Harness />));
   expect(container.textContent).toContain('Castle');
   expect(container.textContent).toContain('View model');
+  expect(container.querySelector('img')?.getAttribute('src')).toBe('https://example.com/model-preview.png');
+});
+
+it('keeps a restored preview image while the generation is still active', async () => {
+  vi.spyOn(GetUserGenerationsApiService, 'getProcessingGenerations').mockResolvedValue([job('saved')] as never);
+  localStorage.setItem('pending_generations:user', JSON.stringify([
+    { ...job('saved'), imageUrl: 'https://example.com/source.png' },
+  ]));
+  await act(async () => root.render(<Harness />));
+  expect(container.textContent).toContain('Build saved');
+  expect(container.querySelector('img')?.getAttribute('src')).toBe('https://example.com/source.png');
 });
 
 it('keeps submitted jobs during refresh, retries network errors, and cancels on unmount', async () => {

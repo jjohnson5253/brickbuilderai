@@ -68,13 +68,14 @@ export function useGenerationActivity(owner: string, authToken: string | undefin
         const settled = await Promise.allSettled(missing.map(async row => {
           const status = await GetGenerationApiService.getGeneration(row.id, controller.signal);
           return { ...row, status: status.status, prompt: status.prompt || row.prompt,
-            imageUrl: status.external_image_url || row.imageUrl,
+            imageUrl: status.preview_image_url || status.processed_image_url || status.external_image_url || row.imageUrl,
             errorMessage: status.error_message || undefined };
         }));
         if (controller.signal.aborted) return;
+        const existing = new Map(rows.current.map(row => [row.id, row]));
         const updates = new Map<string, GenerationActivity>(active.map(row => [row.id, {
           id: row.id, prompt: row.prompt, status: row.status, endpoint: row.endpoint,
-          imageUrl: row.preview_image_url || row.processed_image_url || row.external_image_url,
+          imageUrl: row.preview_image_url || row.processed_image_url || row.external_image_url || existing.get(row.id)?.imageUrl,
         }]));
         for (const result of settled) {
           if (result.status === 'fulfilled') updates.set(result.value.id, result.value);
