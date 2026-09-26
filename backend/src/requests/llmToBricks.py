@@ -42,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 ThinkingCallback = Callable[[str], Awaitable[None]]
 
+# Keep jobs alive independently of the HTTP request that started them.
+_background_tasks: set[asyncio.Task] = set()
+
 
 @dataclass(frozen=True)
 class LlmModel:
@@ -673,9 +676,11 @@ async def llm_to_bricks(
             endpoint="llmToBricks",
             model_3d=request.model,
         )
-        asyncio.create_task(
+        task = asyncio.create_task(
             process_llm_to_bricks_task(generation_id, request, user_info, auth_info)
         )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
         return ImageToBricksResponse(
             generation_id=generation_id,
             message="LLM generation started. Poll /generation/{generation_id} for status.",

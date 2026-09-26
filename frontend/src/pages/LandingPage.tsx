@@ -16,7 +16,8 @@ import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
 import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
-import { LlmDesignNotes } from "../components/LlmDesignNotes";
+import { GenerationActivityList } from "../components/GenerationActivityList";
+import { useGenerationActivity } from "../hooks/useGenerationActivity";
 import { LlmPreviewLoader } from "../components/LlmPreviewLoader";
 import { GenerationStats, GetGenerationStatsApiService } from "../services/getGenerationStatsApi";
 import {
@@ -329,6 +330,9 @@ function useBeatText(active: boolean) {
 
 export default function LandingPage() {
   const { session, loading: authLoading } = useAuth();
+  const { generations, error: activityError, trackGeneration } = useGenerationActivity(
+    session?.user.id || "anonymous", session?.access_token, !authLoading,
+  );
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState<SizeValue>("big");
   const [modelQuality, setModelQuality] = useState<ModelQuality>("regular");
@@ -349,7 +353,6 @@ export default function LandingPage() {
   const [activeLoadingMethod, setActiveLoadingMethod] = useState<GenerationMethod | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [generationStatus, setGenerationStatus] = useState<string | null>(null);
-  const [llmDesignNotes, setLlmDesignNotes] = useState("");
   const { text: beatText, fade: beatFade } = useBeatText(loading);
 
   // Generated model state
@@ -394,153 +397,6 @@ export default function LandingPage() {
   // Login modal state
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [pendingGenerateAfterLogin, setPendingGenerateAfterLogin] = useState(false);
-
-  // Check for in-progress generations on page load
-  useEffect(() => {
-    const checkProcessingGenerations = async () => {
-      // Wait for auth to finish loading before checking for processing generations
-      if (authLoading) return;
-      
-      try {
-        // Priority 1: Check for recently prompted generation ID
-        const recentlyPromptedId = localStorage.getItem('recently_prompted_generation_id');
-        
-        if (recentlyPromptedId) {
-          console.log('Found recently prompted generation, ID:', recentlyPromptedId);
-          
-          try {
-            const statusResponse = await GetGenerationApiService.getGeneration(recentlyPromptedId);
-            console.log('Recently prompted generation status:', statusResponse.status);
-            
-            if (statusResponse.status === 'processing' || statusResponse.status === 'started' || statusResponse.status === 'queued') {
-              // Resume polling
-              console.log('Resuming polling for recently prompted generation:', recentlyPromptedId);
-              setLoading(true);
-              setGenerationStatus(statusResponse.status);
-              if (statusResponse.external_image_url) {
-                setPreviewImageUrl(statusResponse.external_image_url);
-              }
-              
-              try {
-                const completedGeneration = await GetGenerationApiService.pollUntilComplete(
-                  recentlyPromptedId,
-                  (response: GetGenerationResponse) => {
-                    setGenerationStatus(response.status);
-                    if (response.external_image_url) {
-                      setPreviewImageUrl(response.external_image_url);
-                    }
-                  }
-                );
-                
-                setLoading(false);
-                setPreviewImageUrl(null);
-                setGenerationStatus(null);
-                
-                // Refetch to get full response with all fields
-                const fullResponse = await GetGenerationApiService.getGeneration(recentlyPromptedId);
-                
-                // Navigate to generated model page since this completed from loading state
-                if (!session) recordAnonymousGeneration(fullResponse.generation_id);
-                navigate(`/generated-model?id=${fullResponse.generation_id}`);
-              } catch (error) {
-                console.error('Generation failed during resume:', error);
-                setLoading(false);
-                setGenerationError("Generation failed. Please try again");
-                setPreviewImageUrl(null);
-                setGenerationStatus(null);
-                // Only clear if polling explicitly failed, keep for next reload attempt
-              }
-              
-              return; // Exit early, don't check other processing generations
-            } else if (statusResponse.status === 'completed') {
-              // Show it as last generation (keep localStorage for future visits)
-              console.log('Recently prompted generation already completed, displaying in card');
-              setLastGeneration(statusResponse);
-              return; // Exit early
-            } else if (statusResponse.status === 'failed') {
-              // Clear the failed generation ID only if explicitly failed
-              console.log('Recently prompted generation failed, clearing from storage');
-              localStorage.removeItem('recently_prompted_generation_id');
-              setGenerationError("Generation failed. Please try again");
-              return; // Exit early
-            }
-            // If status is unknown, don't clear - just continue to check other generations
-            console.warn('Unknown status for recently prompted generation:', statusResponse.status);
-          } catch (error) {
-            // If GET request fails (network error, etc), don't clear the ID - keep it for retry
-            console.warn('Failed to check recently prompted generation status, will retry on next load:', error);
-          }
-        }
-        
-        // Priority 2: Check for other processing generations
-        // Get processing generations for the current user (works for both authenticated and anonymous)
-        const { GetUserGenerationsApiService } = await import('../services/getUserGenerationsApi');
-        const processingGens = await GetUserGenerationsApiService.getUserGenerations(
-          session?.access_token || undefined, // undefined for anonymous users
-          1, // Only need the most recent one
-          0, // offset
-          true // Only get processing generations
-        );
-        
-        if (processingGens.generations.length === 0) {
-          console.log('No processing generations found');
-          return;
-        }
-        
-        const lastGenerationId = processingGens.generations[0].id;
-        console.log('Found in-progress generation, ID:', lastGenerationId);
-        
-        const statusResponse = await GetGenerationApiService.getGeneration(lastGenerationId);
-        console.log('Generation status:', statusResponse.status);
-        
-        if (statusResponse.status === 'processing' || statusResponse.status === 'started' || statusResponse.status === 'queued') {
-          // Resume polling
-          console.log('Found in-progress generation, resuming polling:', lastGenerationId);
-          setLoading(true);
-          setGenerationStatus(statusResponse.status);
-          if (statusResponse.external_image_url) {
-            setPreviewImageUrl(statusResponse.external_image_url);
-          }
-          
-          try {
-            const completedGeneration = await GetGenerationApiService.pollUntilComplete(
-              lastGenerationId,
-              (response: GetGenerationResponse) => {
-                setGenerationStatus(response.status);
-                if (response.external_image_url) {
-                  setPreviewImageUrl(response.external_image_url);
-                }
-              }
-            );
-            
-            setLoading(false);
-            // Refetch to get full response with all fields
-            const fullResponse = await GetGenerationApiService.getGeneration(lastGenerationId);
-            
-            // Navigate to generated model page
-            if (!session) recordAnonymousGeneration(fullResponse.generation_id);
-            navigate(`/generated-model?id=${fullResponse.generation_id}`);
-          } catch (error) {
-            console.error('Generation failed during resume:', error);
-            setLoading(false);
-            setGenerationError("Generation failed. Please try again");
-            setPreviewImageUrl(null);
-            setGenerationStatus(null);
-          }
-          
-        } else if (statusResponse.status === 'completed') {
-          setLastGeneration(statusResponse);
-        } else if (statusResponse.status === 'failed') {
-          setGenerationError("Generation failed. Please try again");
-        }
-      } catch (error) {
-        console.warn('Failed to check last generation:', error);
-      }
-    };
-    
-    checkProcessingGenerations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoading]);
 
   // Generate preview URL for uploaded image
   useEffect(() => {
@@ -735,7 +591,6 @@ export default function LandingPage() {
     setGenerationError(null);
     setPreviewImageUrl(null);
     setGenerationStatus(null);
-    setLlmDesignNotes("");
     setLastGeneration(null); // Clear previous generation card
     setVoxelData(null);
     
@@ -828,7 +683,7 @@ export default function LandingPage() {
         const imageBase64 = imgFile ? await fileToBase64(imgFile) : undefined;
         const llmLabel = getLlmModelOption(llmModel)?.label ?? 'The AI model';
         setGenerationStatus(`${llmLabel} is designing your brick model…`);
-        postResponse = await LlmToBricksApiService.generateStream(
+        postResponse = await LlmToBricksApiService.generate(
           {
             prompt: prompt.trim() || undefined,
             imageBase64,
@@ -837,14 +692,6 @@ export default function LandingPage() {
             model: llmModel,
           },
           authToken,
-          (delta) => {
-            setLlmDesignNotes((current) => current + delta);
-          },
-          (generationId) => {
-            localStorage.setItem(STORAGE_KEYS.GENERATION_ID, generationId);
-            localStorage.setItem('recently_prompted_generation_id', generationId);
-            if (!session) recordAnonymousGeneration(generationId);
-          },
         );
         modelName = prompt.trim() || imgFile?.name.replace(/\.[^/.]+$/, '') || 'llm-model';
       } else if (imgFile) {
@@ -886,6 +733,14 @@ export default function LandingPage() {
       // If created while logged out, remember it so it can be claimed on login.
       if (!session) recordAnonymousGeneration(generationId);
       
+      if (generationMethod === 'llm') {
+        trackGeneration({ id: generationId, prompt: modelName, status: 'started', endpoint: 'llmToBricks' });
+        setLoading(false);
+        setActiveLoadingMethod(null);
+        setGenerationStatus(null);
+        return;
+      }
+
       // Poll for completion with status updates
       const completedGeneration = await GetGenerationApiService.pollUntilComplete(
         generationId,
@@ -1300,6 +1155,8 @@ export default function LandingPage() {
 
           {/* Featured horizontal marquee OR in‑place progress UI */}
           <section className="mt-4 w-full relative landing-fade-in landing-delay-4" style={{ zIndex: 15 }}>
+            <GenerationActivityList generations={generations} error={activityError}
+              onOpen={id => navigate(`/generated-model?id=${id}`)} />
             {loading && (
               <div className="flex w-full flex-col items-center gap-4 mb-4">
                 {/* Preview container with overlaid status + beat text */}
@@ -1354,9 +1211,6 @@ export default function LandingPage() {
                     </div>
                   </div>
                 </div>
-                {activeLoadingMethod === 'llm' && (
-                  <LlmDesignNotes notes={llmDesignNotes} isThinking={loading} />
-                )}
               </div>
             )}
             {generationError && (

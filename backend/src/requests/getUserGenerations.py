@@ -164,7 +164,7 @@ async def get_user_generations(request: GetUserGenerationsRequest, auth_info: di
 
         # Get generations for the user (authenticated or anonymous)
         # Apply status filter at database level if processing filter is requested
-        status_filter = ["processing", "queued", "started"] if request.processing else None
+        status_filter = ["processing", "queued", "started", "ldr_processing"] if request.processing else None
         
         # Fetch generations in batches until we have enough unique processed_image_url generations
         # or we run out of generations to fetch
@@ -195,7 +195,9 @@ async def get_user_generations(request: GetUserGenerationsRequest, auth_info: di
             # Process batch for unique processed_image_urls
             for gen in generations_batch:
                 processed_image_url = gen.get("processed_image_url")
-                if processed_image_url:
+                # Every active job must remain visible, even when two builds
+                # or edits share the same source image.
+                if processed_image_url and not request.processing:
                     if processed_image_url not in seen_image_urls:
                         seen_image_urls.add(processed_image_url)
                         unique_generations.append(gen)

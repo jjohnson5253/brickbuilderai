@@ -5,6 +5,13 @@ import { describe, expect, it } from 'vitest';
 import { LlmPreviewLoader } from '../src/components/LlmPreviewLoader';
 
 describe('LlmPreviewLoader', () => {
+  it('fits compact activity cards without clipping the loading copy', () => {
+    const markup = renderToStaticMarkup(<LlmPreviewLoader compact />);
+    expect(markup).toContain('height:100%');
+    expect(markup).toContain('llm-preview-loader-block');
+    expect(markup).not.toContain('BrickBuilder AI is sketching your build');
+  });
+
   it('renders the animated block scene and loading copy without a preview image', () => {
     const markup = renderToStaticMarkup(<LlmPreviewLoader />);
 
