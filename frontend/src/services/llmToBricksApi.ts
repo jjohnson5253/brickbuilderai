@@ -37,6 +37,12 @@ export interface LlmToBricksResponse {
   message: string;
 }
 
+export interface LlmGenerationOutput {
+  text: string;
+  status: string;
+  error?: string | null;
+}
+
 type LlmToBricksStreamEvent =
   | { type: 'started'; generation_id: string }
   | { type: 'thinking'; delta: string }
@@ -55,6 +61,42 @@ const API_BASE_URL = API_MODE === 'local'
     : RAILWAY_API_URL;
 
 export class LlmToBricksApiService {
+  static async watchOutput(
+    generationId: string,
+    onOutput: (output: LlmGenerationOutput) => void,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const response = await fetch(`${API_BASE_URL}/generation/${encodeURIComponent(generationId)}/output`, { signal });
+    if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) {
+      throw new Error('Unable to connect to generation output');
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        let delimiter: RegExpExecArray | null;
+        while ((delimiter = /\r?\n\r?\n/.exec(buffer))) {
+          const raw = buffer.slice(0, delimiter.index);
+          buffer = buffer.slice(delimiter.index + delimiter[0].length);
+          const data = raw.split(/\r?\n/).filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).trimStart()).join('\n');
+          if (!data) continue;
+          const event = JSON.parse(data);
+          if (event.type !== 'output' || typeof event.text !== 'string' || typeof event.status !== 'string') continue;
+          onOutput(event);
+          if (event.status === 'completed' || event.status === 'failed') return true;
+        }
+        if (done) return false;
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
+    }
+  }
+
   private static buildRequestBody(request: LlmToBricksRequest) {
     const prompt = request.prompt?.trim();
     if (!prompt && !request.imageBase64) {

@@ -25,6 +25,7 @@ from ..utils.brick_design import (
     render_preview_png,
 )
 from ..utils.generation_storage import generation_storage
+from ..utils.llm_output import run_with_output
 from ..utils.llm_tool_conversation import (
     ConversationSettings,
     ToolConversation,
@@ -406,15 +407,6 @@ def voxel_extent(xyzrgb: str) -> int:
     return max(max(axis) - min(axis) + 1 for axis in zip(*coords)) if coords else 0
 
 
-async def _emit_thinking(on_thinking: Optional[ThinkingCallback], text: str) -> None:
-    if on_thinking is None:
-        return
-    normalized = text.strip()
-    if not normalized:
-        return
-    await on_thinking(normalized + "\n\n")
-
-
 async def _generate_ldr_with_design(
     request: LlmToBricksRequest,
     on_thinking: Optional[ThinkingCallback] = None,
@@ -432,8 +424,7 @@ async def _generate_ldr_with_design(
     async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
         conversation = _open_conversation(request, client, _design_system_prompt(request), DESIGN_TOOLS)
         for _ in range(DESIGN_MAX_ATTEMPTS + DESIGN_REVIEW_ROUNDS + 2):
-            turn = await conversation.send()
-            await _emit_thinking(on_thinking, turn.text)
+            turn = await conversation.send_stream(on_thinking) if on_thinking else await conversation.send()
             if turn.truncated:
                 if best:
                     break
@@ -510,8 +501,7 @@ async def _generate_ldr_direct(
     async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
         conversation = _open_conversation(request, client, DIRECT_SYSTEM_PROMPT, DIRECT_TOOLS)
         for round_number in range(DIRECT_FIX_ROUNDS + 1):
-            turn = await conversation.send()
-            await _emit_thinking(on_thinking, turn.text)
+            turn = await conversation.send_stream(on_thinking) if on_thinking else await conversation.send()
             try:
                 ldr = validate_ldr_content(_extract_ldr_content(turn))
             except ValueError as exc:
@@ -677,7 +667,7 @@ async def llm_to_bricks(
             model_3d=request.model,
         )
         task = asyncio.create_task(
-            process_llm_to_bricks_task(generation_id, request, user_info, auth_info)
+            run_with_output(generation_id, process_llm_to_bricks_task, request, user_info, auth_info)
         )
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)

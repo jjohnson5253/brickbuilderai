@@ -3,6 +3,7 @@ import { Box, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import posthog from 'posthog-js';
 import { GenerationActivity, isGenerationActive } from '../hooks/useGenerationActivity';
 import { LlmPreviewLoader } from './LlmPreviewLoader';
+import { LlmGenerationOutput } from './LlmGenerationOutput';
 
 export function GenerationActivityList({ generations, error, onOpen }: {
   generations: GenerationActivity[];
@@ -44,6 +45,7 @@ export function GenerationActivityList({ generations, error, onOpen }: {
                   {label}
                 </p>
                 {failed && <p className="mt-2 break-words text-xs text-red-600">{generation.errorMessage || 'Please try generating this model again.'}</p>}
+                {generation.endpoint === 'llmToBricks' && <LlmGenerationOutput generationId={generation.id} active={active} />}
                 {generation.status === 'completed' && <button type="button"
                   className="mt-3 min-h-10 w-full rounded-full border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                   onClick={() => {

@@ -1,5 +1,6 @@
 import os
 import logging
+from uuid import UUID
 
 # Configure headless mode for Open3D before any imports
 os.environ["DISPLAY"] = ":99"
@@ -43,6 +44,8 @@ from .requests.updateUsername import update_username, UpdateUsernameRequest, Upd
 # Import utilities
 from .utils.pack_ldraw_model import LDrawPacker
 from .utils.posthog_client import track_api_call
+from .utils.llm_output import output_events
+from .utils.generation_storage import generation_storage
 from .utils.auth import get_user_with_optional_auth, require_paid_auth
 
 # Load environment variables
@@ -219,6 +222,19 @@ async def llm_to_bricks_stream_endpoint(
         await llm_to_bricks_stream(request, auth_info),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
+@app.get("/generation/{generation_id}/output")
+async def generation_output_endpoint(generation_id: UUID) -> StreamingResponse:
+    """Observe a job; disconnecting only stops observation, never generation."""
+    generation_id = str(generation_id)
+    generation = await generation_storage.get_generation(generation_id)
+    if not generation:
+        raise HTTPException(status_code=404, detail="Generation not found")
+    return StreamingResponse(
+        output_events(generation_id), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

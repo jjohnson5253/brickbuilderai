@@ -77,6 +77,9 @@ describe('LandingPage', () => {
     const root = createRoot(container);
     try {
       await act(async () => root.render(<LandingPage />));
+      await act(async () => Array.from(container.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Generate')!.click());
+      expect(start).not.toHaveBeenCalled();
+      expect((await import('posthog-js')).default.capture).toHaveBeenCalledWith('landing_generate_clicked', expect.objectContaining({ has_prompt: false, has_image: false }));
       const input = container.querySelector('input:not([type="file"])') as HTMLInputElement;
       act(() => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Red castle');
@@ -90,6 +93,10 @@ describe('LandingPage', () => {
       expect(container.querySelectorAll('[aria-label="Your generations"] article')).toHaveLength(2);
       expect(container.textContent).toContain('2 in progress');
       expect(start).toHaveBeenCalledTimes(2);
+      expect((await import('posthog-js')).default.capture).toHaveBeenCalledWith('landing_generate_clicked', {
+        generation_method: 'llm', model: DEFAULT_LLM_MODEL, has_prompt: true,
+        has_image: false, size: 'big', is_authenticated: false,
+      });
       expect(stream).not.toHaveBeenCalled();
       expect(poll).not.toHaveBeenCalled();
       expect(JSON.parse(localStorage.getItem('pending_generations:anonymous')!).map((row: { id: string }) => row.id)).toEqual(['two', 'one']);

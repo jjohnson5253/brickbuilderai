@@ -239,6 +239,12 @@ class ScriptedConversation:
         self.sent += 1
         return self.turns[self.sent - 1]
 
+    async def send_stream(self, on_text):
+        turn = await self.send()
+        if turn.text:
+            await on_text(turn.text + "\n\n")
+        return turn
+
     def add_tool_results(self, results):
         self.tool_results.append(list(results))
 
@@ -405,6 +411,7 @@ def test_background_generation_survives_request_cancellation(monkeypatch):
             await connection
         release.set()
         await asyncio.wait_for(completed.wait(), 1)
+        await asyncio.gather(*module._background_tasks)
         await asyncio.sleep(0)
         assert not module._background_tasks
 

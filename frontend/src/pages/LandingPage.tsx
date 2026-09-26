@@ -961,7 +961,17 @@ export default function LandingPage() {
                   <div className="flex items-center justify-center gap-2 mt-3 landing-fade-in landing-delay-3">
                     <button
                       type="button"
-                      onClick={onGenerate}
+                      onClick={() => {
+                        posthog.capture('landing_generate_clicked', {
+                          generation_method: generationMethod,
+                          model: generationMethod === 'llm' ? llmModel : threeDModel,
+                          has_prompt: Boolean(prompt.trim()),
+                          has_image: Boolean(imgFile),
+                          size,
+                          is_authenticated: Boolean(session),
+                        });
+                        void onGenerate();
+                      }}
                       className="inline-flex items-center justify-center h-12 rounded-full px-6 min-w-36 text-white transition-colors bg-[#f44336] cursor-pointer hover:bg-[#ff6b6b]"
                     >
                       <Sparkles className="mr-2 h-5 w-5" />

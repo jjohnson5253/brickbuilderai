@@ -158,3 +158,25 @@ def test_health_and_fal_key_dependency(monkeypatch):
     assert exc_info.value.status_code == 503
     monkeypatch.setattr(api, "FAL_KEY", "configured")
     assert api.require_fal_key() is None
+
+
+def test_generation_output_endpoint_validates_job_before_streaming(monkeypatch):
+    from types import SimpleNamespace
+    from uuid import UUID
+
+    id = UUID('7c1326b2-890a-4fb8-9750-d3aa15cdc8e4')
+    storage = SimpleNamespace(get_generation=AsyncMock(return_value={'status': 'processing'}))
+    monkeypatch.setattr(api, 'generation_storage', storage)
+    async def events(generation_id):
+        assert generation_id == str(id)
+        yield 'data: {"type":"output","text":"Build","status":"processing"}\n\n'
+    monkeypatch.setattr(api, 'output_events', events)
+    async def run():
+        response = await api.generation_output_endpoint(id)
+        assert response.headers['x-accel-buffering'] == 'no'
+        return [event async for event in response.body_iterator]
+    assert len(asyncio.run(run())) == 1
+    storage.get_generation.return_value = None
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(api.generation_output_endpoint(id))
+    assert error.value.status_code == 404
