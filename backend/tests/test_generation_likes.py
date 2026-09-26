@@ -68,9 +68,10 @@ class FakeQuery:
 
 
 class FakeClient:
-    def __init__(self, *, likes_schema_missing=False):
+    def __init__(self, *, likes_schema_missing=False, likes_table_missing=False):
         self.likes = set()
         self.likes_schema_missing = likes_schema_missing
+        self.likes_table_missing = likes_table_missing
         self.generations = {
             "generation-1": {
                 "id": "generation-1",
@@ -106,7 +107,7 @@ class FakeClient:
                 return type("Result", (), {"data": [generation]})()
 
         if table_name == "generation_likes":
-            if self.likes_schema_missing:
+            if self.likes_schema_missing or self.likes_table_missing:
                 raise Exception('relation "generation_likes" does not exist')
             key = (filter_map.get("generation_id"), filter_map.get("user_id"))
             if operation == "select":
@@ -151,6 +152,21 @@ def test_get_generation_like_status_defaults_when_likes_schema_is_missing(monkey
     assert response.generation_id == "generation-1"
     assert response.is_community is True
     assert response.like_count == 0
+    assert response.viewer_has_liked is False
+
+
+def test_get_generation_like_status_preserves_like_count_when_only_likes_table_is_missing(monkeypatch):
+    client = FakeClient(likes_table_missing=True)
+    monkeypatch.setattr(status_module, "generation_storage", type("Storage", (), {"client": client})())
+
+    response = asyncio.run(status_module.get_generation_like_status(
+        GetGenerationLikeStatusRequest(generation_id="generation-1"),
+        {"authenticated": True, "is_anonymous": False, "user_id": "user-1"},
+    ))
+
+    assert response.generation_id == "generation-1"
+    assert response.is_community is True
+    assert response.like_count == 2
     assert response.viewer_has_liked is False
 
 

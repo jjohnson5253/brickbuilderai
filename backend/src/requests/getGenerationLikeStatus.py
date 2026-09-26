@@ -35,6 +35,7 @@ async def get_generation_like_status(
                 detail=f"Generation {request.generation_id} not found",
             )
 
+        like_count_available = True
         try:
             result = (
                 generation_storage.client
@@ -46,6 +47,7 @@ async def get_generation_like_status(
         except Exception as error:
             if not is_community_likes_schema_error(error):
                 raise
+            like_count_available = False
             result = (
                 generation_storage.client
                 .table("generations")
@@ -82,7 +84,7 @@ async def get_generation_like_status(
         return GetGenerationLikeStatusResponse(
             generation_id=request.generation_id,
             is_community=bool(row.get("is_community")),
-            like_count=int(row.get("like_count") or 0),
+            like_count=int(row.get("like_count") or 0) if like_count_available else 0,
             viewer_has_liked=viewer_has_liked,
         )
 
