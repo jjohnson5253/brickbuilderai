@@ -64,16 +64,19 @@ const GENERATION_METHOD_PRESETS: Array<{
   label: string;
   value: GenerationMethod;
   description: string;
+  showAsButton: boolean;
 }> = [
   {
     label: "image-to-glb",
     value: "3d",
     description: "Convert an image into a 3D model",
+    showAsButton: false,
   },
   {
     label: "LLM Render",
     value: "llm",
     description: "Have an AI model design the brick model directly",
+    showAsButton: true,
   },
 ];
 
@@ -112,7 +115,7 @@ export function GenerationMethodSelector({
   onLlmModelChange?: (value: string) => void;
 }) {
   const modelSelectId = "landing-render-model";
-  const generationMethodButtonPresets = GENERATION_METHOD_PRESETS.filter((method) => method.value !== "3d");
+  const generationMethodButtonPresets = GENERATION_METHOD_PRESETS.filter((method) => method.showAsButton);
   const modelDescription = value === "3d"
     ? THREE_D_MODEL_OPTIONS.find((option) => option.id === threeDModel)?.description
     : GENERATION_METHOD_PRESETS.find((method) => method.value === value)?.description;
