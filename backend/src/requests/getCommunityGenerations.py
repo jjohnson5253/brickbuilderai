@@ -4,6 +4,7 @@ from typing import Literal, Optional, List
 from pydantic import BaseModel
 from fastapi import HTTPException
 
+from ..utils.community_likes import is_community_likes_schema_error
 from ..utils.generation_storage import generation_storage
 from ..utils.posthog_client import track_api_call, track_error
 
@@ -156,7 +157,13 @@ async def get_community_generations(
                         if row.get("generation_id")
                     }
                 except Exception as e:
-                    logger.warning(f"Failed to fetch viewer likes for community generations: {e}")
+                    if is_community_likes_schema_error(e):
+                        logger.warning(
+                            "Community likes schema unavailable while fetching viewer likes; "
+                            "defaulting viewer_has_liked to false"
+                        )
+                    else:
+                        raise
 
         community_generations = [
             CommunityGeneration(

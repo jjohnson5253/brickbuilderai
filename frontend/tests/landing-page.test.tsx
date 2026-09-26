@@ -145,6 +145,7 @@ describe('LandingPage', () => {
       expect(Array.from(container.querySelectorAll('button')).filter((button) => button.textContent?.includes('View Model'))).toHaveLength(8);
       expect(container.textContent).toContain('Model 1');
       expect(container.textContent).toContain('20');
+      expect(container.textContent).toContain('Sep 26, 2026');
     } finally {
       act(() => root.unmount());
       container.remove();

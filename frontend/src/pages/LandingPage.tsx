@@ -232,6 +232,15 @@ const toFeaturedItem = (generation: CommunityGeneration): FeaturedItem => ({
   likeCount: generation.like_count ?? 0,
 });
 
+const formatFeaturedDate = (value: string) => (
+  new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  })
+);
+
 // ---- Typewriter placeholder logic ----
 const EXAMPLE_PHRASES = [
   "a unicorn",
@@ -1589,7 +1598,7 @@ export const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: Fea
                           <Heart className="h-3.5 w-3.5 fill-current text-rose-500" />
                           {item.likeCount}
                         </span>
-                        <span>{new Date(item.createdAt).toLocaleDateString()}</span>
+                        <span>{formatFeaturedDate(item.createdAt)}</span>
                       </div>
                       <button
                         onClick={() => navigate(`/generated-model?id=${item.id}`)}
