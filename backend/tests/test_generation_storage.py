@@ -1,36 +1,8 @@
 import asyncio
 import sys
 from pathlib import Path
-from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-fake_auth = ModuleType("src.utils.auth")
-fake_auth.supabase_client = None
-sys.modules.setdefault("src.utils.auth", fake_auth)
-sys.modules["src.utils.auth"].supabase_client = None
-
-fake_image_processing = ModuleType("src.utils.image_processing")
-fake_image_processing.convert_base64_to_png = lambda *_args, **_kwargs: None
-sys.modules.setdefault("src.utils.image_processing", fake_image_processing)
-sys.modules["src.utils.image_processing"].convert_base64_to_png = (
-    lambda *_args, **_kwargs: None
-)
-
-fake_brickowl_utils = ModuleType("src.utils.brickowl_utils")
-fake_brickowl_utils.parse_ldr_file = lambda *_args, **_kwargs: None
-fake_brickowl_utils.generate_parts_list_csv = lambda *_args, **_kwargs: ""
-sys.modules.setdefault("src.utils.brickowl_utils", fake_brickowl_utils)
-sys.modules["src.utils.brickowl_utils"].parse_ldr_file = lambda *_args, **_kwargs: None
-sys.modules["src.utils.brickowl_utils"].generate_parts_list_csv = (
-    lambda *_args, **_kwargs: ""
-)
-
-fake_supabase = ModuleType("supabase")
-fake_supabase.Client = object
-sys.modules.setdefault("supabase", fake_supabase)
-
-sys.modules.pop("src.utils.generation_storage", None)
 
 from src.utils.generation_storage import GenerationStorage
 
