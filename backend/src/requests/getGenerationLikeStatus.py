@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from ..utils.generation_storage import generation_storage
+from ..utils.community_likes import is_community_likes_schema_error
 from ..utils.posthog_client import track_error
 
 logger = logging.getLogger(__name__)
@@ -34,13 +35,24 @@ async def get_generation_like_status(
                 detail=f"Generation {request.generation_id} not found",
             )
 
-        result = (
-            generation_storage.client
-            .table("generations")
-            .select("id, is_community, like_count")
-            .eq("id", request.generation_id)
-            .execute()
-        )
+        try:
+            result = (
+                generation_storage.client
+                .table("generations")
+                .select("id, is_community, like_count")
+                .eq("id", request.generation_id)
+                .execute()
+            )
+        except Exception as error:
+            if not is_community_likes_schema_error(error):
+                raise
+            result = (
+                generation_storage.client
+                .table("generations")
+                .select("id, is_community")
+                .eq("id", request.generation_id)
+                .execute()
+            )
 
         if not result.data:
             raise HTTPException(
@@ -52,16 +64,20 @@ async def get_generation_like_status(
         viewer_has_liked = False
 
         if user_id and auth_info.get("authenticated", False) and not auth_info.get("is_anonymous", False):
-            like_result = (
-                generation_storage.client
-                .table("generation_likes")
-                .select("generation_id")
-                .eq("generation_id", request.generation_id)
-                .eq("user_id", user_id)
-                .limit(1)
-                .execute()
-            )
-            viewer_has_liked = bool(like_result.data)
+            try:
+                like_result = (
+                    generation_storage.client
+                    .table("generation_likes")
+                    .select("generation_id")
+                    .eq("generation_id", request.generation_id)
+                    .eq("user_id", user_id)
+                    .limit(1)
+                    .execute()
+                )
+                viewer_has_liked = bool(like_result.data)
+            except Exception as error:
+                if not is_community_likes_schema_error(error):
+                    raise
 
         return GetGenerationLikeStatusResponse(
             generation_id=request.generation_id,

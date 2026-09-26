@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, Union, List
 from datetime import datetime
 from supabase import Client
 from .auth import supabase_client
+from .community_likes import is_community_likes_schema_error
 from .image_processing import convert_base64_to_png
 from .brickowl_utils import parse_ldr_file, generate_parts_list_csv
 
@@ -776,19 +777,33 @@ class GenerationStorage:
             List of generation data dictionaries
         """
         try:
-            query = (self.client.table("generations")
-                     .select("*")
-                     .eq("is_community", True))
+            def build_query(sort_order: str):
+                query = (
+                    self.client.table("generations")
+                    .select("*")
+                    .eq("is_community", True)
+                )
 
-            if status_filter:
-                query = query.in_("status", status_filter)
+                if status_filter:
+                    query = query.in_("status", status_filter)
 
-            if sort == "top":
-                query = query.order("like_count", desc=True).order("created_at", desc=True)
-            else:
-                query = query.order("created_at", desc=True)
+                if sort_order == "top":
+                    query = query.order("like_count", desc=True).order("created_at", desc=True)
+                else:
+                    query = query.order("created_at", desc=True)
 
-            result = (query.range(offset, offset + limit - 1).execute())
+                return query
+
+            try:
+                result = build_query(sort).range(offset, offset + limit - 1).execute()
+            except Exception as error:
+                if sort == "top" and is_community_likes_schema_error(error):
+                    logger.warning(
+                        "Community likes schema unavailable; falling back to recent community generations"
+                    )
+                    result = build_query("recent").range(offset, offset + limit - 1).execute()
+                else:
+                    raise
 
             return result.data or []
 

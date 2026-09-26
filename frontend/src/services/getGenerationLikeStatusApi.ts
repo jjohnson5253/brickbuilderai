@@ -1,3 +1,5 @@
+import { readApiError } from "./apiError";
+
 // API Configuration
 const API_MODE = import.meta.env.VITE_API_MODE || 'local';
 const LOCAL_API_URL = import.meta.env.VITE_LOCAL_API_URL || 'http://127.0.0.1:8002';
@@ -45,8 +47,8 @@ export class GetGenerationLikeStatusApiService {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error: ${response.status} - ${errorText}`);
+      const errorMessage = await readApiError(response);
+      throw new Error(`API error: ${response.status} - ${errorMessage}`);
     }
 
     return response.json();

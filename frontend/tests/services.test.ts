@@ -90,6 +90,22 @@ describe('JSON API service contracts', () => {
     await expect(UpdateUsernameApiService.updateUsername('taken')).rejects.toBeInstanceOf(UsernameTakenError);
   });
 
+  it('extracts JSON error details for generation like services', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      fail(503, '{"detail":"Community likes are temporarily unavailable until the latest database migration is applied."}') as unknown as Response,
+    );
+    await expect(ToggleGenerationLikeApiService.toggleGenerationLike('g1', 'tok')).rejects.toThrow(
+      'API error: 503 - Community likes are temporarily unavailable until the latest database migration is applied.',
+    );
+
+    vi.mocked(fetch).mockResolvedValueOnce(
+      fail(500, '{"detail":"Like status unavailable"}') as unknown as Response,
+    );
+    await expect(GetGenerationLikeStatusApiService.getGenerationLikeStatus('g1', 'tok')).rejects.toThrow(
+      'API error: 500 - Like status unavailable',
+    );
+  });
+
   it('streams LLM brick-design thinking before returning the result', async () => {
     const result: LlmRenderResponse = {
       xyzrgb_content: 'xyz',

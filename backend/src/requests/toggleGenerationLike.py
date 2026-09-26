@@ -4,6 +4,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from ..utils.auth import handle_auth_and_tracking
+from ..utils.community_likes import (
+    COMMUNITY_LIKES_MIGRATION_REQUIRED_MESSAGE,
+    is_community_likes_schema_error,
+)
 from ..utils.generation_storage import generation_storage
 from ..utils.posthog_client import track_error
 
@@ -57,7 +61,7 @@ async def toggle_generation_like(
         generation_result = (
             generation_storage.client
             .table("generations")
-            .select("id, is_community, like_count")
+            .select("id, is_community")
             .eq("id", request.generation_id)
             .execute()
         )
@@ -75,55 +79,87 @@ async def toggle_generation_like(
                 detail="Only community models can be liked",
             )
 
-        existing_like = (
-            generation_storage.client
-            .table("generation_likes")
-            .select("generation_id")
-            .eq("generation_id", request.generation_id)
-            .eq("user_id", authenticated_user_id)
-            .limit(1)
-            .execute()
-        )
+        try:
+            existing_like = (
+                generation_storage.client
+                .table("generation_likes")
+                .select("generation_id")
+                .eq("generation_id", request.generation_id)
+                .eq("user_id", authenticated_user_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as error:
+            if is_community_likes_schema_error(error):
+                raise HTTPException(
+                    status_code=503,
+                    detail=COMMUNITY_LIKES_MIGRATION_REQUIRED_MESSAGE,
+                ) from error
+            raise
 
         has_liked = not bool(existing_like.data)
         if has_liked:
-            insert_result = (
-                generation_storage.client
-                .table("generation_likes")
-                .insert({
-                    "generation_id": request.generation_id,
-                    "user_id": authenticated_user_id,
-                })
-                .execute()
-            )
+            try:
+                insert_result = (
+                    generation_storage.client
+                    .table("generation_likes")
+                    .insert({
+                        "generation_id": request.generation_id,
+                        "user_id": authenticated_user_id,
+                    })
+                    .execute()
+                )
+            except Exception as error:
+                if is_community_likes_schema_error(error):
+                    raise HTTPException(
+                        status_code=503,
+                        detail=COMMUNITY_LIKES_MIGRATION_REQUIRED_MESSAGE,
+                    ) from error
+                raise
             if not insert_result.data:
                 raise HTTPException(
                     status_code=500,
                     detail=f"Failed to add like for generation {request.generation_id}",
                 )
         else:
-            delete_result = (
-                generation_storage.client
-                .table("generation_likes")
-                .delete()
-                .eq("generation_id", request.generation_id)
-                .eq("user_id", authenticated_user_id)
-                .execute()
-            )
+            try:
+                delete_result = (
+                    generation_storage.client
+                    .table("generation_likes")
+                    .delete()
+                    .eq("generation_id", request.generation_id)
+                    .eq("user_id", authenticated_user_id)
+                    .execute()
+                )
+            except Exception as error:
+                if is_community_likes_schema_error(error):
+                    raise HTTPException(
+                        status_code=503,
+                        detail=COMMUNITY_LIKES_MIGRATION_REQUIRED_MESSAGE,
+                    ) from error
+                raise
             if delete_result.data is None:
                 raise HTTPException(
                     status_code=500,
                     detail=f"Failed to remove like for generation {request.generation_id}",
                 )
 
-        refreshed_generation = (
-            generation_storage.client
-            .table("generations")
-            .select("like_count")
-            .eq("id", request.generation_id)
-            .limit(1)
-            .execute()
-        )
+        try:
+            refreshed_generation = (
+                generation_storage.client
+                .table("generations")
+                .select("like_count")
+                .eq("id", request.generation_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as error:
+            if is_community_likes_schema_error(error):
+                raise HTTPException(
+                    status_code=503,
+                    detail=COMMUNITY_LIKES_MIGRATION_REQUIRED_MESSAGE,
+                ) from error
+            raise
         refreshed_row = (refreshed_generation.data or [{}])[0]
 
         return ToggleGenerationLikeResponse(
