@@ -66,6 +66,11 @@ const GENERATION_METHOD_PRESETS: Array<{
   description: string;
 }> = [
   {
+    label: "image-to-glb",
+    value: "3d",
+    description: "Convert an image into a 3D model",
+  },
+  {
     label: "LLM Render",
     value: "llm",
     description: "Have an AI model design the brick model directly",
@@ -154,7 +159,7 @@ export function GenerationMethodSelector({
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">Generation method:</span>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          {GENERATION_METHOD_PRESETS.filter((method) => method.value === "llm").map((method) => {
+          {GENERATION_METHOD_PRESETS.map((method) => {
             const active = method.value === value;
             return (
               <button
@@ -162,6 +167,7 @@ export function GenerationMethodSelector({
                 type="button"
                 onClick={() => {
                   if (disabled) return;
+                  if (active) return;
                   onChange(method.value);
                   posthog.capture('landing_generation_method_selected', {
                     generation_method: method.value,
