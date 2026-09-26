@@ -1489,38 +1489,45 @@ function LandingHeader({ onLoginClick }: { onLoginClick: () => void }) {
 
 export const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: FeaturedItem[] }) {
   const navigate = useNavigate();
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(items.length > 0);
+  const [itemsPerPage, setItemsPerPage] = useState(4);
+  const [currentPage, setCurrentPage] = useState(0);
 
   useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-
-    const updateScrollState = () => {
-      const maxScrollLeft = Math.max(viewport.scrollWidth - viewport.clientWidth, 0);
-      setCanScrollLeft(viewport.scrollLeft > 4);
-      setCanScrollRight(viewport.scrollLeft < maxScrollLeft - 4);
+    const updateItemsPerPage = () => {
+      if (window.innerWidth >= 1280) {
+        setItemsPerPage(4);
+      } else if (window.innerWidth >= 1024) {
+        setItemsPerPage(3);
+      } else if (window.innerWidth >= 640) {
+        setItemsPerPage(2);
+      } else {
+        setItemsPerPage(1);
+      }
     };
 
-    updateScrollState();
-    viewport.addEventListener('scroll', updateScrollState, { passive: true });
-    window.addEventListener('resize', updateScrollState);
+    updateItemsPerPage();
+    window.addEventListener('resize', updateItemsPerPage);
 
     return () => {
-      viewport.removeEventListener('scroll', updateScrollState);
-      window.removeEventListener('resize', updateScrollState);
+      window.removeEventListener('resize', updateItemsPerPage);
     };
-  }, [items]);
+  }, []);
+
+  const pages: FeaturedItem[][] = [];
+  for (let index = 0; index < items.length; index += itemsPerPage) {
+    pages.push(items.slice(index, index + itemsPerPage));
+  }
+
+  useEffect(() => {
+    setCurrentPage((previous) => Math.min(previous, Math.max(pages.length - 1, 0)));
+  }, [pages.length]);
 
   const handleScroll = (direction: 'left' | 'right') => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-
-    const delta = viewport.clientWidth * 0.85 * (direction === 'left' ? -1 : 1);
-    viewport.scrollTo({
-      left: viewport.scrollLeft + delta,
-      behavior: 'smooth',
+    setCurrentPage((previous) => {
+      if (direction === 'left') {
+        return Math.max(previous - 1, 0);
+      }
+      return Math.min(previous + 1, Math.max(pages.length - 1, 0));
     });
 
     posthog.capture('landing_featured_models_arrow_clicked', {
@@ -1536,69 +1543,65 @@ export const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: Fea
         type="button"
         aria-label="Scroll community models left"
         onClick={() => handleScroll('left')}
-        disabled={!canScrollLeft}
+        disabled={currentPage === 0}
         className="absolute left-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md transition hover:border-[#f44336] hover:text-[#f44336] disabled:cursor-not-allowed disabled:opacity-40 sm:left-4"
       >
         <ChevronLeft className="h-5 w-5" />
       </button>
-      <div
-        ref={viewportRef}
-        className="overflow-x-auto overflow-y-hidden"
-        style={{
-          scrollBehavior: 'smooth',
-          touchAction: 'none',
-          scrollbarWidth: 'none',
-          msOverflowStyle: 'none',
-        }}
-      >
-        <div className="flex gap-6 py-1">
-          {items.map((item) => (
-            <article
-              key={item.id}
-              className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
-              style={{
-                width: "clamp(10rem, 18vw, 17rem)",
-                flex: "0 0 clamp(10rem, 18vw, 17rem)",
-              }}
-            >
-              <div
-                className="relative w-full overflow-hidden rounded-xl bg-slate-50"
-                style={{ paddingTop: "100%" }}
-              >
-                {item.imageUrl ? (
-                  <img
-                    src={item.imageUrl}
-                    alt={item.title}
-                    className="absolute left-0 top-0 h-full w-full object-cover"
-                    draggable="false"
-                    onDragStart={(e) => e.preventDefault()}
-                  />
-                ) : (
-                  <div className="absolute inset-0 flex items-center justify-center text-slate-300">
-                    <Sparkles className="h-10 w-10" />
-                  </div>
-                )}
+      <div className="overflow-hidden">
+        <div
+          className="flex transition-transform duration-300 ease-out"
+          style={{ transform: `translateX(-${currentPage * 100}%)` }}
+        >
+          {pages.map((pageItems, pageIndex) => (
+            <div key={`page-${pageIndex}`} className="w-full flex-shrink-0">
+              <div className="grid grid-cols-1 gap-6 px-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {pageItems.map((item) => (
+                  <article
+                    key={item.id}
+                    className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+                  >
+                    <div
+                      className="relative w-full overflow-hidden rounded-xl bg-slate-50"
+                      style={{ paddingTop: "100%" }}
+                    >
+                      {item.imageUrl ? (
+                        <img
+                          src={item.imageUrl}
+                          alt={item.title}
+                          className="absolute left-0 top-0 h-full w-full object-cover"
+                          draggable="false"
+                          onDragStart={(e) => e.preventDefault()}
+                        />
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center text-slate-300">
+                          <Sparkles className="h-10 w-10" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-3 text-center">
+                      <h3 className="text-sm font-semibold text-slate-800 mb-1 line-clamp-2 min-h-[2.5rem]">{item.title}</h3>
+                      <p className="text-xs text-slate-600 truncate">
+                        {item.creator ? `By ${item.creator}` : 'Shared by the community'}
+                      </p>
+                      <div className="mt-1 flex items-center justify-center gap-3 text-xs text-slate-500">
+                        <span className="inline-flex items-center gap-1">
+                          <Heart className="h-3.5 w-3.5 fill-current text-rose-500" />
+                          {item.likeCount}
+                        </span>
+                        <span>{new Date(item.createdAt).toLocaleDateString()}</span>
+                      </div>
+                      <button
+                        onClick={() => navigate(`/generated-model?id=${item.id}`)}
+                        className="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 h-9 text-xs hover:bg-slate-50 cursor-pointer"
+                      >
+                        <Eye className="w-4 h-4"/> View Model
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
-              <div className="mt-3 text-center">
-                <h3 className="text-sm font-semibold text-slate-800 mb-1 line-clamp-2 min-h-[2.5rem]">{item.title}</h3>
-                <p className="text-xs text-slate-600 truncate">
-                  {item.creator ? `By ${item.creator}` : 'Shared by the community'}
-                </p>
-                <div className="mt-1 flex items-center justify-center gap-3 text-xs text-slate-500">
-                  <span className="inline-flex items-center gap-1">
-                    <Heart className="h-3.5 w-3.5 fill-current text-rose-500" />
-                    {item.likeCount}
-                  </span>
-                  <span>{new Date(item.createdAt).toLocaleDateString()}</span>
-                </div>
-                <button
-                  onClick={() => navigate(`/generated-model?id=${item.id}`)}
-                  className="mt-2 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 h-9 text-xs hover:bg-slate-50 cursor-pointer"
-                >
-                  <Eye className="w-4 h-4"/> View Model
-                </button>
-              </div>
-            </article>
+            </div>
           ))}
         </div>
       </div>
@@ -1606,7 +1609,7 @@ export const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: Fea
         type="button"
         aria-label="Scroll community models right"
         onClick={() => handleScroll('right')}
-        disabled={!canScrollRight}
+        disabled={currentPage >= pages.length - 1}
         className="absolute right-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md transition hover:border-[#f44336] hover:text-[#f44336] disabled:cursor-not-allowed disabled:opacity-40 sm:right-4"
       >
         <ChevronRight className="h-5 w-5" />

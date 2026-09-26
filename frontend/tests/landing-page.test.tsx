@@ -151,6 +151,47 @@ describe('LandingPage', () => {
     }
   });
 
+  it('disables carousel arrows when the featured models fit on one page', async () => {
+    vi.spyOn(GetUserGenerationsApiService, 'getProcessingGenerations').mockResolvedValue([]);
+    vi.spyOn(GetGenerationStatsApiService, 'getGenerationStats').mockResolvedValue({ generation_count: 12, brick_count: 400 });
+    vi.spyOn(GetCommunityGenerationsApiService, 'getCommunityGenerations').mockResolvedValue({
+      generations: [{
+        id: 'generation-1',
+        user_id: 'owner-1',
+        user_type: 'authenticated',
+        prompt: 'castle',
+        name: 'Solo Model',
+        detail_level: 10,
+        endpoint: 'llm',
+        created_at: '2026-09-26T00:00:00Z',
+        status: 'completed',
+        preview_image_url: 'https://example.com/model-1.png',
+        username: 'builder-1',
+        like_count: 9,
+      }],
+      total_count: 1,
+      has_more: false,
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ stargazers_count: 10 }),
+    }));
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(<LandingPage />));
+
+      expect((container.querySelector('[aria-label="Scroll community models left"]') as HTMLButtonElement).disabled).toBe(true);
+      expect((container.querySelector('[aria-label="Scroll community models right"]') as HTMLButtonElement).disabled).toBe(true);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
   it('uses the updated hero headline', () => {
     const markup = renderToStaticMarkup(<LandingPage />);
 
