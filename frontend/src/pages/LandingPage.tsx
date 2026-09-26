@@ -1,6 +1,6 @@
 
 import React, { useEffect, useLayoutEffect, useRef, useState, memo } from "react";
-import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, X, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard, Box } from "lucide-react";
+import { Sparkles, Image as ImageIcon, Users, Calendar, Eye, Settings, MessageSquare, Wand2, Package, Github, LayoutDashboard, Box } from "lucide-react";
 import { SEO } from "../components/SEO";
 import FallingBricks from "../components/FallingBricks";
 import LoginModal from "../components/LoginModal";
@@ -58,13 +58,6 @@ const MODEL_QUALITY_PRESETS: { label: string; value: ModelQuality; modelOption: 
   { label: "Premium", value: "premium", modelOption: "b" },
 ];
 
-type StyleOption = "videogame" | "plush" | "voxel";
-const STYLE_PRESETS: { label: string; value: StyleOption; promptOption: string }[] = [
-  { label: "Videogame", value: "videogame", promptOption: "a" },
-  { label: "Plush", value: "plush", promptOption: "b" },
-  { label: "Block", value: "voxel", promptOption: "c" },
-];
-
 type GenerationMethod = "3d" | "llm";
 export const DEFAULT_GENERATION_METHOD: GenerationMethod = "llm";
 const GENERATION_METHOD_PRESETS: Array<{
@@ -72,11 +65,6 @@ const GENERATION_METHOD_PRESETS: Array<{
   value: GenerationMethod;
   description: string;
 }> = [
-  {
-    label: "3D Render",
-    value: "3d",
-    description: "Create a 3D model, then convert it into bricks",
-  },
   {
     label: "LLM Render",
     value: "llm",
@@ -137,15 +125,59 @@ export function GenerationMethodSelector({
     });
   };
 
+  const handleImageToGlbChange = (modelId: ThreeDModel) => {
+    if (disabled) return;
+    onChange("3d");
+    posthog.capture('landing_generation_method_selected', {
+      generation_method: '3d',
+    });
+    onThreeDModelChange(modelId);
+    posthog.capture('landing_render_model_selected', {
+      generation_method: '3d',
+      model: modelId,
+      provider: '3d',
+    });
+  };
+
+  const threeDDescription = THREE_D_MODEL_OPTIONS.find((option) => option.id === threeDModel)?.description;
+
   return (
     <div
       className="flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm"
       style={{ zIndex: 25 }}
     >
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">image-to-glb:</span>
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          {THREE_D_MODEL_OPTIONS.map((option) => {
+            const active = value === "3d" && option.id === threeDModel;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => handleImageToGlbChange(option.id)}
+                className={`min-h-10 flex-1 rounded-full px-4 py-2 text-sm transition-all duration-150 sm:flex-none ${
+                  active
+                    ? "border border-transparent bg-[#f44336] text-white"
+                    : "border border-slate-300 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50"
+                }`}
+                aria-pressed={active}
+                disabled={disabled}
+                title={option.description}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+        {value === "3d" && (
+          <p className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-40">{threeDDescription}</p>
+        )}
+      </div>
+      <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">Generation method:</span>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          {GENERATION_METHOD_PRESETS.map((method) => {
+          {GENERATION_METHOD_PRESETS.filter((method) => method.value === "llm").map((method) => {
             const active = method.value === value;
             return (
               <button
@@ -173,31 +205,29 @@ export function GenerationMethodSelector({
           })}
         </div>
       </div>
-      <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
-        <label htmlFor={modelSelectId} className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
-          {value === "3d" ? "3D model:" : "LLM model:"}
-        </label>
-        <select
-          id={modelSelectId}
-          value={value === "3d" ? threeDModel : llmModel}
-          onChange={(event) => handleModelChange(event.target.value)}
-          disabled={disabled}
-          className="min-h-10 w-full min-w-0 cursor-pointer rounded-full border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition-colors hover:border-red-200 focus:border-[#f44336] focus:outline-none focus:ring-2 focus:ring-red-100 disabled:cursor-not-allowed sm:w-56"
-        >
-          {value === "3d"
-            ? THREE_D_MODEL_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>{option.label}</option>
-              ))
-            : LLM_PROVIDER_GROUPS.map((group) => (
-                <optgroup key={group.provider} label={group.label}>
-                  {LLM_MODEL_OPTIONS.filter((option) => option.provider === group.provider).map((option) => (
-                    <option key={option.id} value={option.id}>{option.label}</option>
-                  ))}
-                </optgroup>
-              ))}
-        </select>
-        <p className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-40">{modelDescription}</p>
-      </div>
+      {value === "llm" && (
+        <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <label htmlFor={modelSelectId} className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
+            LLM model:
+          </label>
+          <select
+            id={modelSelectId}
+            value={llmModel}
+            onChange={(event) => handleModelChange(event.target.value)}
+            disabled={disabled}
+            className="min-h-10 w-full min-w-0 cursor-pointer rounded-full border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition-colors hover:border-red-200 focus:border-[#f44336] focus:outline-none focus:ring-2 focus:ring-red-100 disabled:cursor-not-allowed sm:w-56"
+          >
+            {LLM_PROVIDER_GROUPS.map((group) => (
+              <optgroup key={group.provider} label={group.label}>
+                {LLM_MODEL_OPTIONS.filter((option) => option.provider === group.provider).map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <p className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-40">{modelDescription}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -336,7 +366,6 @@ export default function LandingPage() {
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState<SizeValue>("big");
   const [modelQuality, setModelQuality] = useState<ModelQuality>("regular");
-  const [styleOption, setStyleOption] = useState<StyleOption>("videogame");
   const [generationMethod, setGenerationMethod] = useState<GenerationMethod>(DEFAULT_GENERATION_METHOD);
   const [threeDModel, setThreeDModel] = useState<ThreeDModel>(DEFAULT_THREE_D_MODEL);
   const [llmModel, setLlmModel] = useState<string>(DEFAULT_LLM_MODEL);
@@ -419,7 +448,6 @@ export default function LandingPage() {
         prompt?: string;
         size?: SizeValue;
         modelQuality?: ModelQuality;
-        styleOption?: StyleOption;
         generationMethod?: string;
         threeDModel?: string;
         llmModel?: string;
@@ -429,7 +457,6 @@ export default function LandingPage() {
       if (typeof payload.prompt === 'string') setPrompt(payload.prompt);
       if (payload.size) setSize(payload.size);
       if (payload.modelQuality) setModelQuality(payload.modelQuality);
-      if (payload.styleOption) setStyleOption(payload.styleOption);
       if (payload.generationMethod === '3d' || payload.generationMethod === 'llm') {
         setGenerationMethod(payload.generationMethod);
       }
@@ -553,7 +580,6 @@ export default function LandingPage() {
         prompt,
         size,
         modelQuality,
-        styleOption,
         generationMethod,
         threeDModel,
         llmModel,
@@ -619,8 +645,7 @@ export default function LandingPage() {
       // Get modelOption based on quality selection
       const modelOption = MODEL_QUALITY_PRESETS.find(q => q.value === modelQuality)?.modelOption || 'b';
       
-      // Get promptOption based on style selection
-      const promptOption = STYLE_PRESETS.find(st => st.value === styleOption)?.promptOption || 'a';
+      const promptOption = 'a';
       
       // Get auth token if user is logged in
       const authToken = session?.access_token;
@@ -1062,30 +1087,6 @@ export default function LandingPage() {
                 onThreeDModelChange={setThreeDModel}
                 onLlmModelChange={setLlmModel}
               />
-            )}
-
-            {/* Style chips - hidden during loading and unused for LLM Render */}
-            {!loading && !areOptionsHidden && generationMethod === '3d' && (
-              <div className="flex flex-wrap items-center justify-center gap-3 relative" style={{ zIndex: 25 }}>
-                <span className="text-sm text-slate-500">Style:</span>
-                {STYLE_PRESETS.map((st) => {
-                  const active = st.value === styleOption;
-                  return (
-                    <button
-                      key={st.value}
-                      onClick={() => !loading && setStyleOption(st.value)}
-                      className={`rounded-full px-4 py-1 text-sm transition-all duration-150 ${
-                        active
-                          ? "bg-[#f44336] text-white border border-transparent"
-                          : "bg-white text-slate-700 border border-slate-300 hover:opacity-70"
-                      } ${loading ? "cursor-not-allowed" : "cursor-pointer"}`}
-                      disabled={loading}
-                    >
-                      {st.label}
-                    </button>
-                  );
-                })}
-              </div>
             )}
 
             {/* Upload GLB toggle - lives in settings */}

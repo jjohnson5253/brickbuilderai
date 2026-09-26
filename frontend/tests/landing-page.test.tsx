@@ -113,7 +113,7 @@ describe('LandingPage', () => {
     expect(markup).not.toContain('Create and Build');
   });
 
-  it('defaults to LLM Render with Claude Opus 5.5, and SAM3D for 3D Render', () => {
+  it('defaults to LLM Render with Claude Opus 5.5, and SAM3D for image-to-glb', () => {
     expect(DEFAULT_GENERATION_METHOD).toBe('llm');
     expect(DEFAULT_THREE_D_MODEL).toBe('sam3d');
     expect(DEFAULT_LLM_MODEL).toBe('claude-opus-5-5');
@@ -121,21 +121,23 @@ describe('LandingPage', () => {
     const markup = renderToStaticMarkup(
       <GenerationMethodSelector value="3d" onChange={() => undefined} />,
     );
-    expect(markup).toContain('3D Render');
+    expect(markup).toContain('image-to-glb:');
+    expect(markup).not.toContain('3D Render');
     expect(markup).toContain('LLM Render');
-    expect(markup).toMatch(/<option value="sam3d" selected="">SAM3D<\/option>/);
-    expect(markup).toContain('<option value="trellis">Trellis</option>');
+    expect(markup).toMatch(/aria-pressed="true"[^>]*>SAM3D/);
+    expect(markup).toContain('Trellis');
   });
 
-  it('offers SAM3D and Trellis for 3D Render', () => {
+  it('offers SAM3D and Trellis for image-to-glb without the old 3D style controls', () => {
     const markup = renderToStaticMarkup(
       <GenerationMethodSelector value="3d" threeDModel="trellis" onChange={() => undefined} />,
     );
 
     expect(markup).toContain('Generation method:');
-    expect(markup).toContain('3D model:');
-    expect(markup).toMatch(/<option value="trellis" selected="">Trellis<\/option>/);
-    expect(markup).not.toContain('Claude Opus 5.5');
+    expect(markup).toContain('image-to-glb:');
+    expect(markup).toMatch(/aria-pressed="true"[^>]*>Trellis/);
+    expect(markup).not.toContain('3D model:');
+    expect(markup).not.toContain('LLM model:');
   });
 
   it('offers grouped Claude and OpenAI models for LLM Render, defaulting to Opus 5.5', () => {
@@ -144,15 +146,16 @@ describe('LandingPage', () => {
     );
 
     expect(markup).toContain('LLM model:');
+    expect(markup).toContain('image-to-glb:');
     expect(markup).toContain('<optgroup label="Claude">');
     expect(markup).toContain('<optgroup label="OpenAI">');
     expect(markup).toMatch(/<option value="claude-opus-5-5" selected="">Claude Opus 5.5<\/option>/);
     expect(markup).toContain('<option value="gpt-5.6-sol">GPT-5.6 Sol</option>');
-    expect(markup).not.toContain('SAM3D');
+    expect(markup).toContain('SAM3D');
     expect(markup).toMatch(/aria-pressed="true"[^>]*>LLM Render/);
   });
 
-  it('reports method changes and model selections through the shared controls', () => {
+  it('reports method changes and model selections through the shared controls', async () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -172,11 +175,20 @@ describe('LandingPage', () => {
         );
       });
 
-      const threeDButton = Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent === '3D Render',
+      const trellisButton = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Trellis',
       );
-      act(() => threeDButton?.click());
+      act(() => trellisButton?.click());
       expect(onChange).toHaveBeenCalledWith('3d');
+      expect(onThreeDModelChange).toHaveBeenCalledWith('trellis');
+      expect((await import('posthog-js')).default.capture).toHaveBeenCalledWith('landing_generation_method_selected', {
+        generation_method: '3d',
+      });
+      expect((await import('posthog-js')).default.capture).toHaveBeenCalledWith('landing_render_model_selected', {
+        generation_method: '3d',
+        model: 'trellis',
+        provider: '3d',
+      });
 
       const llmSelect = container.querySelector('select') as HTMLSelectElement;
       act(() => {
@@ -189,6 +201,7 @@ describe('LandingPage', () => {
         root.render(
           <GenerationMethodSelector
             value="3d"
+            threeDModel="sam3d"
             onChange={onChange}
             onThreeDModelChange={onThreeDModelChange}
             onLlmModelChange={onLlmModelChange}
@@ -196,12 +209,13 @@ describe('LandingPage', () => {
         );
       });
 
-      const threeDSelect = container.querySelector('select') as HTMLSelectElement;
+      const llmButton = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'LLM Render',
+      );
       act(() => {
-        threeDSelect.value = 'trellis';
-        threeDSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        llmButton?.click();
       });
-      expect(onThreeDModelChange).toHaveBeenCalledWith('trellis');
+      expect(onChange).toHaveBeenCalledWith('llm');
     } finally {
       act(() => root.unmount());
       container.remove();
@@ -218,11 +232,15 @@ describe('LandingPage', () => {
       const markup = renderToStaticMarkup(<LandingPage />);
 
       expect(markup).toContain('Generation method:');
-      expect(markup).toContain('3D Render');
+      expect(markup).toContain('image-to-glb:');
+      expect(markup).not.toContain('3D Render');
       expect(markup).toContain('LLM Render');
       expect(markup).toContain('LLM model:');
       expect(markup).toContain('Claude Opus 5.5');
       expect(markup).toContain('GPT-5.6 Sol');
+      expect(markup).not.toContain('Style:');
+      expect(markup).not.toContain('Plush');
+      expect(markup).not.toContain('Block');
     } finally {
       delete window.__BRICKBUILDER_NATIVE_APP__;
     }
