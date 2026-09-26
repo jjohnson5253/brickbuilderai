@@ -112,6 +112,7 @@ export function GenerationMethodSelector({
   onLlmModelChange?: (value: string) => void;
 }) {
   const modelSelectId = "landing-render-model";
+  const generationMethodButtonPresets = GENERATION_METHOD_PRESETS.filter((method) => method.value !== "3d");
   const modelDescription = value === "3d"
     ? THREE_D_MODEL_OPTIONS.find((option) => option.id === threeDModel)?.description
     : GENERATION_METHOD_PRESETS.find((method) => method.value === value)?.description;
@@ -159,7 +160,7 @@ export function GenerationMethodSelector({
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">Generation method:</span>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          {GENERATION_METHOD_PRESETS.filter((method) => method.value !== "3d").map((method) => {
+          {generationMethodButtonPresets.map((method) => {
             const active = method.value === value;
             return (
               <button
