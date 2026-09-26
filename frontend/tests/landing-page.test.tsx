@@ -123,10 +123,12 @@ describe('LandingPage', () => {
     );
     expect(markup).toContain('Render model:');
     expect(markup).not.toContain('3D Render');
-    expect(markup).toContain('LLM Render');
+    expect(markup).not.toContain('LLM Render');
+    expect(markup).not.toContain('Generation method:');
     expect(markup).not.toMatch(/>image-to-glb<\/button>/);
     expect(markup).toContain('<optgroup label="image-to-glb">');
     expect(markup).toMatch(/<option value="sam3d"[^>]*selected="">SAM3D<\/option>/);
+    expect(markup).toContain('Claude Opus 5.5');
     expect(markup).toContain('Trellis');
   });
 
@@ -135,7 +137,7 @@ describe('LandingPage', () => {
       <GenerationMethodSelector value="3d" threeDModel="trellis" onChange={() => undefined} />,
     );
 
-    expect(markup).toContain('Generation method:');
+    expect(markup).not.toContain('Generation method:');
     expect(markup).toContain('Render model:');
     expect(markup).not.toMatch(/>image-to-glb<\/button>/);
     expect(markup).toContain('<optgroup label="image-to-glb">');
@@ -155,7 +157,7 @@ describe('LandingPage', () => {
     expect(markup).toMatch(/<option value="claude-opus-5-5"[^>]*selected="">Claude Opus 5.5<\/option>/);
     expect(markup).toMatch(/<option value="gpt-5.6-sol"[^>]*>GPT-5.6 Sol<\/option>/);
     expect(markup).toContain('SAM3D');
-    expect(markup).toMatch(/aria-pressed="true"[^>]*>LLM Render/);
+    expect(markup).not.toContain('Generation method:');
   });
 
   it('reports method changes and model selections through the shared controls', async () => {
@@ -283,11 +285,11 @@ describe('LandingPage', () => {
     try {
       const markup = renderToStaticMarkup(<LandingPage />);
 
-      expect(markup).toContain('Generation method:');
+      expect(markup).not.toContain('Generation method:');
       expect(markup).toContain('<optgroup label="image-to-glb">');
       expect(markup).not.toMatch(/>image-to-glb<\/button>/);
       expect(markup).not.toContain('3D Render');
-      expect(markup).toContain('LLM Render');
+      expect(markup).not.toContain('LLM Render');
       expect(markup).toContain('Render model:');
       expect(markup).toContain('Claude Opus 5.5');
       expect(markup).toContain('GPT-5.6 Sol');

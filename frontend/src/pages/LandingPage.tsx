@@ -65,19 +65,16 @@ const GENERATION_METHOD_PRESETS: Array<{
   label: string;
   value: GenerationMethod;
   description: string;
-  showAsButton: boolean;
 }> = [
   {
     label: "image-to-glb",
     value: "3d",
     description: "Convert an image into a 3D model",
-    showAsButton: false,
   },
   {
     label: "LLM Render",
     value: "llm",
     description: "Have an AI model design the brick model directly",
-    showAsButton: true,
   },
 ];
 
@@ -116,7 +113,6 @@ export function GenerationMethodSelector({
   onLlmModelChange?: (value: string) => void;
 }) {
   const modelSelectId = "landing-render-model";
-  const generationMethodButtonPresets = GENERATION_METHOD_PRESETS.filter((method) => method.showAsButton);
   const modelDescription = value === "3d"
     ? THREE_D_MODEL_OPTIONS.find((option) => option.id === threeDModel)?.description
     : GENERATION_METHOD_PRESETS.find((method) => method.value === value)?.description;
@@ -161,38 +157,6 @@ export function GenerationMethodSelector({
       className="flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm"
       style={{ zIndex: 25 }}
     >
-      <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
-        <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">Generation method:</span>
-        <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          {generationMethodButtonPresets.map((method) => {
-            const active = method.value === value;
-            return (
-              <button
-                key={method.value}
-                type="button"
-                onClick={() => {
-                  if (disabled) return;
-                  if (active) return;
-                  onChange(method.value);
-                  posthog.capture('landing_generation_method_selected', {
-                    generation_method: method.value,
-                  });
-                }}
-                className={`min-h-10 flex-1 rounded-full px-4 py-2 text-sm transition-all duration-150 sm:flex-none ${
-                  active
-                    ? "border border-transparent bg-[#f44336] text-white"
-                    : "border border-slate-300 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50"
-                }`}
-                aria-pressed={active}
-                disabled={disabled}
-                title={method.description}
-              >
-                {method.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <label htmlFor={modelSelectId} className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
           Render model:
