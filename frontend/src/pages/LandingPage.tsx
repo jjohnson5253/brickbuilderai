@@ -159,7 +159,7 @@ export function GenerationMethodSelector({
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">Generation method:</span>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-          {GENERATION_METHOD_PRESETS.map((method) => {
+          {GENERATION_METHOD_PRESETS.filter((method) => method.value !== "3d").map((method) => {
             const active = method.value === value;
             return (
               <button

@@ -124,6 +124,7 @@ describe('LandingPage', () => {
     expect(markup).toContain('Render model:');
     expect(markup).not.toContain('3D Render');
     expect(markup).toContain('LLM Render');
+    expect(markup).not.toMatch(/>image-to-glb<\/button>/);
     expect(markup).toContain('<optgroup label="image-to-glb">');
     expect(markup).toMatch(/<option value="sam3d"[^>]*selected="">SAM3D<\/option>/);
     expect(markup).toContain('Trellis');
@@ -136,6 +137,7 @@ describe('LandingPage', () => {
 
     expect(markup).toContain('Generation method:');
     expect(markup).toContain('Render model:');
+    expect(markup).not.toMatch(/>image-to-glb<\/button>/);
     expect(markup).toContain('<optgroup label="image-to-glb">');
     expect(markup).toMatch(/<option value="trellis"[^>]*selected="">Trellis<\/option>/);
     expect(markup).not.toContain('3D model:');
@@ -283,6 +285,7 @@ describe('LandingPage', () => {
 
       expect(markup).toContain('Generation method:');
       expect(markup).toContain('<optgroup label="image-to-glb">');
+      expect(markup).not.toMatch(/>image-to-glb<\/button>/);
       expect(markup).not.toContain('3D Render');
       expect(markup).toContain('LLM Render');
       expect(markup).toContain('Render model:');
