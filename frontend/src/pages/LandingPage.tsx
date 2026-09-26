@@ -147,7 +147,10 @@ export function GenerationMethodSelector({
       style={{ zIndex: 25 }}
     >
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
-        <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">image-to-glb:</span>
+        <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
+          <span className="sr-only">Image to GLB:</span>
+          <span aria-hidden="true">image-to-glb:</span>
+        </span>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
           {THREE_D_MODEL_OPTIONS.map((option) => {
             const active = value === "3d" && option.id === threeDModel;
