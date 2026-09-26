@@ -309,8 +309,8 @@ export class ImageToBricksApiService {
 
       const dataLines = event
         .split('\n')
-        .filter((line) => line.startsWith('data: '))
-        .map((line) => line.slice(6));
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).replace(/^ /, ''));
 
       if (dataLines.length === 0) return;
 
