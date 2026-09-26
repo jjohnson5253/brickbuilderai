@@ -58,8 +58,54 @@ vi.mock('../src/components/ProfileMenu', () => ({
 
 import LandingPage, { DEFAULT_GENERATION_METHOD, DEFAULT_THREE_D_MODEL, GenerationMethodSelector } from '../src/pages/LandingPage';
 import { DEFAULT_LLM_MODEL } from '../src/services/llmToBricksApi';
+import { LlmToBricksApiService } from '../src/services/llmToBricksApi';
+import { GetUserGenerationsApiService } from '../src/services/getUserGenerationsApi';
+import { GetGenerationStatsApiService } from '../src/services/getGenerationStatsApi';
+import { GetGenerationApiService } from '../src/services/getGenerationApi';
 
 describe('LandingPage', () => {
+  it('starts LLM jobs in the background and allows another submission while they run', async () => {
+    vi.spyOn(GetUserGenerationsApiService, 'getProcessingGenerations').mockResolvedValue([]);
+    vi.spyOn(GetGenerationStatsApiService, 'getGenerationStats').mockResolvedValue({ generation_count: 12, brick_count: 400 });
+    const start = vi.spyOn(LlmToBricksApiService, 'generate')
+      .mockResolvedValueOnce({ generation_id: 'one', message: 'Started' })
+      .mockResolvedValueOnce({ generation_id: 'two', message: 'Started' });
+    const stream = vi.spyOn(LlmToBricksApiService, 'generateStream');
+    const poll = vi.spyOn(GetGenerationApiService, 'pollUntilComplete');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<LandingPage />));
+      await act(async () => Array.from(container.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Generate')!.click());
+      expect(start).not.toHaveBeenCalled();
+      expect((await import('posthog-js')).default.capture).toHaveBeenCalledWith('landing_generate_clicked', expect.objectContaining({ has_prompt: false, has_image: false }));
+      const input = container.querySelector('input:not([type="file"])') as HTMLInputElement;
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Red castle');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      const generate = () => Array.from(container.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Generate')!;
+      await act(async () => generate().click());
+      expect(container.textContent).toContain('1 in progress');
+      expect(input.disabled).toBe(false);
+      await act(async () => generate().click());
+      expect(container.querySelectorAll('[aria-label="Your generations"] article')).toHaveLength(2);
+      expect(container.textContent).toContain('2 in progress');
+      expect(start).toHaveBeenCalledTimes(2);
+      expect((await import('posthog-js')).default.capture).toHaveBeenCalledWith('landing_generate_clicked', {
+        generation_method: 'llm', model: DEFAULT_LLM_MODEL, has_prompt: true,
+        has_image: false, size: 'big', is_authenticated: false,
+      });
+      expect(stream).not.toHaveBeenCalled();
+      expect(poll).not.toHaveBeenCalled();
+      expect(JSON.parse(localStorage.getItem('pending_generations:anonymous')!).map((row: { id: string }) => row.id)).toEqual(['two', 'one']);
+    } finally {
+      act(() => root.unmount());
+      container.remove();
+    }
+  });
+
   it('uses the updated hero headline', () => {
     const markup = renderToStaticMarkup(<LandingPage />);
 

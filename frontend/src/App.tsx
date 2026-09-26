@@ -17,6 +17,7 @@ import BestAiLegoDesignTools2026Page from "./pages/BestAiLegoDesignTools2026Page
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import { AnnouncementBanner } from "./components/AnnouncementBanner";
 import { ChangeRequestProvider } from "./components/ChangeRequestLauncher";
+import { FeedbackWidget } from "./components/FeedbackWidget";
 // import { ProtectedRoute } from "./components/ProtectedRoute";
 
 function ExternalRedirect({ to }: { to: string }) {
@@ -66,6 +67,7 @@ export default function App() {
         </Routes>
         {/* </ProtectedRoute> */}
       </ChangeRequestProvider>
+      <FeedbackWidget />
     </BrowserRouter>
   );
 }

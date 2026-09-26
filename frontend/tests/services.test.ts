@@ -131,6 +131,44 @@ describe('JSON API service contracts', () => {
     await expect(LlmRenderApiService.llmRenderStream('generation', 'xyz', 'image')).rejects.toThrow('Model unavailable');
   });
 
+  it('streams llmToBricks thinking notes before returning the generation id', async () => {
+    const thinking = vi.fn();
+    const started = vi.fn();
+    const result = { generation_id: 'g-stream', message: 'done' };
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ...ok({}),
+      body: sse([
+        'data: {"type":"started","generation_id":"g-stream"}\n\n',
+        'data: {"type":"thinking","delta":"Blocking out the body.\\n\\n"}\n\n',
+        `data: ${JSON.stringify({ type: 'result', data: result })}\n\n`,
+      ]),
+    } as unknown as Response);
+
+    await expect(
+      LlmToBricksApiService.generateStream({ prompt: ' castle ' }, 'tok', thinking, started),
+    ).resolves.toEqual(result);
+
+    const [url, options] = vi.mocked(fetch).mock.calls[0];
+    expect(String(url).endsWith('/llmToBricks/stream')).toBe(true);
+    expect(options).toMatchObject({
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: 'castle',
+        image_media_type: 'image/png',
+        detail_level: 40,
+        model: 'claude-opus-5-5',
+      }),
+    });
+    expect(started).toHaveBeenCalledWith('g-stream');
+    expect(thinking).toHaveBeenCalledWith('Blocking out the body.\n\n');
+
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ...ok({}),
+      body: sse(['data: {"type":"error","detail":"Model unavailable"}\n\n']),
+    } as unknown as Response);
+    await expect(LlmToBricksApiService.generateStream({ prompt: 'castle' })).rejects.toThrow('Model unavailable');
+  });
+
   it('validates required values before making requests', async () => {
     await expect(EstimatePriceApiService.estimatePrice('')).rejects.toThrow('LDR content is required');
     await expect(GetPriceApiService.getPrice('')).rejects.toThrow('Generation ID is required');
