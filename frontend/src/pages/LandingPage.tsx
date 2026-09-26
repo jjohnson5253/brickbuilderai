@@ -128,10 +128,12 @@ export function GenerationMethodSelector({
   const handleImageToGlbChange = (modelId: ThreeDModel) => {
     if (disabled) return;
     if (value === "3d" && threeDModel === modelId) return;
-    onChange("3d");
-    posthog.capture('landing_generation_method_selected', {
-      generation_method: '3d',
-    });
+    if (value !== "3d") {
+      onChange("3d");
+      posthog.capture('landing_generation_method_selected', {
+        generation_method: '3d',
+      });
+    }
     onThreeDModelChange(modelId);
     posthog.capture('landing_render_model_selected', {
       generation_method: '3d',

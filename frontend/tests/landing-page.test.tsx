@@ -162,6 +162,7 @@ describe('LandingPage', () => {
     const onChange = vi.fn();
     const onThreeDModelChange = vi.fn();
     const onLlmModelChange = vi.fn();
+    const capture = (await import('posthog-js')).default.capture;
 
     try {
       act(() => {
@@ -181,10 +182,10 @@ describe('LandingPage', () => {
       act(() => trellisButton?.click());
       expect(onChange).toHaveBeenCalledWith('3d');
       expect(onThreeDModelChange).toHaveBeenCalledWith('trellis');
-      expect((await import('posthog-js')).default.capture).toHaveBeenCalledWith('landing_generation_method_selected', {
+      expect(capture).toHaveBeenCalledWith('landing_generation_method_selected', {
         generation_method: '3d',
       });
-      expect((await import('posthog-js')).default.capture).toHaveBeenCalledWith('landing_render_model_selected', {
+      expect(capture).toHaveBeenCalledWith('landing_render_model_selected', {
         generation_method: '3d',
         model: 'trellis',
         provider: '3d',
@@ -208,6 +209,30 @@ describe('LandingPage', () => {
           />,
         );
       });
+
+      onChange.mockClear();
+      onThreeDModelChange.mockClear();
+      vi.mocked(capture).mockClear();
+
+      const activeThreeDButton = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Trellis',
+      );
+      act(() => {
+        activeThreeDButton?.click();
+      });
+      expect(onChange).not.toHaveBeenCalled();
+      expect(onThreeDModelChange).toHaveBeenCalledWith('trellis');
+      expect(capture).not.toHaveBeenCalledWith('landing_generation_method_selected', {
+        generation_method: '3d',
+      });
+      expect(capture).toHaveBeenCalledWith('landing_render_model_selected', {
+        generation_method: '3d',
+        model: 'trellis',
+        provider: '3d',
+      });
+
+      onChange.mockClear();
+      vi.mocked(capture).mockClear();
 
       const llmButton = Array.from(container.querySelectorAll('button')).find(
         (button) => button.textContent === 'LLM Render',
