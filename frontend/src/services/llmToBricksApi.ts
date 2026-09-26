@@ -37,6 +37,12 @@ export interface LlmToBricksResponse {
   message: string;
 }
 
+type LlmToBricksStreamEvent =
+  | { type: 'started'; generation_id: string }
+  | { type: 'thinking'; delta: string }
+  | { type: 'result'; data: LlmToBricksResponse }
+  | { type: 'error'; detail: string };
+
 const API_MODE = import.meta.env.VITE_API_MODE || 'local';
 const LOCAL_API_URL = import.meta.env.VITE_LOCAL_API_URL || 'http://127.0.0.1:8002';
 const RAILWAY_API_URL = import.meta.env.VITE_RAILWAY_API_URL || 'https://brickai-backend-production.up.railway.app';
@@ -49,10 +55,7 @@ const API_BASE_URL = API_MODE === 'local'
     : RAILWAY_API_URL;
 
 export class LlmToBricksApiService {
-  static async generate(
-    request: LlmToBricksRequest,
-    authToken?: string,
-  ): Promise<LlmToBricksResponse> {
+  private static buildRequestBody(request: LlmToBricksRequest) {
     const prompt = request.prompt?.trim();
     if (!prompt && !request.imageBase64) {
       throw new Error('A prompt or image is required');
@@ -62,19 +65,27 @@ export class LlmToBricksApiService {
       throw new Error(`Unsupported model: ${model}`);
     }
 
+    return {
+      prompt: prompt || undefined,
+      image_base64: request.imageBase64,
+      image_media_type: request.imageMediaType || 'image/png',
+      detail_level: request.detailLevel ?? 40,
+      model,
+    };
+  }
+
+  static async generate(
+    request: LlmToBricksRequest,
+    authToken?: string,
+  ): Promise<LlmToBricksResponse> {
+    const body = this.buildRequestBody(request);
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (authToken) headers.Authorization = 'Bearer ' + authToken;
 
     const response = await fetch(`${API_BASE_URL}/llmToBricks`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        prompt: prompt || undefined,
-        image_base64: request.imageBase64,
-        image_media_type: request.imageMediaType || 'image/png',
-        detail_level: request.detailLevel ?? 40,
-        model,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -94,5 +105,72 @@ export class LlmToBricksApiService {
       throw new Error('Invalid response from server: missing generation_id');
     }
     return responseData;
+  }
+
+  static async generateStream(
+    request: LlmToBricksRequest,
+    authToken?: string,
+    onThinking?: (delta: string) => void,
+    onStarted?: (generationId: string) => void,
+  ): Promise<LlmToBricksResponse> {
+    const body = this.buildRequestBody(request);
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (authToken) headers.Authorization = 'Bearer ' + authToken;
+
+    const response = await fetch(`${API_BASE_URL}/llmToBricks/stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = 'Failed to generate a brick model with the LLM';
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.error || errorData.detail || errorMessage;
+      } catch {
+        errorMessage = errorText || `${response.status} ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
+    }
+    if (!response.body) {
+      throw new Error('Response body is null — streaming not supported by browser');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: LlmToBricksResponse | undefined;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+
+      while (buffer.includes('\n\n')) {
+        const delimiterIndex = buffer.indexOf('\n\n');
+        const rawEvent = buffer.slice(0, delimiterIndex);
+        buffer = buffer.slice(delimiterIndex + 2);
+        if (!rawEvent.startsWith('data: ')) continue;
+
+        const event = JSON.parse(rawEvent.slice(6)) as LlmToBricksStreamEvent;
+        if (event.type === 'started') {
+          onStarted?.(event.generation_id);
+        } else if (event.type === 'thinking') {
+          onThinking?.(event.delta);
+        } else if (event.type === 'result') {
+          result = event.data;
+        } else if (event.type === 'error') {
+          throw new Error(event.detail);
+        }
+      }
+
+      if (done) break;
+    }
+
+    if (!result?.generation_id) {
+      throw new Error('LLM brick-design stream ended without a result');
+    }
+    return result;
   }
 }

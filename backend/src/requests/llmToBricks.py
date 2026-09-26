@@ -8,7 +8,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 import httpx
 from fastapi import Depends, HTTPException
@@ -39,6 +39,8 @@ from ..utils.posthog_client import track_error, track_image_conversion
 from .imageToBricks import ImageToBricksResponse
 
 logger = logging.getLogger(__name__)
+
+ThinkingCallback = Callable[[str], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -188,7 +190,8 @@ Create a complete, physically connected, stable model from the user's text and/o
 official LDraw part references through the submit_ldr_model tool. Use common, currently available parts,
 standard integer LDraw color codes, valid type-1 transformation matrices, and useful 0 STEP boundaries.
 Orient the finished model upright with its lowest bricks at y=0. Prefer a practical 150-500 piece model;
-use fewer pieces for a simple subject and never exceed 5,000 pieces. Do not use MPD submodels, embedded
+use fewer pieces for a simple subject and never exceed 5,000 pieces. Before each submit_ldr_model call,
+briefly explain the design direction in 1-3 concise sentences. Do not use MPD submodels, embedded
 files, custom geometry, stickers, base64, Markdown fences, or explanatory prose inside ldr_content."""
 
 DIRECT_TOOLS = [
@@ -333,6 +336,11 @@ After each build you get a report and two isometric renders (front-left and back
 are told about. When you review a successful build, compare it to the request/reference; if it looks
 right call accept_design, otherwise submit an improved design."""
 
+DESIGN_SYSTEM_PROMPT += """
+
+Before each submit_brick_design call, briefly explain in 1-3 concise sentences what you are changing and
+why so the user can follow along while the model is being designed."""
+
 DESIGN_TOOLS = [
     ToolSpec(
         name="submit_brick_design",
@@ -395,7 +403,19 @@ def voxel_extent(xyzrgb: str) -> int:
     return max(max(axis) - min(axis) + 1 for axis in zip(*coords)) if coords else 0
 
 
-async def _generate_ldr_with_design(request: LlmToBricksRequest) -> BuildResult:
+async def _emit_thinking(on_thinking: Optional[ThinkingCallback], text: str) -> None:
+    if on_thinking is None:
+        return
+    normalized = text.strip()
+    if not normalized:
+        return
+    await on_thinking(normalized + "\n\n")
+
+
+async def _generate_ldr_with_design(
+    request: LlmToBricksRequest,
+    on_thinking: Optional[ThinkingCallback] = None,
+) -> BuildResult:
     """The model designs voxels; brick_design builds, verifies and renders; the model fixes and reviews."""
     palette = load_palette()
     loop = asyncio.get_running_loop()
@@ -410,6 +430,7 @@ async def _generate_ldr_with_design(request: LlmToBricksRequest) -> BuildResult:
         conversation = _open_conversation(request, client, _design_system_prompt(request), DESIGN_TOOLS)
         for _ in range(DESIGN_MAX_ATTEMPTS + DESIGN_REVIEW_ROUNDS + 2):
             turn = await conversation.send()
+            await _emit_thinking(on_thinking, turn.text)
             if turn.truncated:
                 if best:
                     break
@@ -476,7 +497,10 @@ async def _generate_ldr_with_design(request: LlmToBricksRequest) -> BuildResult:
     return best
 
 
-async def _generate_ldr_direct(request: LlmToBricksRequest) -> str:
+async def _generate_ldr_direct(
+    request: LlmToBricksRequest,
+    on_thinking: Optional[ThinkingCallback] = None,
+) -> str:
     """Original mode: the model writes LDraw; basic bricks/plates are audited for overlaps, off-grid
     and floating parts, and the model gets DIRECT_FIX_ROUNDS chances to correct them."""
     best: Optional[str] = None
@@ -484,6 +508,7 @@ async def _generate_ldr_direct(request: LlmToBricksRequest) -> str:
         conversation = _open_conversation(request, client, DIRECT_SYSTEM_PROMPT, DIRECT_TOOLS)
         for round_number in range(DIRECT_FIX_ROUNDS + 1):
             turn = await conversation.send()
+            await _emit_thinking(on_thinking, turn.text)
             try:
                 ldr = validate_ldr_content(_extract_ldr_content(turn))
             except ValueError as exc:
@@ -503,11 +528,14 @@ async def _generate_ldr_direct(request: LlmToBricksRequest) -> str:
     return best
 
 
-async def _generate_ldr(request: LlmToBricksRequest) -> LlmBuild:
+async def _generate_ldr(
+    request: LlmToBricksRequest,
+    on_thinking: Optional[ThinkingCallback] = None,
+) -> LlmBuild:
     if LDR_MODE == "direct":
-        return LlmBuild(ldr=await _generate_ldr_direct(request))
+        return LlmBuild(ldr=await _generate_ldr_direct(request, on_thinking))
     try:
-        result = await _generate_ldr_with_design(request)
+        result = await _generate_ldr_with_design(request, on_thinking)
         return LlmBuild(ldr=validate_ldr_content(result.ldr), voxels_xyzrgb=result.xyzrgb() or None)
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -518,7 +546,8 @@ async def process_llm_to_bricks_task(
     request: LlmToBricksRequest,
     user_info: Dict[str, Any],
     auth_info: Dict[str, Any],
-) -> None:
+    on_thinking: Optional[ThinkingCallback] = None,
+) -> Optional[str]:
     heartbeat_task: Optional[asyncio.Task] = None
 
     async def heartbeat() -> None:
@@ -532,7 +561,7 @@ async def process_llm_to_bricks_task(
     try:
         await generation_storage.update_status(generation_id, "processing")
         heartbeat_task = asyncio.create_task(heartbeat())
-        build = await _generate_ldr(request)
+        build = await _generate_ldr(request, on_thinking)
         ldr_content = build.ldr
 
         await deduct_credits(
@@ -593,6 +622,7 @@ async def process_llm_to_bricks_task(
             image_type="llm_direct_ldr" if LDR_MODE == "direct" else "llm_brick_design",
             is_developer=user_info["is_developer"],
         )
+        return None
     except Exception as exc:
         logger.exception("LLM-to-bricks generation failed for %s", generation_id)
         await generation_storage.update_status(generation_id, "failed", str(exc))
@@ -602,6 +632,7 @@ async def process_llm_to_bricks_task(
             endpoint="/llmToBricks",
             user_id=user_info.get("user_email", "anonymous"),
         )
+        return str(exc)
     finally:
         if heartbeat_task:
             heartbeat_task.cancel()
@@ -660,3 +691,74 @@ async def llm_to_bricks(
             user_id=user_info.get("user_email", "anonymous"),
         )
         raise HTTPException(status_code=500, detail="Failed to start LLM generation") from exc
+
+
+async def llm_to_bricks_stream(
+    request: LlmToBricksRequest,
+    auth_info: dict = Depends(get_user_with_optional_auth),
+):
+    user_info = handle_auth_and_tracking(
+        auth_info=auth_info,
+        endpoint="/llmToBricks",
+        track_properties={
+            "has_image": bool(request.image_base64),
+            "has_prompt": bool(request.prompt),
+            "model": request.model,
+            "provider": SUPPORTED_MODELS[request.model].provider,
+        },
+        required_credits=1,
+    )
+
+    if user_info["is_anonymous"]:
+        user_id = auth_info["user_id"]
+        user_type = "anonymous"
+    elif user_info["is_developer"]:
+        user_id = user_info["user_email"]
+        user_type = "authenticated"
+    else:
+        user_id = auth_info.get("user_id", user_info["user_email"])
+        user_type = "authenticated"
+
+    generation_id = await generation_storage.create_generation(
+        user_id=user_id,
+        user_type=user_type,
+        prompt=request.prompt or "Image reference",
+        detail_level=request.detail_level,
+        endpoint="llmToBricks",
+        model_3d=request.model,
+    )
+
+    async def event_stream():
+        yield f'data: {json.dumps({"type": "started", "generation_id": generation_id})}\n\n'
+        queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+        async def on_thinking(delta: str) -> None:
+            await queue.put(f'data: {json.dumps({"type": "thinking", "delta": delta})}\n\n')
+
+        async def run_generation() -> None:
+            error_message = await process_llm_to_bricks_task(
+                generation_id,
+                request,
+                user_info,
+                auth_info,
+                on_thinking,
+            )
+            if error_message:
+                await queue.put(f'data: {json.dumps({"type": "error", "detail": error_message})}\n\n')
+            else:
+                await queue.put(
+                    f'data: {json.dumps({"type": "result", "data": {"generation_id": generation_id, "message": "LLM generation completed"}})}\n\n'
+                )
+            await queue.put(None)
+
+        generation_task = asyncio.create_task(run_generation())
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                yield event
+        finally:
+            await generation_task
+
+    return event_stream()

@@ -16,6 +16,8 @@ import modelsMetadata from "../assets/demo-images/models-metadata.json";
 import { SiteFooter } from "../components/SiteFooter";
 import { GlbUploadCard } from "../components/GlbUploadCard";
 import { ProfileMenu } from "../components/ProfileMenu";
+import { LlmDesignNotes } from "../components/LlmDesignNotes";
+import { LlmPreviewLoader } from "../components/LlmPreviewLoader";
 import { GenerationStats, GetGenerationStatsApiService } from "../services/getGenerationStatsApi";
 import {
   DEFAULT_LLM_MODEL,
@@ -344,8 +346,10 @@ export default function LandingPage() {
 
   // NEW: in‑place loading state
   const [loading, setLoading] = useState(false);
+  const [activeLoadingMethod, setActiveLoadingMethod] = useState<GenerationMethod | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [generationStatus, setGenerationStatus] = useState<string | null>(null);
+  const [llmDesignNotes, setLlmDesignNotes] = useState("");
   const { text: beatText, fade: beatFade } = useBeatText(loading);
 
   // Generated model state
@@ -731,6 +735,7 @@ export default function LandingPage() {
     setGenerationError(null);
     setPreviewImageUrl(null);
     setGenerationStatus(null);
+    setLlmDesignNotes("");
     setLastGeneration(null); // Clear previous generation card
     setVoxelData(null);
     
@@ -738,6 +743,7 @@ export default function LandingPage() {
     localStorage.removeItem('recently_prompted_generation_id');
     
     // Start loading
+    setActiveLoadingMethod(generationMethod);
     setLoading(true);
     
     try {
@@ -822,7 +828,7 @@ export default function LandingPage() {
         const imageBase64 = imgFile ? await fileToBase64(imgFile) : undefined;
         const llmLabel = getLlmModelOption(llmModel)?.label ?? 'The AI model';
         setGenerationStatus(`${llmLabel} is designing your brick model…`);
-        postResponse = await LlmToBricksApiService.generate(
+        postResponse = await LlmToBricksApiService.generateStream(
           {
             prompt: prompt.trim() || undefined,
             imageBase64,
@@ -831,6 +837,14 @@ export default function LandingPage() {
             model: llmModel,
           },
           authToken,
+          (delta) => {
+            setLlmDesignNotes((current) => current + delta);
+          },
+          (generationId) => {
+            localStorage.setItem(STORAGE_KEYS.GENERATION_ID, generationId);
+            localStorage.setItem('recently_prompted_generation_id', generationId);
+            if (!session) recordAnonymousGeneration(generationId);
+          },
         );
         modelName = prompt.trim() || imgFile?.name.replace(/\.[^/.]+$/, '') || 'llm-model';
       } else if (imgFile) {
@@ -917,6 +931,7 @@ export default function LandingPage() {
       
       setGeneratedMpdContent(mpdContent);
       setLoading(false);
+      setActiveLoadingMethod(null);
       setPreviewImageUrl(null);
       setGenerationStatus(null);
       
@@ -952,6 +967,7 @@ export default function LandingPage() {
       }
       setGenerationError(errorMessage);
       setLoading(false);
+      setActiveLoadingMethod(null);
       setPreviewImageUrl(null);
       setGenerationStatus(null);
       // Clear the recently prompted ID on failure
@@ -1293,23 +1309,14 @@ export default function LandingPage() {
                     <div style={{ height: 340 }}>
                       <StreamingMeshViewer voxelData={voxelData} />
                     </div>
+                  ) : activeLoadingMethod === 'llm' ? (
+                    <LlmPreviewLoader previewImageUrl={previewImageUrl} />
                   ) : previewImageUrl ? (
-                    <>
-                      {/* <svg width="0" height="0" style={{ position: 'absolute' }}>
-                        <filter id="wavy-edge">
-                          <feTurbulence type="turbulence" baseFrequency="0.02" numOctaves="3" result="noise" seed="1">
-                            <animate attributeName="seed" dur="0.5s" values="1;2;3;4;5" repeatCount="indefinite" />
-                          </feTurbulence>
-                          <feDisplacementMap in="SourceGraphic" in2="noise" scale="8" xChannelSelector="R" yChannelSelector="G" />
-                        </filter>
-                      </svg> */}
-                      <img
-                        src={previewImageUrl}
-                        alt="Generation preview"
-                        className="w-full h-full object-contain"
-                        // style={{ filter: 'blur(4px) grayscale(100%) url(#wavy-edge)', transform: 'scale(1.05)' }}
-                      />
-                    </>
+                    <img
+                      src={previewImageUrl}
+                      alt="Generation preview"
+                      className="w-full h-full object-contain"
+                    />
                   ) : (
                     <div className="w-full flex items-center justify-center bg-slate-50" style={{ height: 340 }}>
                       <div className="text-slate-300 text-sm">Preparing preview…</div>
@@ -1347,6 +1354,9 @@ export default function LandingPage() {
                     </div>
                   </div>
                 </div>
+                {activeLoadingMethod === 'llm' && (
+                  <LlmDesignNotes notes={llmDesignNotes} isThinking={loading} />
+                )}
               </div>
             )}
             {generationError && (

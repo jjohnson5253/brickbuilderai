@@ -286,6 +286,26 @@ def test_design_mode_feeds_build_errors_back_then_reviews_then_accepts(monkeypat
     assert "0 STEP" in validated
 
 
+def test_design_mode_streams_visible_thinking_text(monkeypatch):
+    conversation, _ = _scripted(monkeypatch, [
+        Turn(
+            text="I am blocking out the tower silhouette.",
+            tool_calls=[ToolCall("s1", "submit_brick_design", GOOD_DESIGN)],
+        ),
+        _call("accept_design", {}, "a1"),
+    ])
+    monkeypatch.setattr(module, "DESIGN_REVIEW_ROUNDS", 1)
+    notes = []
+
+    async def on_thinking(delta):
+        notes.append(delta)
+
+    asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a tower"), on_thinking))
+
+    assert conversation.sent == 2
+    assert notes == ["I am blocking out the tower silhouette.\n\n"]
+
+
 def test_design_mode_answers_every_tool_call_and_nudges_text_only_turns(monkeypatch):
     conversation, _ = _scripted(monkeypatch, [
         Turn(text="Here is my plan"),
@@ -329,3 +349,20 @@ def test_direct_mode_sends_audit_feedback_and_uses_the_corrected_model(monkeypat
     feedback = conversation.tool_results[0][0]
     assert feedback.call_id == "d1" and feedback.is_error and "overlap" in feedback.text
     assert ldr.count("3001.dat") == 1
+
+
+def test_direct_mode_streams_visible_thinking_text(monkeypatch):
+    _scripted(monkeypatch, [
+        Turn(
+            text="I'll use a single brick while I verify the placement.",
+            tool_calls=[ToolCall("d1", "submit_ldr_model", {"ldr_content": VALID_PART})],
+        ),
+    ])
+    notes = []
+
+    async def on_thinking(delta):
+        notes.append(delta)
+
+    asyncio.run(module._generate_ldr_direct(LlmToBricksRequest(prompt="brick"), on_thinking))
+
+    assert notes == ["I'll use a single brick while I verify the placement.\n\n"]

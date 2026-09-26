@@ -116,6 +116,16 @@ def test_llm_render_stream_endpoint_wraps_handler(monkeypatch):
     assert response.media_type == "text/event-stream"
 
 
+def test_llm_to_bricks_stream_endpoint_wraps_handler(monkeypatch):
+    async def events():
+        yield 'data: {"type":"thinking","delta":"Planning"}\n\n'
+
+    monkeypatch.setattr(api, "llm_to_bricks_stream", lambda request, auth: events())
+    response = asyncio.run(api.llm_to_bricks_stream_endpoint("request", AUTH))
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "text/event-stream"
+
+
 def test_unprotected_one_argument_endpoints(monkeypatch):
     email_handler = AsyncMock(return_value="sent")
     webhook_handler = AsyncMock(return_value="accepted")
