@@ -332,8 +332,8 @@ BUILD RULES (the builder enforces them; follow them to avoid rework)
   of the cells they sit against, or support them from below.
 - Overhangs: each layer should step out at most 1-2 studs beyond the layer below it.
 - Solid volumes are hollowed automatically (hollow: true); keep walls you design at least 2 studs thick.
-- Set base_color to put the whole model on one plate base (recommended for scenes, buildings, vehicles on
-  display, and anything made of separate parts standing on the ground).
+- Do not use base_color or add a plate base under the model. The build should stand on its own bottom
+  brick layer.
 
 WORKFLOW: think about proportions and the recognizable features first, then submit one complete design.
 After each build you get a report and two isometric renders (front-left and back-right). Fix any errors you
@@ -364,7 +364,6 @@ DESIGN_TOOLS = [
                     "required": ["width", "depth", "layers"],
                 },
                 "hollow": {"type": "boolean"},
-                "base_color": {"type": "integer"},
                 "shapes": {
                     "type": "array",
                     "items": {"type": "object"},
@@ -401,6 +400,15 @@ class LlmBuild:
     voxels_xyzrgb: Optional[str] = None  # set in design mode: the model's voxels for editing/resizing
 
 
+def _validate_llm_design(design: Dict[str, Any]) -> Dict[str, Any]:
+    if design.get("base_color") is not None:
+        raise DesignError(
+            "base_color is not allowed for llmToBricks generations. Build the model's bottom layer with "
+            "regular bricks instead of adding a plate base."
+        )
+    return design
+
+
 def voxel_extent(xyzrgb: str) -> int:
     """Longest axis of xyzrgb voxels in cells: the unit /resizeModel's detail_level uses."""
     coords = [tuple(map(int, line.split()[:3])) for line in xyzrgb.splitlines() if line.strip()]
@@ -419,7 +427,8 @@ async def _generate_ldr_with_design(
     reviews = 0
 
     def build(design: Dict[str, Any], repair: bool):
-        return build_design(design, max_pieces=MAX_LDR_PARTS, repair=repair, palette=palette)
+        return build_design(_validate_llm_design(design), max_pieces=MAX_LDR_PARTS,
+                            repair=repair, palette=palette)
 
     async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
         conversation = _open_conversation(request, client, _design_system_prompt(request), DESIGN_TOOLS)
