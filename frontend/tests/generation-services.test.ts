@@ -8,9 +8,12 @@ const response = (data: unknown, ok = true, body?: ReadableStream) => ({
   ok, status: ok ? 200 : 400, statusText: ok ? 'OK' : 'Bad Request',
   json: vi.fn().mockResolvedValue(data), text: vi.fn().mockResolvedValue(JSON.stringify(data)), body,
 });
-const sse = (events: unknown[]) => new ReadableStream({
+const sse = (events: unknown[], options?: { crlf?: boolean; trailingDelimiter?: boolean }) => new ReadableStream({
   start(controller) {
-    controller.enqueue(new TextEncoder().encode(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')));
+    const delimiter = options?.crlf ? '\r\n\r\n' : '\n\n';
+    const payload = events.map((event) => `data: ${JSON.stringify(event)}`).join(delimiter);
+    const content = options?.trailingDelimiter === false ? payload : `${payload}${delimiter}`;
+    controller.enqueue(new TextEncoder().encode(content));
     controller.close();
   },
 });
@@ -33,6 +36,8 @@ describe('generation services', () => {
     vi.mocked(fetch).mockResolvedValueOnce(response({}, true, sse(events)) as unknown as Response);
     await expect(ImageToBricksApiService.generateBricksFromImageStream('pixels', 1, undefined, 'b', 'a', onImageEvent)).resolves.toMatchObject({ generation_id: 'g1' });
     expect(onImageEvent).toHaveBeenCalledTimes(2);
+    vi.mocked(fetch).mockResolvedValueOnce(response({}, true, sse(events, { crlf: true, trailingDelimiter: false })) as unknown as Response);
+    await expect(ImageToBricksApiService.generateBricksFromImageStream('pixels')).resolves.toMatchObject({ generation_id: 'g1' });
     vi.mocked(fetch).mockResolvedValueOnce(response({}, true, sse(events)) as unknown as Response);
     await expect(TextToBricksApiService.generateBricksFromTextStream('castle')).resolves.toMatchObject({ generation_id: 'g1' });
   });
