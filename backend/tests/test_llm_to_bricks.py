@@ -1,8 +1,26 @@
 import asyncio
 import base64
+import sys
+import types
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+
+
+stub_image_to_bricks = types.ModuleType("src.requests.imageToBricks")
+stub_gurobipy = types.ModuleType("gurobipy")
+
+
+class _StubImageToBricksResponse(BaseModel):
+    generation_id: str
+    message: str = "Generation started"
+
+
+stub_image_to_bricks.ImageToBricksResponse = _StubImageToBricksResponse
+stub_gurobipy.GRB = types.SimpleNamespace(CONTINUOUS="CONTINUOUS")
+stub_gurobipy.Model = object
+sys.modules.setdefault("src.requests.imageToBricks", stub_image_to_bricks)
+sys.modules.setdefault("gurobipy", stub_gurobipy)
 
 from src.requests import llmToBricks as module
 from src.requests.llmToBricks import (
@@ -185,6 +203,12 @@ def test_generate_ldr_returns_design_voxels_in_design_mode_and_none_in_direct_mo
     assert asyncio.run(module._generate_ldr(request)).voxels_xyzrgb is None
 
 
+def test_validate_llm_design_rejects_base_color():
+    with pytest.raises(module.DesignError, match="base_color is not allowed"):
+        module._validate_llm_design(BASE_PLATE_DESIGN)
+    assert module._validate_llm_design(GOOD_DESIGN) == GOOD_DESIGN
+
+
 def test_start_records_the_selected_model_and_llm_endpoint(monkeypatch):
     created = {}
 
@@ -213,10 +237,10 @@ def test_start_records_the_selected_model_and_llm_endpoint(monkeypatch):
 
 GOOD_DESIGN = {
     "title": "Tower",
-    "base_color": 2,
     "grid": {"width": 8, "depth": 8, "layers": 6},
     "shapes": [{"shape": "cylinder", "axis": "y", "center": [3.5, 3.5], "radius": 3, "range": [0, 5], "color": 71}],
 }
+BASE_PLATE_DESIGN = dict(GOOD_DESIGN, base_color=2)
 FLOATING_DESIGN = {
     "grid": {"width": 8, "depth": 8, "layers": 8},
     "shapes": [
@@ -290,6 +314,24 @@ def test_design_mode_feeds_build_errors_back_then_reviews_then_accepts(monkeypat
     validated = validate_ldr_content(ldr)
     assert module.audit_ldraw(validated).ok
     assert "0 STEP" in validated
+
+
+def test_design_mode_rejects_plate_bases_and_requests_a_resubmission(monkeypatch):
+    conversation, opened = _scripted(monkeypatch, [
+        _call("submit_brick_design", BASE_PLATE_DESIGN, "t1"),
+        _call("submit_brick_design", GOOD_DESIGN, "t2"),
+        _call("accept_design", {}, "t3"),
+    ])
+    monkeypatch.setattr(module, "DESIGN_REVIEW_ROUNDS", 1)
+    monkeypatch.setattr(module, "DESIGN_MAX_ATTEMPTS", 3)
+
+    ldr = asyncio.run(module._generate_ldr_with_design(LlmToBricksRequest(prompt="a tower"))).ldr
+
+    assert conversation.sent == 3
+    assert "Do not use base_color" in opened["system"]
+    error_result = conversation.tool_results[0][0]
+    assert error_result.is_error and "base_color is not allowed" in error_result.text
+    assert "3001.dat" in validate_ldr_content(ldr) or "3003.dat" in validate_ldr_content(ldr)
 
 
 def test_design_mode_streams_visible_thinking_text(monkeypatch):
