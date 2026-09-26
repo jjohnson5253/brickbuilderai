@@ -84,6 +84,8 @@ const LLM_PROVIDER_GROUPS: Array<{ provider: LlmProvider; label: string }> = [
   { provider: "openai", label: "OpenAI" },
 ];
 
+const IMAGE_TO_GLB_GROUP_LABEL = "image-to-glb";
+
 const isThreeDModel = (value: unknown): value is ThreeDModel =>
   THREE_D_MODEL_OPTIONS.some((option) => option.id === value);
 
@@ -105,90 +107,50 @@ export function GenerationMethodSelector({
   onLlmModelChange?: (value: string) => void;
 }) {
   const modelSelectId = "landing-render-model";
-  const imageToGlbLabelId = "landing-image-to-glb-label";
-  const imageToGlbDescriptionId = "landing-image-to-glb-description";
   const modelDescription = value === "3d"
     ? THREE_D_MODEL_OPTIONS.find((option) => option.id === threeDModel)?.description
     : GENERATION_METHOD_PRESETS.find((method) => method.value === value)?.description;
 
   const handleModelChange = (modelId: string) => {
     if (disabled) return;
-    if (value === "3d") {
-      if (!isThreeDModel(modelId)) return;
+    if (isThreeDModel(modelId)) {
+      if (value === "3d" && threeDModel === modelId) return;
+      if (value !== "3d") {
+        onChange("3d");
+        posthog.capture('landing_generation_method_selected', {
+          generation_method: '3d',
+        });
+      }
       onThreeDModelChange(modelId);
-    } else {
-      if (!getLlmModelOption(modelId)) return;
-      onLlmModelChange(modelId);
-    }
-    posthog.capture('landing_render_model_selected', {
-      generation_method: value,
-      model: modelId,
-      provider: value === "3d" ? "3d" : getLlmModelOption(modelId)?.provider,
-    });
-  };
-
-  const handleImageToGlbChange = (modelId: ThreeDModel) => {
-    if (disabled) return;
-    if (value === "3d" && threeDModel === modelId) return;
-    if (value !== "3d") {
-      onChange("3d");
-      posthog.capture('landing_generation_method_selected', {
+      posthog.capture('landing_render_model_selected', {
         generation_method: '3d',
+        model: modelId,
+        provider: '3d',
+      });
+      return;
+    }
+    const llmOption = getLlmModelOption(modelId);
+    if (!llmOption) return;
+    if (value === "llm" && llmModel === modelId) return;
+    if (value !== "llm") {
+      onChange("llm");
+      posthog.capture('landing_generation_method_selected', {
+        generation_method: 'llm',
       });
     }
-    onThreeDModelChange(modelId);
+    onLlmModelChange(modelId);
     posthog.capture('landing_render_model_selected', {
-      generation_method: '3d',
+      generation_method: 'llm',
       model: modelId,
-      provider: '3d',
+      provider: llmOption.provider,
     });
   };
-
-  const threeDDescription = THREE_D_MODEL_OPTIONS.find((option) => option.id === threeDModel)?.description;
 
   return (
     <div
       className="flex w-full max-w-xl flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm"
       style={{ zIndex: 25 }}
     >
-      <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
-        <span id={imageToGlbLabelId} className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
-          <span className="sr-only">Image to GLB:</span>
-          <span aria-hidden="true">image-to-glb:</span>
-        </span>
-        <div
-          className="flex w-full flex-wrap gap-2 sm:w-auto"
-          role="group"
-          aria-labelledby={imageToGlbLabelId}
-          aria-describedby={value === "3d" ? imageToGlbDescriptionId : undefined}
-        >
-          {THREE_D_MODEL_OPTIONS.map((option) => {
-            const active = value === "3d" && option.id === threeDModel;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => handleImageToGlbChange(option.id)}
-                className={`min-h-10 flex-1 rounded-full px-4 py-2 text-sm transition-all duration-150 sm:flex-none ${
-                  active
-                    ? "border border-transparent bg-[#f44336] text-white"
-                    : "border border-slate-300 bg-white text-slate-700 hover:border-red-200 hover:bg-red-50"
-                }`}
-                aria-pressed={active}
-                disabled={disabled}
-                title={option.description}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-        {value === "3d" && (
-          <p id={imageToGlbDescriptionId} className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-40">
-            {threeDDescription}
-          </p>
-        )}
-      </div>
       <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
         <span className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">Generation method:</span>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto">
@@ -220,29 +182,34 @@ export function GenerationMethodSelector({
           })}
         </div>
       </div>
-      {value === "llm" && (
-        <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
-          <label htmlFor={modelSelectId} className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
-            LLM model:
-          </label>
-          <select
-            id={modelSelectId}
-            value={llmModel}
-            onChange={(event) => handleModelChange(event.target.value)}
-            disabled={disabled}
-            className="min-h-10 w-full min-w-0 cursor-pointer rounded-full border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition-colors hover:border-red-200 focus:border-[#f44336] focus:outline-none focus:ring-2 focus:ring-red-100 disabled:cursor-not-allowed sm:w-56"
-          >
-            {LLM_PROVIDER_GROUPS.map((group) => (
-              <optgroup key={group.provider} label={group.label}>
-                {LLM_MODEL_OPTIONS.filter((option) => option.provider === group.provider).map((option) => (
-                  <option key={option.id} value={option.id}>{option.label}</option>
-                ))}
-              </optgroup>
+      <div className="flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <label htmlFor={modelSelectId} className="shrink-0 text-sm font-medium text-slate-600 sm:w-36">
+          Render model:
+        </label>
+        <select
+          id={modelSelectId}
+          value={value === "3d" ? threeDModel : llmModel}
+          onChange={(event) => handleModelChange(event.target.value)}
+          disabled={disabled}
+          className="min-h-10 w-full min-w-0 cursor-pointer rounded-full border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 transition-colors hover:border-red-200 focus:border-[#f44336] focus:outline-none focus:ring-2 focus:ring-red-100 disabled:cursor-not-allowed sm:w-56"
+        >
+          <optgroup label={IMAGE_TO_GLB_GROUP_LABEL}>
+            {THREE_D_MODEL_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
             ))}
-          </select>
+          </optgroup>
+          {LLM_PROVIDER_GROUPS.map((group) => (
+            <optgroup key={group.provider} label={group.label}>
+              {LLM_MODEL_OPTIONS.filter((option) => option.provider === group.provider).map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+        {modelDescription && (
           <p className="text-xs leading-5 text-slate-500 sm:ml-auto sm:max-w-40">{modelDescription}</p>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

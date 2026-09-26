@@ -121,34 +121,33 @@ describe('LandingPage', () => {
     const markup = renderToStaticMarkup(
       <GenerationMethodSelector value="3d" onChange={() => undefined} />,
     );
-    expect(markup).toContain('image-to-glb:');
+    expect(markup).toContain('Render model:');
     expect(markup).not.toContain('3D Render');
     expect(markup).toContain('LLM Render');
-    expect(markup).toMatch(/aria-pressed="true"[^>]*>SAM3D/);
+    expect(markup).toContain('<optgroup label="image-to-glb">');
+    expect(markup).toMatch(/<option value="sam3d" selected="">SAM3D<\/option>/);
     expect(markup).toContain('Trellis');
   });
 
-  it('offers SAM3D and Trellis for image-to-glb without the old 3D style controls', () => {
+  it('offers SAM3D and Trellis in the image-to-glb optgroup without old 3D style controls', () => {
     const markup = renderToStaticMarkup(
       <GenerationMethodSelector value="3d" threeDModel="trellis" onChange={() => undefined} />,
     );
 
     expect(markup).toContain('Generation method:');
-    expect(markup).toContain('image-to-glb:');
-    expect(markup).toMatch(/aria-pressed="true"[^>]*>Trellis/);
-    expect(markup).toContain('role="group"');
-    expect(markup).toContain('aria-describedby="landing-image-to-glb-description"');
+    expect(markup).toContain('Render model:');
+    expect(markup).toContain('<optgroup label="image-to-glb">');
+    expect(markup).toMatch(/<option value="trellis" selected="">Trellis<\/option>/);
     expect(markup).not.toContain('3D model:');
-    expect(markup).not.toContain('LLM model:');
   });
 
-  it('offers grouped Claude and OpenAI models for LLM Render, defaulting to Opus 5.5', () => {
+  it('offers grouped image-to-glb, Claude, and OpenAI models for LLM Render, defaulting to Opus 5.5', () => {
     const markup = renderToStaticMarkup(
       <GenerationMethodSelector value="llm" onChange={() => undefined} />,
     );
 
-    expect(markup).toContain('LLM model:');
-    expect(markup).toContain('image-to-glb:');
+    expect(markup).toContain('Render model:');
+    expect(markup).toContain('<optgroup label="image-to-glb">');
     expect(markup).toContain('<optgroup label="Claude">');
     expect(markup).toContain('<optgroup label="OpenAI">');
     expect(markup).toMatch(/<option value="claude-opus-5-5" selected="">Claude Opus 5.5<\/option>/);
@@ -178,10 +177,11 @@ describe('LandingPage', () => {
         );
       });
 
-      const trellisButton = Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent === 'Trellis',
-      );
-      act(() => trellisButton?.click());
+      const renderModelSelect = container.querySelector('select') as HTMLSelectElement;
+      act(() => {
+        renderModelSelect.value = 'trellis';
+        renderModelSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      });
       expect(onChange).toHaveBeenCalledWith('3d');
       expect(onThreeDModelChange).toHaveBeenCalledWith('trellis');
       expect(capture).toHaveBeenCalledWith('landing_generation_method_selected', {
@@ -199,6 +199,11 @@ describe('LandingPage', () => {
         llmSelect.dispatchEvent(new Event('change', { bubbles: true }));
       });
       expect(onLlmModelChange).toHaveBeenCalledWith('gpt-5.6-sol');
+      expect(capture).toHaveBeenCalledWith('landing_render_model_selected', {
+        generation_method: 'llm',
+        model: 'gpt-5.6-sol',
+        provider: 'openai',
+      });
 
       act(() => {
         root.render(
@@ -211,28 +216,26 @@ describe('LandingPage', () => {
           />,
         );
       });
-
       onChange.mockClear();
       onThreeDModelChange.mockClear();
+      onLlmModelChange.mockClear();
       vi.mocked(capture).mockClear();
 
-      const sam3dButton = Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent === 'SAM3D',
-      );
+      const threeDSelect = container.querySelector('select') as HTMLSelectElement;
       act(() => {
-        sam3dButton?.click();
+        threeDSelect.value = 'sam3d';
+        threeDSelect.dispatchEvent(new Event('change', { bubbles: true }));
       });
       expect(onChange).not.toHaveBeenCalled();
       expect(onThreeDModelChange).not.toHaveBeenCalled();
+      expect(onLlmModelChange).not.toHaveBeenCalled();
       expect(capture).not.toHaveBeenCalled();
 
       vi.mocked(capture).mockClear();
 
-      const activeThreeDButton = Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent === 'Trellis',
-      );
       act(() => {
-        activeThreeDButton?.click();
+        threeDSelect.value = 'trellis';
+        threeDSelect.dispatchEvent(new Event('change', { bubbles: true }));
       });
       expect(onChange).not.toHaveBeenCalled();
       expect(onThreeDModelChange).toHaveBeenCalledWith('trellis');
@@ -246,15 +249,15 @@ describe('LandingPage', () => {
       });
 
       onChange.mockClear();
+      onLlmModelChange.mockClear();
       vi.mocked(capture).mockClear();
 
-      const llmButton = Array.from(container.querySelectorAll('button')).find(
-        (button) => button.textContent === 'LLM Render',
-      );
       act(() => {
-        llmButton?.click();
+        threeDSelect.value = 'claude-opus-5-5';
+        threeDSelect.dispatchEvent(new Event('change', { bubbles: true }));
       });
       expect(onChange).toHaveBeenCalledWith('llm');
+      expect(onLlmModelChange).toHaveBeenCalledWith('claude-opus-5-5');
     } finally {
       act(() => root.unmount());
       container.remove();
@@ -271,10 +274,10 @@ describe('LandingPage', () => {
       const markup = renderToStaticMarkup(<LandingPage />);
 
       expect(markup).toContain('Generation method:');
-      expect(markup).toContain('image-to-glb:');
+      expect(markup).toContain('<optgroup label="image-to-glb">');
       expect(markup).not.toContain('3D Render');
       expect(markup).toContain('LLM Render');
-      expect(markup).toContain('LLM model:');
+      expect(markup).toContain('Render model:');
       expect(markup).toContain('Claude Opus 5.5');
       expect(markup).toContain('GPT-5.6 Sol');
       expect(markup).not.toContain('Style:');
