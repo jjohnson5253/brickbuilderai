@@ -66,7 +66,12 @@ class FakeClient:
                 "id": "generation-1",
                 "is_community": True,
                 "like_count": 2,
-            }
+            },
+            "generation-2": {
+                "id": "generation-2",
+                "is_community": False,
+                "like_count": 0,
+            },
         }
 
     def table(self, table_name):
@@ -143,3 +148,19 @@ def test_toggle_generation_like_adds_and_removes_likes(monkeypatch):
     ))
     assert unliked.has_liked is False
     assert unliked.like_count == 2
+
+
+def test_toggle_generation_like_rejects_non_community_models(monkeypatch):
+    client = FakeClient()
+    storage = type("Storage", (), {"client": client})()
+    monkeypatch.setattr(toggle_module, "generation_storage", storage)
+    monkeypatch.setattr(toggle_module, "handle_auth_and_tracking", lambda **_kwargs: {"user_email": "builder@example.com"})
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(toggle_module.toggle_generation_like(
+            ToggleGenerationLikeRequest(generation_id="generation-2"),
+            {"authenticated": True, "is_anonymous": False, "user_id": "user-1"},
+        ))
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Only community models can be liked"

@@ -1543,8 +1543,13 @@ export const FeaturedStrip = memo(function FeaturedStrip({ items }: { items: Fea
       </button>
       <div
         ref={viewportRef}
-        className="overflow-hidden"
-        style={{ scrollBehavior: 'smooth' }}
+        className="overflow-x-auto overflow-y-hidden"
+        style={{
+          scrollBehavior: 'smooth',
+          touchAction: 'none',
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
+        }}
       >
         <div className="flex gap-6 py-1">
           {items.map((item) => (

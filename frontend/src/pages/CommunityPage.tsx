@@ -164,7 +164,11 @@ function CommunityCard({
       <button
         type="button"
         aria-label={liked ? "Unlike community model" : "Like community model"}
-        onClick={onLikeClick}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onLikeClick();
+        }}
         disabled={liking}
         className={`absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm backdrop-blur-sm transition-colors cursor-pointer ${
           liked

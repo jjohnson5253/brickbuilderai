@@ -60,3 +60,24 @@ alter table public.generation_likes enable row level security;
 
 revoke all on public.generation_likes from anon;
 revoke all on public.generation_likes from authenticated;
+
+drop policy if exists "generation_likes_select_own" on public.generation_likes;
+create policy "generation_likes_select_own"
+on public.generation_likes
+for select
+to authenticated
+using (user_id = auth.uid());
+
+drop policy if exists "generation_likes_insert_own" on public.generation_likes;
+create policy "generation_likes_insert_own"
+on public.generation_likes
+for insert
+to authenticated
+with check (user_id = auth.uid());
+
+drop policy if exists "generation_likes_delete_own" on public.generation_likes;
+create policy "generation_likes_delete_own"
+on public.generation_likes
+for delete
+to authenticated
+using (user_id = auth.uid());
