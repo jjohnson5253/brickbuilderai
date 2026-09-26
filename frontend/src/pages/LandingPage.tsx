@@ -57,6 +57,7 @@ const MODEL_QUALITY_PRESETS: { label: string; value: ModelQuality; modelOption: 
   { label: "Regular", value: "regular", modelOption: "a" },
   { label: "Premium", value: "premium", modelOption: "b" },
 ];
+const DEFAULT_PROMPT_OPTION = "a";
 
 type GenerationMethod = "3d" | "llm";
 export const DEFAULT_GENERATION_METHOD: GenerationMethod = "llm";
@@ -647,7 +648,7 @@ export default function LandingPage() {
       // Get modelOption based on quality selection
       const modelOption = MODEL_QUALITY_PRESETS.find(q => q.value === modelQuality)?.modelOption || 'b';
       
-      const promptOption = 'a';
+      const promptOption = DEFAULT_PROMPT_OPTION;
       
       // Get auth token if user is logged in
       const authToken = session?.access_token;
