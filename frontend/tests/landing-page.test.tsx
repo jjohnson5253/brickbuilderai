@@ -125,7 +125,7 @@ describe('LandingPage', () => {
     expect(markup).not.toContain('3D Render');
     expect(markup).toContain('LLM Render');
     expect(markup).toContain('<optgroup label="image-to-glb">');
-    expect(markup).toMatch(/<option value="sam3d" selected="">SAM3D<\/option>/);
+    expect(markup).toMatch(/<option value="sam3d"[^>]*selected="">SAM3D<\/option>/);
     expect(markup).toContain('Trellis');
   });
 
@@ -137,7 +137,7 @@ describe('LandingPage', () => {
     expect(markup).toContain('Generation method:');
     expect(markup).toContain('Render model:');
     expect(markup).toContain('<optgroup label="image-to-glb">');
-    expect(markup).toMatch(/<option value="trellis" selected="">Trellis<\/option>/);
+    expect(markup).toMatch(/<option value="trellis"[^>]*selected="">Trellis<\/option>/);
     expect(markup).not.toContain('3D model:');
   });
 
@@ -150,8 +150,8 @@ describe('LandingPage', () => {
     expect(markup).toContain('<optgroup label="image-to-glb">');
     expect(markup).toContain('<optgroup label="Claude">');
     expect(markup).toContain('<optgroup label="OpenAI">');
-    expect(markup).toMatch(/<option value="claude-opus-5-5" selected="">Claude Opus 5.5<\/option>/);
-    expect(markup).toContain('<option value="gpt-5.6-sol">GPT-5.6 Sol</option>');
+    expect(markup).toMatch(/<option value="claude-opus-5-5"[^>]*selected="">Claude Opus 5.5<\/option>/);
+    expect(markup).toMatch(/<option value="gpt-5.6-sol"[^>]*>GPT-5.6 Sol<\/option>/);
     expect(markup).toContain('SAM3D');
     expect(markup).toMatch(/aria-pressed="true"[^>]*>LLM Render/);
   });
@@ -258,6 +258,14 @@ describe('LandingPage', () => {
       });
       expect(onChange).toHaveBeenCalledWith('llm');
       expect(onLlmModelChange).toHaveBeenCalledWith('claude-opus-5-5');
+      expect(capture).toHaveBeenCalledWith('landing_generation_method_selected', {
+        generation_method: 'llm',
+      });
+      expect(capture).toHaveBeenCalledWith('landing_render_model_selected', {
+        generation_method: 'llm',
+        model: 'claude-opus-5-5',
+        provider: 'anthropic',
+      });
     } finally {
       act(() => root.unmount());
       container.remove();

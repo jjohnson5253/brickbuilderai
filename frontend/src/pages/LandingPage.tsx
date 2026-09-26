@@ -201,13 +201,25 @@ export function GenerationMethodSelector({
         >
           <optgroup label={IMAGE_TO_GLB_GROUP_LABEL}>
             {THREE_D_MODEL_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>{option.label}</option>
+              <option
+                key={option.id}
+                value={option.id}
+                aria-label={`${IMAGE_TO_GLB_GROUP_LABEL} ${option.label}`}
+              >
+                {option.label}
+              </option>
             ))}
           </optgroup>
           {LLM_PROVIDER_GROUPS.map((group) => (
             <optgroup key={group.provider} label={group.label}>
               {LLM_MODEL_OPTIONS.filter((option) => option.provider === group.provider).map((option) => (
-                <option key={option.id} value={option.id}>{option.label}</option>
+                <option
+                  key={option.id}
+                  value={option.id}
+                  aria-label={`${group.label} ${option.label}`}
+                >
+                  {option.label}
+                </option>
               ))}
             </optgroup>
           ))}
