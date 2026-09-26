@@ -216,7 +216,7 @@ async def llm_to_bricks_stream_endpoint(
 ) -> StreamingResponse:
     """Stream LLM design notes while the brick model is generated."""
     return StreamingResponse(
-        llm_to_bricks_stream(request, auth_info),
+        await llm_to_bricks_stream(request, auth_info),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )

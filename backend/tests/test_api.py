@@ -117,13 +117,26 @@ def test_llm_render_stream_endpoint_wraps_handler(monkeypatch):
 
 
 def test_llm_to_bricks_stream_endpoint_wraps_handler(monkeypatch):
-    async def events():
-        yield 'data: {"type":"thinking","delta":"Planning"}\n\n'
+    expected_events = [
+        'data: {"type":"thinking","delta":"Planning"}\n\n',
+        'data: {"type":"result","data":{"generation_id":"generation-1"}}\n\n',
+    ]
 
-    monkeypatch.setattr(api, "llm_to_bricks_stream", lambda request, auth: events())
-    response = asyncio.run(api.llm_to_bricks_stream_endpoint("request", AUTH))
-    assert isinstance(response, StreamingResponse)
-    assert response.media_type == "text/event-stream"
+    async def events():
+        for event in expected_events:
+            yield event
+
+    handler = AsyncMock(return_value=events())
+    monkeypatch.setattr(api, "llm_to_bricks_stream", handler)
+
+    async def consume_response():
+        response = await api.llm_to_bricks_stream_endpoint("request", AUTH)
+        assert isinstance(response, StreamingResponse)
+        assert response.media_type == "text/event-stream"
+        return [event async for event in response.body_iterator]
+
+    assert asyncio.run(consume_response()) == expected_events
+    handler.assert_awaited_once_with("request", AUTH)
 
 
 def test_unprotected_one_argument_endpoints(monkeypatch):
