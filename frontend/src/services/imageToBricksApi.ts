@@ -303,101 +303,115 @@ export class ImageToBricksApiService {
     const decoder = new TextDecoder();
     let buffer = '';
     let generationId: string | undefined;
+    const processSseEvent = (rawEvent: string) => {
+      const event = rawEvent.trim();
+      if (!event) return;
+
+      const dataLines = event
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).replace(/^ /, ''));
+
+      if (dataLines.length === 0) return;
+
+      const jsonStr = dataLines.join('\n');
+      let data: StreamEvent;
+      try {
+        data = JSON.parse(jsonStr);
+      } catch (parseErr) {
+        console.warn('[stream] Failed to parse SSE event JSON:', jsonStr, parseErr);
+        return;
+      }
+
+      // --- Log every event ---
+      // Check for voxel data events first (have 'stage' but no 'type')
+      if ('stage' in data && !('type' in data)) {
+        const ve = data as VoxelDataEvent;
+        console.log(
+          `[stream][voxel] stage=${ve.stage} step=${ve.step ?? '-'}/${ve.total_steps ?? '-'} progress=${ve.progress ?? '-'} voxels=${ve.voxel_count ?? '-'}`,
+        );
+        onEvent?.(ve as unknown as StreamEvent);
+        return;
+      }
+
+      // All remaining events have a 'type' field
+      const typed = data as Exclude<StreamEvent, VoxelDataEvent>;
+
+      if (typed.type === 'pipeline') {
+        const pe = typed as PipelineEvent;
+
+        if (pe.stage === 'image_generation') {
+          console.log(
+            `[stream][image_generation] status=${pe.status ?? '-'} message=${pe.message ?? '-'} queue_position=${pe.queue_position ?? '-'}`,
+          );
+        } else if (pe.stage === 'background_removal') {
+          console.log(
+            `[stream][background_removal] progress=${pe.progress ?? '-'} message=${pe.message ?? '-'} image_url=${pe.image_url ? 'present' : '-'}`,
+          );
+        } else if (pe.stage === 'input_processed') {
+          console.log(
+            `[stream][input_processed] message=${pe.message ?? '-'} image_url=${pe.image_url ? 'present' : '-'}`,
+          );
+        } else {
+          console.log(
+            `[stream][pipeline] stage=${pe.stage} progress=${pe.progress ?? '-'} message=${pe.message ?? '-'}`,
+            pe.stage === 'pipeline_complete' ? `generation_id=${pe.generation_id}` : '',
+            pe.stage === 'brick_conversion' && pe.brick_count != null ? `brick_count=${pe.brick_count}` : '',
+          );
+        }
+
+        if (pe.stage === 'pipeline_complete' && pe.generation_id) {
+          generationId = pe.generation_id;
+        }
+
+        if (pe.stage === 'error') {
+          throw new Error(pe.message || 'Pipeline error');
+        }
+      } else if (typed.type === 'geometry' || typed.type === 'appearance') {
+        const ge = typed as GeometryEvent;
+        console.log(
+          `[stream][sam3d] type=${ge.type} step=${ge.step ?? '-'}/${ge.total_steps ?? '-'} progress=${ge.progress ?? '-'}`,
+        );
+      } else if (typed.type === 'mesh_preview') {
+        console.log('[stream][sam3d] mesh_preview received (vertices, faces, vertex_colors)');
+      } else if (typed.type === 'glb_ready') {
+        console.log('[stream][sam3d] glb_ready — GLB data received');
+      } else if (typed.type === 'complete') {
+        const ce = typed as Sam3dCompleteEvent;
+        console.log('[stream][sam3d] complete', {
+          model_glb_url: ce.model_glb_url,
+          gaussian_splat_url: ce.gaussian_splat_url,
+        });
+      } else if (typed.type === 'error') {
+        const ee = typed as Sam3dErrorEvent;
+        console.error('[stream][sam3d] error:', ee.message || ee.error);
+        throw new Error(ee.message || ee.error || 'SAM3D error');
+      } else {
+        console.log('[stream] unknown event type:', data);
+      }
+
+      // Notify caller
+      onEvent?.(data);
+    };
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
         // Process all complete SSE events in the buffer
         while (buffer.includes('\n\n')) {
           const delimiterIndex = buffer.indexOf('\n\n');
           const event = buffer.slice(0, delimiterIndex);
           buffer = buffer.slice(delimiterIndex + 2);
-
-          if (!event.startsWith('data: ')) continue;
-
-          const jsonStr = event.slice(6);
-          let data: StreamEvent;
-          try {
-            data = JSON.parse(jsonStr);
-          } catch (parseErr) {
-            console.warn('[stream] Failed to parse SSE event JSON:', jsonStr, parseErr);
-            continue;
-          }
-
-          // --- Log every event ---
-          // Check for voxel data events first (have 'stage' but no 'type')
-          if ('stage' in data && !('type' in data)) {
-            const ve = data as VoxelDataEvent;
-            console.log(
-              `[stream][voxel] stage=${ve.stage} step=${ve.step ?? '-'}/${ve.total_steps ?? '-'} progress=${ve.progress ?? '-'} voxels=${ve.voxel_count ?? '-'}`,
-            );
-            onEvent?.(ve as unknown as StreamEvent);
-            continue;
-          }
-
-          // All remaining events have a 'type' field
-          const typed = data as Exclude<StreamEvent, VoxelDataEvent>;
-
-          if (typed.type === 'pipeline') {
-            const pe = typed as PipelineEvent;
-
-            if (pe.stage === 'image_generation') {
-              console.log(
-                `[stream][image_generation] status=${pe.status ?? '-'} message=${pe.message ?? '-'} queue_position=${pe.queue_position ?? '-'}`,
-              );
-            } else if (pe.stage === 'background_removal') {
-              console.log(
-                `[stream][background_removal] progress=${pe.progress ?? '-'} message=${pe.message ?? '-'} image_url=${pe.image_url ? 'present' : '-'}`,
-              );
-            } else if (pe.stage === 'input_processed') {
-              console.log(
-                `[stream][input_processed] message=${pe.message ?? '-'} image_url=${pe.image_url ? 'present' : '-'}`,
-              );
-            } else {
-              console.log(
-                `[stream][pipeline] stage=${pe.stage} progress=${pe.progress ?? '-'} message=${pe.message ?? '-'}`,
-                pe.stage === 'pipeline_complete' ? `generation_id=${pe.generation_id}` : '',
-                pe.stage === 'brick_conversion' && pe.brick_count != null ? `brick_count=${pe.brick_count}` : '',
-              );
-            }
-
-            if (pe.stage === 'pipeline_complete' && pe.generation_id) {
-              generationId = pe.generation_id;
-            }
-
-            if (pe.stage === 'error') {
-              throw new Error(pe.message || 'Pipeline error');
-            }
-          } else if (typed.type === 'geometry' || typed.type === 'appearance') {
-            const ge = typed as GeometryEvent;
-            console.log(
-              `[stream][sam3d] type=${ge.type} step=${ge.step ?? '-'}/${ge.total_steps ?? '-'} progress=${ge.progress ?? '-'}`,
-            );
-          } else if (typed.type === 'mesh_preview') {
-            console.log('[stream][sam3d] mesh_preview received (vertices, faces, vertex_colors)');
-          } else if (typed.type === 'glb_ready') {
-            console.log('[stream][sam3d] glb_ready — GLB data received');
-          } else if (typed.type === 'complete') {
-            const ce = typed as Sam3dCompleteEvent;
-            console.log('[stream][sam3d] complete', {
-              model_glb_url: ce.model_glb_url,
-              gaussian_splat_url: ce.gaussian_splat_url,
-            });
-          } else if (typed.type === 'error') {
-            const ee = typed as Sam3dErrorEvent;
-            console.error('[stream][sam3d] error:', ee.message || ee.error);
-            throw new Error(ee.message || ee.error || 'SAM3D error');
-          } else {
-            console.log('[stream] unknown event type:', data);
-          }
-
-          // Notify caller
-          onEvent?.(data);
+          processSseEvent(event);
         }
+      }
+
+      if (buffer.trim()) {
+        processSseEvent(buffer);
       }
     } finally {
       reader.releaseLock();
