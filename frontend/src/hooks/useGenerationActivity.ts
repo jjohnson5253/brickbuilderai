@@ -68,7 +68,7 @@ export function useGenerationActivity(owner: string, authToken: string | undefin
         const settled = await Promise.allSettled(missing.map(async row => {
           const status = await GetGenerationApiService.getGeneration(row.id, controller.signal);
           return { ...row, status: status.status, prompt: status.prompt || row.prompt,
-            imageUrl: status.external_image_url || row.imageUrl,
+            imageUrl: status.preview_image_url || status.processed_image_url || status.external_image_url || row.imageUrl,
             errorMessage: status.error_message || undefined };
         }));
         if (controller.signal.aborted) return;
